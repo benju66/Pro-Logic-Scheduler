@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro Logic Scheduler | V8.7</title>
+    <title>Pro Logic Scheduler | V9.0</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
@@ -130,7 +130,7 @@
                 <i data-lucide="maximize" class="w-5 h-5"></i>
             </div>
             <div>
-                <h1 class="font-bold text-lg text-slate-800 leading-none">Pro Logic <span class="text-xs font-normal text-gray-400 ml-1">v8.7</span></h1>
+                <h1 class="font-bold text-lg text-slate-800 leading-none">Pro Logic <span class="text-xs font-normal text-gray-400 ml-1">v9.0</span></h1>
                 <p class="text-[10px] text-gray-500 font-medium">Double-Click Row for Details</p>
             </div>
         </div>
@@ -160,6 +160,10 @@
                 <span id="zoom-label" class="text-[10px] font-bold px-2 text-gray-500 w-12 text-center">Week</span>
                 <button onclick="app.zoom('in')" class="p-1 hover:bg-white rounded text-gray-600" title="Zoom In"><i data-lucide="plus" class="w-3 h-3"></i></button>
             </div>
+
+            <button onclick="app.openCalendar()" class="text-xs font-bold px-3 py-1.5 rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100 flex items-center gap-1 ml-2" title="Project Calendar">
+                <i data-lucide="calendar-clock" class="w-3 h-3"></i> Calendar
+            </button>
 
             <button onclick="app.openPopout()" class="text-xs font-bold px-3 py-1.5 rounded bg-indigo-50 text-indigo-700 hover:bg-indigo-100 flex items-center gap-1 ml-2">
                 <i data-lucide="external-link" class="w-3 h-3"></i> Popout
@@ -292,14 +296,68 @@
             <button onclick="app.saveLinks()" class="px-3 py-1.5 text-xs font-medium bg-slate-800 text-white rounded hover:bg-slate-700">Save Logic</button>
         </div>
     </dialog>
+
+    <dialog id="calendarModal" class="rounded-lg shadow-2xl border border-gray-200 w-[500px] backdrop:bg-black/20 p-0 overflow-hidden">
+        <div class="bg-gray-50 border-b border-gray-200 px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+                <div class="bg-indigo-600 text-white p-1 rounded">
+                    <i data-lucide="calendar" class="w-4 h-4"></i>
+                </div>
+                <h3 class="font-bold text-sm text-slate-800">Project Calendar</h3>
+            </div>
+            <button onclick="document.getElementById('calendarModal').close()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-4 h-4"></i></button>
+        </div>
+        
+        <div class="p-5 bg-white h-[400px] overflow-y-auto">
+            <div class="mb-6">
+                <h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Standard Work Week</h4>
+                <div class="flex justify-between bg-slate-50 p-3 rounded-lg border border-slate-100">
+                    <div id="weekdays-container" class="flex gap-2 w-full justify-between"></div>
+                </div>
+                <p class="text-[10px] text-gray-400 mt-2">Unchecked days are non-working days (weekends).</p>
+            </div>
+
+            <div>
+                <h4 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-3">Exceptions & Delays</h4>
+                
+                <div class="flex gap-2 mb-3">
+                    <input type="date" id="cal-date" class="border border-gray-300 rounded px-2 py-1.5 text-xs focus:border-indigo-500 outline-none">
+                    <input type="text" id="cal-desc" placeholder="Reason (e.g. Holiday, Weather)" class="flex-1 border border-gray-300 rounded px-2 py-1.5 text-xs focus:border-indigo-500 outline-none">
+                    <button onclick="app.addCalendarException()" class="bg-slate-800 hover:bg-slate-900 text-white px-3 py-1 rounded text-xs font-medium transition flex items-center gap-1">
+                        <i data-lucide="plus" class="w-3 h-3"></i> Add
+                    </button>
+                </div>
+
+                <div class="border border-gray-200 rounded-lg overflow-hidden">
+                    <table class="w-full text-xs text-left">
+                        <thead class="bg-gray-50 text-gray-500 border-b border-gray-200">
+                            <tr>
+                                <th class="p-2 font-medium">Date</th>
+                                <th class="p-2 font-medium">Description</th>
+                                <th class="p-2 w-8"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="calendar-exceptions-body">
+                            </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-gray-50 p-3 flex justify-end gap-2 border-t border-gray-200">
+            <button onclick="document.getElementById('calendarModal').close()" class="px-3 py-1.5 text-xs font-medium bg-white border border-gray-300 rounded hover:bg-gray-50">Cancel</button>
+            <button onclick="app.saveCalendar()" class="px-3 py-1.5 text-xs font-medium bg-indigo-600 text-white rounded hover:bg-indigo-700 shadow-sm flex items-center gap-2">
+                <i data-lucide="check" class="w-3 h-3"></i> Apply Changes
+            </button>
+        </div>
+    </dialog>
     
-    <!-- Toast Container -->
     <div id="toast" class="toast"></div>
 
 <script>
     class ProScheduler {
         // ===== STATIC CONSTANTS =====
-        static STORAGE_KEY = 'pro_scheduler_v8_7';
+        static STORAGE_KEY = 'pro_scheduler_v9_0';
         static VIEW_OPTIONS = ['Day', 'Week', 'Month'];
         static LINK_TYPES = ['FS', 'SS', 'FF'];
         static MAX_HISTORY = 50;
@@ -316,6 +374,12 @@
             this.activeTaskId = null;         
             this.viewMode = 'Week';
             this.tempDependencies = [];
+            
+            // NEW: Calendar Configuration
+            this.calendar = {
+                workingDays: [1, 2, 3, 4, 5], // Mon(1) - Fri(5)
+                exceptions: {} // Format: "YYYY-MM-DD": "Reason"
+            };
             
             // Cached DOM references for performance
             this.dom = {};
@@ -416,7 +480,10 @@
         // ===== FILE OPERATIONS =====
         downloadJSON() {
             try {
-                const data = JSON.stringify(this.tasks, null, 2);
+                const data = JSON.stringify({
+                    tasks: this.tasks,
+                    calendar: this.calendar
+                }, null, 2);
                 const blob = new Blob([data], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -441,18 +508,19 @@
                 try {
                     if (file.name.toLowerCase().endsWith('.json')) {
                         const parsed = JSON.parse(e.target.result);
-                        if (!Array.isArray(parsed)) {
-                            throw new Error('Invalid JSON format: expected an array of tasks');
+                        
+                        // Handle legacy (array only) vs new (object with calendar) format
+                        if (Array.isArray(parsed)) {
+                             this.tasks = parsed;
+                             this.calendar = { workingDays: [1,2,3,4,5], exceptions: {} };
+                        } else {
+                            if (!parsed.tasks) throw new Error('Invalid JSON: missing tasks');
+                            this.tasks = parsed.tasks;
+                            this.calendar = parsed.calendar || { workingDays: [1,2,3,4,5], exceptions: {} };
                         }
-                        // Validate basic structure
-                        parsed.forEach((task, idx) => {
-                            if (!task.id || !task.name) {
-                                throw new Error(`Task at index ${idx} missing required fields (id, name)`);
-                            }
-                        });
+                        
                         this.saveCheckpoint();
-                        this.tasks = parsed;
-                        this.showToast(`Loaded ${parsed.length} tasks from JSON`, 'success');
+                        this.showToast(`Loaded ${this.tasks.length} tasks`, 'success');
                     } else if (file.name.toLowerCase().endsWith('.xml')) {
                         this.importFromMSP(e.target.result);
                     } else {
@@ -477,17 +545,11 @@
             try {
                 const parser = new DOMParser();
                 const xmlDoc = parser.parseFromString(xmlString, 'text/xml');
-                
-                // Check for parse errors
                 const parseError = xmlDoc.querySelector('parsererror');
-                if (parseError) {
-                    throw new Error('Invalid XML format');
-                }
+                if (parseError) throw new Error('Invalid XML format');
                 
                 const tasks = xmlDoc.querySelectorAll('Task');
-                if (tasks.length === 0) {
-                    throw new Error('No tasks found in XML');
-                }
+                if (tasks.length === 0) throw new Error('No tasks found in XML');
                 
                 const newTasks = [];
                 const uidToId = new Map();
@@ -500,7 +562,6 @@
                     const duration = taskEl.querySelector('Duration')?.textContent;
                     const outlineLevel = parseInt(taskEl.querySelector('OutlineLevel')?.textContent || '0');
                     
-                    // Skip summary task (UID 0) if it exists
                     if (uid === '0' && name === '') return;
                     
                     const id = Date.now().toString() + Math.random().toString(36).substr(2, 9);
@@ -516,8 +577,7 @@
                     }
                     
                     newTasks.push({
-                        id,
-                        uid,
+                        id, uid,
                         name: name || 'Unnamed Task',
                         start: start || new Date().toISOString().split('T')[0],
                         end: finish || start || new Date().toISOString().split('T')[0],
@@ -530,11 +590,10 @@
                     });
                 });
                 
-                // Build hierarchy based on outline level
+                // Build hierarchy
                 for (let i = 0; i < newTasks.length; i++) {
                     const task = newTasks[i];
                     if (task.outlineLevel > 1) {
-                        // Find parent (previous task with lower outline level)
                         for (let j = i - 1; j >= 0; j--) {
                             if (newTasks[j].outlineLevel < task.outlineLevel) {
                                 task.parentId = newTasks[j].id;
@@ -542,8 +601,7 @@
                             }
                         }
                     }
-                    delete task.outlineLevel;
-                    delete task.uid;
+                    delete task.outlineLevel; delete task.uid;
                 }
                 
                 // Parse dependencies
@@ -563,12 +621,11 @@
                         const lagValue = link.querySelector('LinkLag')?.textContent;
                         
                         if (predId) {
-                            // MS Project link types: 0=FF, 1=FS, 2=SF, 3=SS
                             const typeMap = { '0': 'FF', '1': 'FS', '2': 'SF', '3': 'SS' };
                             task.dependencies.push({
                                 id: predId,
                                 type: typeMap[linkType] || 'FS',
-                                lag: lagValue ? Math.round(parseInt(lagValue) / 4800) : 0 // Convert from tenths of minutes
+                                lag: lagValue ? Math.round(parseInt(lagValue) / 4800) : 0 
                             });
                         }
                     });
@@ -611,13 +668,12 @@
             <Summary>${isSummary ? 1 : 0}</Summary>
             <PercentComplete>${task.progress || 0}</PercentComplete>`;
                     
-                    // Add predecessor links
                     if (task.dependencies && task.dependencies.length > 0) {
                         task.dependencies.forEach(dep => {
                             const predIndex = this.tasks.findIndex(t => t.id === dep.id);
                             if (predIndex !== -1) {
                                 const typeMap = { 'FF': 0, 'FS': 1, 'SF': 2, 'SS': 3 };
-                                const lagMinutes = (dep.lag || 0) * 8 * 60 * 10; // Convert days to tenths of minutes
+                                const lagMinutes = (dep.lag || 0) * 8 * 60 * 10;
                                 xml += `
             <PredecessorLink>
                 <PredecessorUID>${predIndex + 1}</PredecessorUID>
@@ -627,7 +683,6 @@
                             }
                         });
                     }
-                    
                     xml += `
         </Task>`;
                 });
@@ -653,11 +708,109 @@
 
         escapeXml(str) {
             if (!str) return '';
-            return str.replace(/&/g, '&amp;')
-                      .replace(/</g, '&lt;')
-                      .replace(/>/g, '&gt;')
-                      .replace(/"/g, '&quot;')
-                      .replace(/'/g, '&apos;');
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+        }
+
+        // ===== CALENDAR UI LOGIC =====
+        openCalendar() {
+            this.tempCalendar = JSON.parse(JSON.stringify(this.calendar));
+            this.renderCalendarModal();
+            document.getElementById('calendarModal').showModal();
+            document.getElementById('cal-date').value = new Date().toISOString().split('T')[0];
+        }
+
+        renderCalendarModal() {
+            // Render Weekdays
+            const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            const container = document.getElementById('weekdays-container');
+            container.innerHTML = '';
+            
+            days.forEach((day, index) => {
+                const isWorking = this.tempCalendar.workingDays.includes(index);
+                const activeClass = isWorking 
+                    ? 'bg-indigo-600 text-white border-indigo-600' 
+                    : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300';
+                    
+                container.innerHTML += `
+                    <button onclick="app.toggleWeekday(${index})" 
+                        class="flex flex-col items-center justify-center w-10 h-10 rounded-md border text-xs font-bold transition-all ${activeClass}">
+                        <span>${day.charAt(0)}</span>
+                    </button>
+                `;
+            });
+
+            // Render Exceptions
+            const tbody = document.getElementById('calendar-exceptions-body');
+            tbody.innerHTML = '';
+            const dates = Object.keys(this.tempCalendar.exceptions).sort();
+            
+            if (dates.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-gray-400 text-xs italic">No exceptions or holidays added.</td></tr>`;
+            } else {
+                dates.forEach(date => {
+                    const desc = this.tempCalendar.exceptions[date];
+                    tbody.innerHTML += `
+                        <tr class="border-b border-gray-100 hover:bg-slate-50 group">
+                            <td class="p-2 whitespace-nowrap"><span class="bg-red-100 text-red-700 px-2 py-0.5 rounded text-[10px] font-bold">${date}</span></td>
+                            <td class="p-2 font-medium text-slate-700">${this.escapeHtml(desc)}</td>
+                            <td class="p-2 text-right">
+                                <button onclick="app.removeCalendarException('${date}')" class="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <i data-lucide="trash-2" class="w-3 h-3"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                });
+            }
+            lucide.createIcons({ nodes: [document.getElementById('calendarModal')] });
+        }
+
+        toggleWeekday(dayIndex) {
+            const index = this.tempCalendar.workingDays.indexOf(dayIndex);
+            if (index === -1) {
+                this.tempCalendar.workingDays.push(dayIndex);
+                this.tempCalendar.workingDays.sort();
+            } else {
+                this.tempCalendar.workingDays.splice(index, 1);
+            }
+            this.renderCalendarModal();
+        }
+
+        addCalendarException() {
+            const dateInput = document.getElementById('cal-date');
+            const descInput = document.getElementById('cal-desc');
+            const date = dateInput.value;
+            const desc = descInput.value.trim();
+
+            if (!date) {
+                this.showToast('Please select a date', 'error');
+                return;
+            }
+            if (!desc) {
+                this.showToast('Please enter a description', 'error');
+                return;
+            }
+
+            this.tempCalendar.exceptions[date] = desc;
+            dateInput.value = ''; 
+            descInput.value = '';
+            descInput.focus();
+            this.renderCalendarModal();
+        }
+
+        removeCalendarException(date) {
+            delete this.tempCalendar.exceptions[date];
+            this.renderCalendarModal();
+        }
+
+        saveCalendar() {
+            this.saveCheckpoint();
+            this.calendar = JSON.parse(JSON.stringify(this.tempCalendar));
+            document.getElementById('calendarModal').close();
+            this.showToast('Calendar updated. Recalculating schedule...', 'success');
+            this.recalculateAll();
+            this.saveData();
+            this.render();
         }
 
         // ===== CORE SCHEDULING LOGIC =====
@@ -671,35 +824,29 @@
                 loops++;
                 
                 this.tasks.forEach(t => {
-                    if (this.isParent(t.id)) return; // Skip parents, calculated from children
+                    if (this.isParent(t.id)) return;
                     
                     let dependencyStart = null;
                     
                     if (t.dependencies && t.dependencies.length > 0) {
                         const possibleStarts = [];
-                        
                         t.dependencies.forEach(dep => {
                             const pred = this.tasks.find(x => x.id === dep.id);
                             if (pred && pred.start && pred.end) {
                                 const lag = dep.lag || 0;
-                                
                                 if (dep.type === 'FS') {
-                                    // Finish-to-Start: successor starts after predecessor ends
                                     possibleStarts.push(this.addWorkDays(pred.end, 1 + lag));
                                 } else if (dep.type === 'SS') {
-                                    // Start-to-Start: successor starts when predecessor starts
                                     possibleStarts.push(this.addWorkDays(pred.start, lag));
                                 } else if (dep.type === 'FF') {
-                                    // Finish-to-Finish: both finish together, so start = pred.end - duration + lag
                                     const startForFF = this.addWorkDays(pred.end, lag - t.duration + 1);
                                     possibleStarts.push(startForFF);
                                 }
                             }
                         });
-                        
                         if (possibleStarts.length > 0) {
                             possibleStarts.sort();
-                            dependencyStart = possibleStarts[possibleStarts.length - 1]; // Latest start
+                            dependencyStart = possibleStarts[possibleStarts.length - 1];
                         }
                     }
 
@@ -709,70 +856,43 @@
                     let finalStart = dependencyStart;
                     let finalEnd = null;
                     
-                    // Handle different constraint types
                     switch (type) {
                         case 'snet':
-                            // Start No Earlier Than - floor on start date
-                            if (cDate) {
-                                if (!finalStart || cDate > finalStart) {
-                                    finalStart = cDate;
-                                }
-                            }
+                            if (cDate && (!finalStart || cDate > finalStart)) finalStart = cDate;
                             break;
-                            
                         case 'snlt':
-                            // Start No Later Than - ceiling on start date
-                            if (cDate) {
-                                if (!finalStart || finalStart > cDate) {
-                                    finalStart = cDate;
-                                }
-                            }
+                            if (cDate && (!finalStart || finalStart > cDate)) finalStart = cDate;
                             break;
-                            
                         case 'fnet':
-                            // Finish No Earlier Than - floor on end date
-                            // Calculate normal end first, then adjust if needed
                             if (cDate) {
                                 if (!finalStart) finalStart = t.start || new Date().toISOString().split('T')[0];
                                 const normalEnd = this.addWorkDays(finalStart, t.duration - 1);
                                 if (normalEnd < cDate) {
-                                    // Need to extend - push end to constraint date
                                     finalEnd = cDate;
-                                    // Recalculate start to maintain duration
                                     finalStart = this.addWorkDays(cDate, -(t.duration - 1));
                                 }
                             }
                             break;
-                            
                         case 'fnlt':
-                            // Finish No Later Than - ceiling on end date
                             if (cDate) {
                                 if (!finalStart) finalStart = t.start || new Date().toISOString().split('T')[0];
                                 const normalEnd = this.addWorkDays(finalStart, t.duration - 1);
                                 if (normalEnd > cDate) {
-                                    // Need to pull back - set end to constraint date
                                     finalEnd = cDate;
-                                    // Recalculate start to maintain duration
                                     finalStart = this.addWorkDays(cDate, -(t.duration - 1));
                                 }
                             }
                             break;
-                            
                         case 'mfo':
-                            // Must Finish On - hard constraint on end date
                             if (cDate) {
                                 t.end = cDate;
                                 t.start = this.addWorkDays(cDate, -(t.duration - 1));
-                                return; // Skip normal calculation
+                                return;
                             }
                             break;
-                            
                         case 'asap':
                         default:
-                            // As Soon As Possible - no constraint
-                            if (!finalStart && !t.start) {
-                                finalStart = new Date().toISOString().split('T')[0];
-                            }
+                            if (!finalStart && !t.start) finalStart = new Date().toISOString().split('T')[0];
                             break;
                     }
                     
@@ -784,7 +904,6 @@
                     }
                     
                     if (t.start && t.duration >= 0) {
-                        // Use finalEnd if set by constraint, otherwise calculate normally
                         const newEnd = finalEnd || this.addWorkDays(t.start, t.duration - 1);
                         if (t.end !== newEnd) {
                             t.end = newEnd;
@@ -793,18 +912,15 @@
                     }
                 });
 
-                // Calculate parent (summary) task dates from children
+                // Calculate parent dates
                 this.tasks.forEach(p => {
                     if (!this.isParent(p.id)) return;
-                    
                     const children = this.tasks.filter(c => c.parentId === p.id && c.start && c.end);
-                    
                     if (children.length > 0) {
                         const starts = children.map(c => c.start).sort();
                         const ends = children.map(c => c.end).sort();
                         const minStart = starts[0];
                         const maxEnd = ends[ends.length - 1];
-                        
                         if (p.start !== minStart || p.end !== maxEnd) {
                             p.start = minStart;
                             p.end = maxEnd;
@@ -814,7 +930,6 @@
                     }
                 });
             }
-            
             this.calcCriticalPath();
         }
 
@@ -823,7 +938,6 @@
             const task = this.tasks.find(t => t.id === id);
             if (!task) return;
             
-            // Track what changed for targeted updates
             const oldStart = task.start;
             const oldEnd = task.end;
             
@@ -848,7 +962,6 @@
                     if (value === 'asap') {
                         task.constraintDate = '';
                     } else if (!task.constraintDate && value !== 'asap') {
-                        // Auto-set constraint date based on type
                         if (value === 'snet' || value === 'snlt') {
                             task.constraintDate = task.start || new Date().toISOString().split('T')[0];
                         } else if (value === 'fnet' || value === 'fnlt' || value === 'mfo') {
@@ -864,48 +977,32 @@
             this.recalculateAll(); 
             this.saveData(); 
             
-            // Determine if dates changed (affects other tasks)
             const datesChanged = task.start !== oldStart || task.end !== oldEnd;
-            
-            // Check if we're actively typing in a text input
             const activeEl = document.activeElement;
-            const isTypingInTextInput = activeEl && 
-                activeEl.classList.contains('cell-input') && 
-                activeEl.tagName === 'INPUT' && 
-                activeEl.type === 'text';
+            const isTypingInTextInput = activeEl && activeEl.classList.contains('cell-input') && activeEl.tagName === 'INPUT' && activeEl.type === 'text';
             
-            // For simple name changes while typing, just update Gantt
             if (field === 'name' && isTypingInTextInput) {
                 this.renderGanttDebounced();
                 return;
             }
             
-            // For changes that affect scheduling, update affected rows
             if (datesChanged || field === 'duration' || field === 'constraintType' || field === 'constraintDate' || field === 'start') {
-                // Get all affected tasks and update their rows
                 const affectedIds = this.getAffectedTaskIds(id);
                 this.updateRows(affectedIds);
                 this.renderGanttDebounced();
             } else {
-                // Simple field change - just update this row
                 this.updateRow(id);
                 this.renderGanttDebounced();
             }
             
-            // Sync drawer if open
             if (this.activeTaskId === id && this.dom.sideDrawer.classList.contains('open')) {
                 this.syncDrawer(task);
             }
         }
         
-        // Debounced Gantt render to avoid excessive redraws
         renderGanttDebounced() {
-            if (this._ganttDebounceTimer) {
-                clearTimeout(this._ganttDebounceTimer);
-            }
-            this._ganttDebounceTimer = setTimeout(() => {
-                this.renderGantt();
-            }, 50);
+            if (this._ganttDebounceTimer) clearTimeout(this._ganttDebounceTimer);
+            this._ganttDebounceTimer = setTimeout(() => { this.renderGantt(); }, 50);
         }
 
         syncDrawer(task) {
@@ -917,15 +1014,12 @@
         }
 
         // ===== RENDER GRID (OPTIMIZED) =====
-        
-        // Generate HTML for a single row
         generateRowHtml(task, index) {
             const depth = this.getDepth(task.id);
             const isParent = this.isParent(task.id);
             const padding = depth * 20;
             const isSelected = this.selectedTaskIds.has(task.id); 
 
-            // Constraint icons - start constraints go in Start column, finish constraints in Finish column
             let startConstraintIcon = '';
             let finishConstraintIcon = '';
             let startPadding = '';
@@ -1025,25 +1119,19 @@
             `;
         }
         
-        // Full grid render - used for initial load and major changes
         renderGrid() {
             const container = this.dom.gridBody;
             const sorted = this.getFlatList();
-            
-            // Build all HTML at once, then insert (faster than incremental)
             const htmlParts = [];
             let visibleIndex = 0;
-            
             sorted.forEach((task) => {
                 if (!this.isVisible(task.id)) return;
                 htmlParts.push(this.generateRowHtml(task, visibleIndex));
                 visibleIndex++;
             });
-            
             container.innerHTML = htmlParts.join('');
         }
         
-        // Update a single row without re-rendering entire grid
         updateRow(taskId) {
             const existingRow = this.dom.gridBody.querySelector(`.grid-row[data-id="${taskId}"]`);
             if (!existingRow) return false;
@@ -1054,7 +1142,6 @@
                 return true;
             }
             
-            // Get current index
             const allRows = this.dom.gridBody.querySelectorAll('.grid-row');
             let index = 0;
             for (let i = 0; i < allRows.length; i++) {
@@ -1064,85 +1151,57 @@
                 }
             }
             
-            // Create new row element
             const temp = document.createElement('div');
             temp.innerHTML = this.generateRowHtml(task, index);
             const newRow = temp.firstElementChild;
-            
-            // Replace old row with new
             existingRow.replaceWith(newRow);
-            
-            // Initialize icons only for this row
             lucide.createIcons({ nodes: [newRow] });
-            
             return true;
         }
         
-        // Update multiple rows efficiently
         updateRows(taskIds) {
             const rowsToUpdate = new Set(taskIds);
-            
-            // Also include parent tasks that might need updating
             taskIds.forEach(id => {
                 const task = this.tasks.find(t => t.id === id);
-                if (task && task.parentId) {
-                    rowsToUpdate.add(task.parentId);
-                }
+                if (task && task.parentId) rowsToUpdate.add(task.parentId);
             });
-            
-            // Update each row
             rowsToUpdate.forEach(id => this.updateRow(id));
         }
         
-        // Get all tasks affected by a change (successors, parents)
         getAffectedTaskIds(taskId) {
             const affected = new Set([taskId]);
-            
-            // Add parent
             const task = this.tasks.find(t => t.id === taskId);
-            if (task && task.parentId) {
-                affected.add(task.parentId);
-            }
+            if (task && task.parentId) affected.add(task.parentId);
             
-            // Add all successors (tasks that depend on this one)
             const addSuccessors = (id) => {
                 this.tasks.forEach(t => {
                     if (t.dependencies && t.dependencies.some(d => d.id === id)) {
                         if (!affected.has(t.id)) {
                             affected.add(t.id);
-                            // Recursively add successors of successors
                             addSuccessors(t.id);
-                            // Add parent of successor
                             if (t.parentId) affected.add(t.parentId);
                         }
                     }
                 });
             };
             addSuccessors(taskId);
-            
             return affected;
         }
 
         escapeHtml(str) {
             if (!str) return '';
-            return str.replace(/&/g, '&amp;')
-                      .replace(/</g, '&lt;')
-                      .replace(/>/g, '&gt;')
-                      .replace(/"/g, '&quot;');
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
         // ===== EVENT DELEGATION =====
         initEventDelegation() {
             const gridBody = this.dom.gridBody;
-            
-            // Handle action button clicks via delegation
             gridBody.addEventListener('click', (e) => {
                 const actionBtn = e.target.closest('[data-action]');
                 if (actionBtn) {
-                    e.stopPropagation(); // Prevent row click
+                    e.stopPropagation(); 
                     const action = actionBtn.dataset.action;
                     const btnTaskId = actionBtn.dataset.taskId;
-                    
                     switch (action) {
                         case 'collapse':
                             this.toggleCollapse(btnTaskId);
@@ -1162,17 +1221,13 @@
                     }
                 }
             });
-            
-            // Handle input changes via delegation (blur for text/date inputs)
             gridBody.addEventListener('blur', (e) => {
                 if (e.target.classList.contains('cell-input') && e.target.dataset.field && e.target.tagName !== 'SELECT') {
                     const field = e.target.dataset.field;
                     const taskId = e.target.dataset.taskId;
                     this.update(taskId, field, e.target.value);
                 }
-            }, true); // Use capture phase for blur
-            
-            // Handle select changes via delegation (change event for dropdowns)
+            }, true);
             gridBody.addEventListener('change', (e) => {
                 if (e.target.classList.contains('cell-input') && e.target.dataset.field && e.target.tagName === 'SELECT') {
                     const field = e.target.dataset.field;
@@ -1180,8 +1235,6 @@
                     this.update(taskId, field, e.target.value);
                 }
             });
-            
-            // Handle Enter key in inputs
             gridBody.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && e.target.classList.contains('cell-input')) {
                     e.target.blur();
@@ -1191,7 +1244,8 @@
 
         // ===== HISTORY (UNDO/REDO) =====
         saveCheckpoint() {
-            const snapshot = JSON.stringify(this.tasks);
+            // Include calendar in history
+            const snapshot = JSON.stringify({ tasks: this.tasks, calendar: this.calendar });
             if (this.history.length > 0 && this.history[this.history.length - 1] === snapshot) return;
             this.history.push(snapshot);
             if (this.history.length > ProScheduler.MAX_HISTORY) {
@@ -1205,9 +1259,10 @@
                 this.showToast('Nothing to undo', 'info');
                 return;
             }
-            this.future.push(JSON.stringify(this.tasks));
-            const previousState = this.history.pop();
-            this.tasks = JSON.parse(previousState);
+            this.future.push(JSON.stringify({ tasks: this.tasks, calendar: this.calendar }));
+            const previousState = JSON.parse(this.history.pop());
+            this.tasks = previousState.tasks;
+            this.calendar = previousState.calendar || this.calendar;
             this.recalculateAll();
             this.saveData();
             this.render();
@@ -1219,9 +1274,10 @@
                 this.showToast('Nothing to redo', 'info');
                 return;
             }
-            this.history.push(JSON.stringify(this.tasks));
-            const nextState = this.future.pop();
-            this.tasks = JSON.parse(nextState);
+            this.history.push(JSON.stringify({ tasks: this.tasks, calendar: this.calendar }));
+            const nextState = JSON.parse(this.future.pop());
+            this.tasks = nextState.tasks;
+            this.calendar = nextState.calendar || this.calendar;
             this.recalculateAll();
             this.saveData();
             this.render();
@@ -1243,16 +1299,13 @@
                     getDescendants(child.id);
                 });
             };
-            
             selected.forEach(task => {
                 payload.add(task);
                 if (this.isParent(task.id)) {
                     getDescendants(task.id);
                 }
             });
-            
-            this.clipboard = Array.from(payload)
-                .sort((a, b) => this.tasks.indexOf(a) - this.tasks.indexOf(b));
+            this.clipboard = Array.from(payload).sort((a, b) => this.tasks.indexOf(a) - this.tasks.indexOf(b));
             this.clipboard = JSON.parse(JSON.stringify(this.clipboard));
             this.showToast(`Copied ${this.clipboard.length} task(s)`, 'success');
         }
@@ -1262,7 +1315,6 @@
                 this.showToast('Nothing to paste', 'info');
                 return;
             }
-            
             this.saveCheckpoint();
             const targetId = this.lastFocusedTaskId;
             let targetIndex = targetId ? this.tasks.findIndex(t => t.id === targetId) : this.tasks.length - 1;
@@ -1312,11 +1364,9 @@
         }
 
         handleKeyDown(e) {
-            const isEditing = e.target.classList.contains('cell-input') || 
-                              e.target.classList.contains('form-input');
+            const isEditing = e.target.classList.contains('cell-input') || e.target.classList.contains('form-input');
             const isCtrl = e.ctrlKey || e.metaKey;
-
-            // Undo/Redo (works even when editing)
+            
             if (isCtrl && e.key === 'z' && !e.shiftKey) {
                 e.preventDefault();
                 this.undo();
@@ -1327,16 +1377,12 @@
                 this.redo();
                 return;
             }
-
-            // Skip other shortcuts when editing
             if (isEditing) {
                 if (e.key === 'Escape') {
                     e.target.blur();
                 }
                 return;
             }
-
-            // Copy/Paste
             if (isCtrl && e.key === 'c') {
                 e.preventDefault();
                 this.copySelection();
@@ -1347,44 +1393,32 @@
                 this.pasteTasks();
                 return;
             }
-
-            // F2 to edit
             if (e.key === 'F2' && this.lastFocusedTaskId) {
                 e.preventDefault();
                 this.enterEditMode();
                 return;
             }
-
-            // Insert to add task above
             if (e.key === 'Insert') {
                 e.preventDefault();
                 this.insertTaskAbove();
                 return;
             }
-
-            // Ctrl+Arrow to move tasks
             if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && isCtrl) {
                 e.preventDefault();
                 this.moveTaskVertical(e.key === 'ArrowUp' ? -1 : 1);
                 return;
             }
-
-            // Tab for indent/outdent
             if (e.key === 'Tab' && this.selectedTaskIds.size > 0) {
                 e.preventDefault();
                 if (e.shiftKey) this.outdentSelection();
                 else this.indentSelection();
                 return;
             }
-
-            // Arrow navigation
             if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !isCtrl) {
                 e.preventDefault();
                 this.handleArrowNavigation(e.key === 'ArrowUp' ? -1 : 1, e.shiftKey);
                 return;
             }
-
-            // Collapse/expand with arrow keys
             if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && this.lastFocusedTaskId) {
                 const task = this.tasks.find(t => t.id === this.lastFocusedTaskId);
                 if (task && this.isParent(task.id)) {
@@ -1399,8 +1433,6 @@
                 }
                 return;
             }
-
-            // Escape to deselect or close drawer
             if (e.key === 'Escape') {
                 if (document.getElementById('sideDrawer').classList.contains('open')) {
                     this.closeDrawer();
@@ -1409,8 +1441,6 @@
                 }
                 return;
             }
-
-            // Delete selected tasks
             if ((e.key === 'Delete' || e.key === 'Backspace') && this.selectedTaskIds.size > 0) {
                 e.preventDefault();
                 this.deleteSelectedTasks();
@@ -1433,14 +1463,11 @@
                 this.addTask();
                 return;
             }
-            
             const targetIndex = this.tasks.findIndex(t => t.id === this.lastFocusedTaskId);
             if (targetIndex === -1) return;
-            
             const targetTask = this.tasks[targetIndex];
             const newId = Date.now().toString();
             const today = new Date().toISOString().split('T')[0];
-            
             const newTask = {
                 id: newId,
                 name: "New Task",
@@ -1452,12 +1479,10 @@
                 progress: 0,
                 _collapsed: false
             };
-            
             this.tasks.splice(targetIndex, 0, newTask);
             this.recalculateAll();
             this.saveData();
             this.render();
-            
             this.lastFocusedTaskId = newId;
             this.selectedTaskIds.clear();
             this.selectedTaskIds.add(newId);
@@ -1468,13 +1493,10 @@
         handleArrowNavigation(direction, isShift) {
             const visibleTasks = this.getFlatList().filter(t => this.isVisible(t.id));
             if (visibleTasks.length === 0) return;
-            
             let currentIndex = visibleTasks.findIndex(t => t.id === this.lastFocusedTaskId);
             if (currentIndex === -1) currentIndex = 0;
-            
             let newIndex = currentIndex + direction;
             newIndex = Math.max(0, Math.min(visibleTasks.length - 1, newIndex));
-            
             const targetTask = visibleTasks[newIndex];
             this.lastFocusedTaskId = targetTask.id;
             
@@ -1492,22 +1514,16 @@
                     this.selectedTaskIds.add(visibleTasks[i].id);
                 }
             }
-            
             this.renderGrid();
             lucide.createIcons({ nodes: [this.dom.gridBody] });
             this.scrollToRow(targetTask.id);
         }
 
         handleRowClick(e, id) {
-            // Skip if clicking on input or button
-            if (e.target.classList.contains('cell-input') || e.target.closest('button')) {
-                return;
-            }
-            
+            if (e.target.classList.contains('cell-input') || e.target.closest('button')) return;
             const visibleTasks = this.getFlatList().filter(t => this.isVisible(t.id));
             const clickedIndex = visibleTasks.findIndex(t => t.id === id);
             this.lastFocusedTaskId = id;
-            
             if (e.shiftKey && this.anchorTaskId) {
                 const anchorIndex = visibleTasks.findIndex(t => t.id === this.anchorTaskId);
                 const start = Math.min(anchorIndex, clickedIndex);
@@ -1528,7 +1544,6 @@
                 this.selectedTaskIds.add(id);
                 this.anchorTaskId = id;
             }
-            
             this.renderGrid();
             lucide.createIcons({ nodes: [this.dom.gridBody] });
         }
@@ -1547,21 +1562,16 @@
         moveTaskVertical(direction) {
             if (!this.lastFocusedTaskId) return;
             this.saveCheckpoint();
-            
             const task = this.tasks.find(t => t.id === this.lastFocusedTaskId);
             if (!task) return;
-            
             const siblings = this.tasks.filter(t => t.parentId === task.parentId);
             const currentSiblingIndex = siblings.findIndex(t => t.id === task.id);
             if (currentSiblingIndex === -1) return;
-            
             const targetSiblingIndex = currentSiblingIndex + direction;
             if (targetSiblingIndex < 0 || targetSiblingIndex >= siblings.length) return;
-            
             const siblingTarget = siblings[targetSiblingIndex];
             const indexA = this.tasks.indexOf(task);
             const indexB = this.tasks.indexOf(siblingTarget);
-            
             if (indexA > -1 && indexB > -1) {
                 [this.tasks[indexA], this.tasks[indexB]] = [this.tasks[indexB], this.tasks[indexA]];
                 this.saveData();
@@ -1570,13 +1580,11 @@
             }
         }
 
-        // ===== SCROLL SYNC =====
         initScrollSync() {
             const grid = this.dom.gridBody;
             const gantt = this.dom.ganttPane;
             let isSyncingLeft = false;
             let isSyncingRight = false;
-            
             grid.onscroll = function() {
                 if (!isSyncingLeft) {
                     isSyncingRight = true;
@@ -1584,7 +1592,6 @@
                 }
                 isSyncingLeft = false;
             };
-            
             gantt.onscroll = function() {
                 if (!isSyncingRight) {
                     isSyncingLeft = true;
@@ -1594,11 +1601,9 @@
             };
         }
 
-        // ===== SORTABLE (DRAG & DROP) =====
         initSortable() {
             const el = this.dom.gridBody;
             if (typeof Sortable === 'undefined') return;
-            
             this.sortable = Sortable.create(el, {
                 animation: 150,
                 handle: '.drag-handle',
@@ -1607,49 +1612,32 @@
                 onEnd: (evt) => {
                     const { oldIndex, newIndex } = evt;
                     if (oldIndex === newIndex) return;
-                    
                     this.saveCheckpoint();
-                    
-                    // Get visible tasks in display order
                     const visibleTasks = this.getFlatList().filter(t => this.isVisible(t.id));
                     const movedTask = visibleTasks[oldIndex];
-                    
                     if (!movedTask) {
                         this.render();
                         return;
                     }
-                    
-                    // Remove from current position in main tasks array
                     const originalIndex = this.tasks.findIndex(t => t.id === movedTask.id);
                     if (originalIndex === -1) {
                         this.render();
                         return;
                     }
-                    
                     this.tasks.splice(originalIndex, 1);
                     
-                    // Determine new parent and position
                     let newParentId = null;
                     let insertIndex;
-                    
                     if (newIndex === 0) {
-                        // Moving to top
                         insertIndex = 0;
                         newParentId = null;
                     } else {
-                        // Get the task above the new position (after removal)
                         const tasksAbove = visibleTasks.filter((t, i) => i < newIndex && t.id !== movedTask.id);
                         const taskAbove = tasksAbove[tasksAbove.length - 1];
-                        
                         if (taskAbove) {
-                            // Keep same parent level as the task we're now adjacent to
                             newParentId = taskAbove.parentId;
-                            
-                            // Find where to insert in the main array
                             const taskAboveIndex = this.tasks.findIndex(t => t.id === taskAbove.id);
                             insertIndex = taskAboveIndex + 1;
-                            
-                            // If taskAbove is a parent and not collapsed, insert after its children
                             if (this.isParent(taskAbove.id) && !taskAbove._collapsed) {
                                 const getLastDescendantIndex = (parentId) => {
                                     let lastIndex = this.tasks.findIndex(t => t.id === parentId);
@@ -1667,10 +1655,8 @@
                             insertIndex = 0;
                         }
                     }
-                    
                     movedTask.parentId = newParentId;
                     this.tasks.splice(insertIndex, 0, movedTask);
-                    
                     this.recalculateAll();
                     this.saveData();
                     this.render();
@@ -1678,14 +1664,10 @@
             });
         }
 
-        // ===== ZOOM =====
         zoom(direction) {
             const idx = ProScheduler.VIEW_OPTIONS.indexOf(this.viewMode);
-            if (direction === 'in' && idx > 0) {
-                this.changeView(ProScheduler.VIEW_OPTIONS[idx - 1]);
-            } else if (direction === 'out' && idx < ProScheduler.VIEW_OPTIONS.length - 1) {
-                this.changeView(ProScheduler.VIEW_OPTIONS[idx + 1]);
-            }
+            if (direction === 'in' && idx > 0) this.changeView(ProScheduler.VIEW_OPTIONS[idx - 1]);
+            else if (direction === 'out' && idx < ProScheduler.VIEW_OPTIONS.length - 1) this.changeView(ProScheduler.VIEW_OPTIONS[idx + 1]);
         }
 
         changeView(mode) {
@@ -1694,54 +1676,22 @@
             if (this.gantt) this.gantt.change_view_mode(mode);
         }
 
-        // ===== POPOUT =====
         openPopout() {
             const win = window.open('', 'ProLogicGantt', 'width=1200,height=800,menubar=no,toolbar=no');
             if (!win) {
                 this.showToast('Popup blocked by browser', 'error');
                 return;
             }
-            
-            const tasksJson = JSON.stringify(
-                this.tasks.filter(t => t.start && t.end && this.isVisible(t.id)).map(t => ({
-                    id: t.id,
-                    name: t.name,
-                    start: t.start,
-                    end: t.end,
-                    progress: t.progress,
-                    dependencies: t.dependencies.map(d => d.id).join(", "),
-                    custom_class: (this.isParent(t.id) ? 'parent' : '') + (t._isCritical ? ' critical' : '')
-                }))
-            );
-            
-            const html = `<!DOCTYPE html>
-<html>
-<head>
-    <title>Pro Logic Detached View</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/frappe-gantt/0.6.1/frappe-gantt.min.js"><\/script>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/frappe-gantt/0.6.1/frappe-gantt.css">
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 20px; background: #f8fafc; }
-        h3 { margin-bottom: 20px; color: #1e293b; }
-        .bar-wrapper.parent .bar { fill: #334155; height: 10px; opacity: 0.8; }
-        .bar-wrapper .bar { fill: #93c5fd; }
-        .bar-wrapper.critical .bar { fill: #f87171; stroke: #dc2626; }
-    </style>
-</head>
-<body>
-    <h3>Pro Logic Scheduler - Detached Gantt View</h3>
-    <svg id="gantt"></svg>
-    <script>
-        new Gantt("#gantt", ${tasksJson}, {
-            header_height: 50,
-            column_width: 30,
-            view_modes: ['Day', 'Week', 'Month'],
-            bar_height: 20,
-            view_mode: 'Week'
-        });
-    <\/script>
-</body>
-</html>`;
+            const tasksJson = JSON.stringify(this.tasks.filter(t => t.start && t.end && this.isVisible(t.id)).map(t => ({
+                id: t.id,
+                name: t.name,
+                start: t.start,
+                end: t.end,
+                progress: t.progress,
+                dependencies: t.dependencies.map(d => d.id).join(", "),
+                custom_class: (this.isParent(t.id) ? 'parent' : '') + (t._isCritical ? ' critical' : '')
+            })));
+            const html = `<!DOCTYPE html><html><head><title>Pro Logic Detached View</title><script src="https://cdnjs.cloudflare.com/ajax/libs/frappe-gantt/0.6.1/frappe-gantt.min.js"><\/script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/frappe-gantt/0.6.1/frappe-gantt.css"><style>body{font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:20px;background:#f8fafc}h3{margin-bottom:20px;color:#1e293b}.bar-wrapper.parent .bar{fill:#334155;height:10px;opacity:0.8}.bar-wrapper .bar{fill:#93c5fd}.bar-wrapper.critical .bar{fill:#f87171;stroke:#dc2626}</style></head><body><h3>Pro Logic Scheduler - Detached Gantt View</h3><svg id="gantt"></svg><script>new Gantt("#gantt",${tasksJson},{header_height:50,column_width:30,view_modes:['Day','Week','Month'],bar_height:20,view_mode:'Week'});<\/script></body></html>`;
             win.document.write(html);
             win.document.close();
         }
@@ -1751,21 +1701,16 @@
             try {
                 const stored = localStorage.getItem(ProScheduler.STORAGE_KEY);
                 if (stored) {
-                    this.tasks = JSON.parse(stored);
-                    // Validate loaded data
-                    if (!Array.isArray(this.tasks)) {
-                        throw new Error('Invalid data format');
+                    const parsed = JSON.parse(stored);
+                    if (Array.isArray(parsed)) {
+                        this.tasks = parsed;
+                        this.calendar = { workingDays: [1,2,3,4,5], exceptions: {} };
+                    } else {
+                        this.tasks = parsed.tasks || [];
+                        this.calendar = parsed.calendar || { workingDays: [1,2,3,4,5], exceptions: {} };
                     }
                 } else {
-                    // Try to migrate from old version
-                    const oldData = localStorage.getItem('pro_v7_9_data');
-                    if (oldData) {
-                        this.tasks = JSON.parse(oldData);
-                        this.saveData(); // Save to new key
-                        localStorage.removeItem('pro_v7_9_data'); // Clean up old key
-                    } else {
-                        this.createSampleData();
-                    }
+                    this.createSampleData();
                 }
             } catch (err) {
                 console.error('Failed to load data:', err);
@@ -1808,53 +1753,70 @@
                     progress: 0
                 }
             ];
+            this.calendar = { workingDays: [1,2,3,4,5], exceptions: {} };
         }
 
         saveData() {
             try {
-                localStorage.setItem(ProScheduler.STORAGE_KEY, JSON.stringify(this.tasks));
+                localStorage.setItem(ProScheduler.STORAGE_KEY, JSON.stringify({ tasks: this.tasks, calendar: this.calendar }));
             } catch (err) {
                 this.showToast('Failed to save data: ' + err.message, 'error');
             }
         }
 
-        // ===== DATE UTILITIES =====
+        // ===== UPDATED DATE UTILITIES WITH CALENDAR =====
+        isWorkDay(dateObj) {
+            const dayOfWeek = dateObj.getDay();
+            const dateStr = dateObj.toISOString().split('T')[0];
+            if (!this.calendar.workingDays.includes(dayOfWeek)) return false;
+            if (this.calendar.exceptions[dateStr]) return false;
+            return true;
+        }
+
         addWorkDays(startDateStr, days) {
             if (!startDateStr) return "";
-            
-            let date = new Date(startDateStr + 'T12:00:00'); // Noon to avoid timezone issues
-            
+            let date = new Date(startDateStr + 'T12:00:00'); 
             if (days === 0) return startDateStr;
+            
+            // Adjust start if non-working and we're moving forward
+            if (days > 0) {
+                while (!this.isWorkDay(date)) {
+                    date.setDate(date.getDate() + 1);
+                }
+            }
             
             const direction = days >= 0 ? 1 : -1;
             let remaining = Math.abs(days);
             
             while (remaining > 0) {
                 date.setDate(date.getDate() + direction);
-                const day = date.getDay();
-                if (day !== 0 && day !== 6) remaining--;
+                if (this.isWorkDay(date)) {
+                    remaining--;
+                }
             }
             
+            // Adjust result if landing on non-working day (moving backward logic usually)
+            while (!this.isWorkDay(date)) {
+                date.setDate(date.getDate() + direction);
+            }
             return date.toISOString().split('T')[0];
         }
 
         calcDurationWorkDays(startStr, endStr) {
             if (!startStr || !endStr) return 0;
-            
             let current = new Date(startStr + 'T12:00:00');
             let end = new Date(endStr + 'T12:00:00');
-            
-            if (current > end) return 0;
-            if (current.getTime() === end.getTime()) return 1; // Same day = 1 day duration
-            
-            let count = 1; // Include start day
-            while (current < end) {
-                current.setDate(current.getDate() + 1);
-                const day = current.getDay();
-                if (day !== 0 && day !== 6) count++;
+            if (current > end) {
+                const temp = current;
+                current = end;
+                end = temp;
             }
-            
-            return count;
+            let count = 0;
+            while (current <= end) {
+                if (this.isWorkDay(current)) count++;
+                current.setDate(current.getDate() + 1);
+            }
+            return Math.max(1, count);
         }
 
         getNextDayOfWeek(dayIndex) {
@@ -1865,58 +1827,33 @@
 
         // ===== CRITICAL PATH =====
         calcCriticalPath() {
-            // Reset all critical flags
             this.tasks.forEach(t => t._isCritical = false);
-            
-            // Find project end date
             const validEnds = this.tasks.filter(t => t.end && !this.isParent(t.id)).map(t => t.end);
             if (validEnds.length === 0) return;
-            
             const projectEnd = validEnds.sort().reverse()[0];
             
-            // Calculate total float for each task
-            // Tasks with zero float are on critical path
-            const taskFloats = new Map();
-            
-            // Simple approach: tasks ending on project end date with no successors are critical
-            // Then trace back through their predecessors
             const markCritical = (task) => {
                 if (task._isCritical) return;
                 task._isCritical = true;
-                
-                // Mark predecessors as critical
                 if (task.dependencies) {
                     task.dependencies.forEach(dep => {
                         const pred = this.tasks.find(x => x.id === dep.id);
                         if (pred) markCritical(pred);
                     });
                 }
-                
-                // Mark parent as critical
                 if (task.parentId) {
                     const parent = this.tasks.find(x => x.id === task.parentId);
                     if (parent) parent._isCritical = true;
                 }
             };
             
-            // Find tasks that end on the project end date and have no successors
             this.tasks.forEach(t => {
                 if (t.end === projectEnd && !this.isParent(t.id)) {
-                    // Check if this task has any successors
-                    const hasSuccessors = this.tasks.some(other => 
-                        other.dependencies && other.dependencies.some(d => d.id === t.id)
-                    );
-                    
-                    // If no successors, this is an end task
-                    if (!hasSuccessors) {
-                        markCritical(t);
-                    }
+                    const hasSuccessors = this.tasks.some(other => other.dependencies && other.dependencies.some(d => d.id === t.id));
+                    if (!hasSuccessors) markCritical(t);
                 }
             });
-            
-            // If nothing marked (circular deps or other issues), mark tasks ending on project end
-            const anyMarked = this.tasks.some(t => t._isCritical);
-            if (!anyMarked) {
+            if (!this.tasks.some(t => t._isCritical)) {
                 this.tasks.filter(t => t.end === projectEnd).forEach(t => markCritical(t));
             }
         }
@@ -1925,7 +1862,7 @@
         isParent(id) {
             return this.tasks.some(t => t.parentId === id);
         }
-
+        
         isVisible(taskId) {
             let curr = this.tasks.find(t => t.id === taskId);
             while (curr && curr.parentId) {
@@ -1945,14 +1882,11 @@
                 });
             };
             add(null);
-            
-            // Add any orphaned tasks (parentId references non-existent task)
             const knownIds = res.map(t => t.id);
             this.tasks.filter(t => !knownIds.includes(t.id)).forEach(t => {
                 t.parentId = null;
                 res.push(t);
             });
-            
             return res;
         }
 
@@ -1967,14 +1901,11 @@
             const list = this.getFlatList();
             const idx = list.findIndex(t => t.id === id);
             if (idx <= 0) return;
-            
             const task = list[idx];
             const prev = list[idx - 1];
             const taskDepth = this.getDepth(task.id);
             const prevDepth = this.getDepth(prev.id);
-            
             if (prevDepth < taskDepth) return;
-            
             let newParentId = null;
             if (prevDepth === taskDepth) {
                 newParentId = prev.id;
@@ -1985,7 +1916,6 @@
                 }
                 if (curr) newParentId = curr.id;
             }
-            
             this.tasks.find(t => t.id === id).parentId = newParentId;
             this.recalculateAll();
             this.saveData();
@@ -1997,21 +1927,15 @@
             const list = this.getFlatList();
             const selectedIds = new Set(this.selectedTaskIds);
             const updates = new Map();
-            
             const sortedSelection = list.filter(t => selectedIds.has(t.id));
-            
             sortedSelection.forEach(task => {
                 if (task.parentId && selectedIds.has(task.parentId)) return;
-                
                 const idx = list.findIndex(t => t.id === task.id);
                 if (idx <= 0) return;
-                
                 const prev = list[idx - 1];
                 const taskDepth = this.getDepth(task.id);
                 const prevDepth = this.getDepth(prev.id);
-                
                 if (prevDepth < taskDepth) return;
-                
                 let newParentId = null;
                 if (prevDepth === taskDepth) {
                     newParentId = prev.id;
@@ -2022,10 +1946,8 @@
                     }
                     if (curr) newParentId = curr.id;
                 }
-                
                 updates.set(task.id, newParentId);
             });
-            
             if (updates.size > 0) {
                 updates.forEach((newPid, taskId) => {
                     this.tasks.find(t => t.id === taskId).parentId = newPid;
@@ -2053,9 +1975,7 @@
             const list = this.getFlatList();
             const selectedIds = new Set(this.selectedTaskIds);
             const updates = new Map();
-            
             const sortedSelection = list.filter(t => selectedIds.has(t.id));
-            
             sortedSelection.forEach(task => {
                 if (!task.parentId) return;
                 if (!selectedIds.has(task.parentId)) {
@@ -2064,7 +1984,6 @@
                     updates.set(task.id, newParentId);
                 }
             });
-            
             if (updates.size > 0) {
                 updates.forEach((newPid, taskId) => {
                     this.tasks.find(t => t.id === taskId).parentId = newPid;
@@ -2081,7 +2000,6 @@
             const leftSide = document.getElementById('gridPane');
             let x = 0;
             let leftWidth = 0;
-            
             const onMouseDown = (e) => {
                 x = e.clientX;
                 leftWidth = leftSide.getBoundingClientRect().width;
@@ -2091,12 +2009,10 @@
                 document.body.style.userSelect = 'none';
                 document.body.style.cursor = 'col-resize';
             };
-            
             const onMouseMove = (e) => {
                 const newWidth = leftWidth + e.clientX - x;
                 leftSide.style.width = `${Math.max(300, newWidth)}px`;
             };
-            
             const onMouseUp = () => {
                 resizer.classList.remove('active');
                 document.body.style.userSelect = '';
@@ -2104,34 +2020,27 @@
                 document.removeEventListener('mousemove', onMouseMove);
                 document.removeEventListener('mouseup', onMouseUp);
             };
-            
             resizer.addEventListener('mousedown', onMouseDown);
         }
 
         startColResize(e, varName) {
-            e.preventDefault();
-            e.stopPropagation();
-            
+            e.preventDefault(); e.stopPropagation();
             const gridPane = document.getElementById('gridPane');
             const startX = e.clientX;
             const startWidth = parseInt(getComputedStyle(gridPane).getPropertyValue(varName));
-            
             e.target.classList.add('active');
             document.body.style.cursor = 'col-resize';
-            
             const onMouseMove = (moveEvent) => {
                 const diff = moveEvent.clientX - startX;
                 const newWidth = Math.max(30, startWidth + diff);
                 gridPane.style.setProperty(varName, newWidth + 'px');
             };
-            
             const onMouseUp = () => {
                 e.target.classList.remove('active');
                 document.body.style.cursor = '';
                 document.removeEventListener('mousemove', onMouseMove);
                 document.removeEventListener('mouseup', onMouseUp);
             };
-            
             document.addEventListener('mousemove', onMouseMove);
             document.addEventListener('mouseup', onMouseUp);
         }
@@ -2141,7 +2050,6 @@
             this.saveCheckpoint();
             const id = Date.now().toString();
             const today = new Date().toISOString().split('T')[0];
-            
             this.tasks.push({
                 id,
                 name: "New Task",
@@ -2153,12 +2061,9 @@
                 progress: 0,
                 _collapsed: false
             });
-            
             this.recalculateAll();
             this.saveData();
             this.render();
-            
-            // Select and scroll to new task
             this.selectedTaskIds.clear();
             this.selectedTaskIds.add(id);
             this.lastFocusedTaskId = id;
@@ -2168,17 +2073,10 @@
         deleteTask(id) {
             const isParent = this.isParent(id);
             const taskName = this.tasks.find(t => t.id === id)?.name || 'this task';
-            
-            const message = isParent 
-                ? `Delete "${taskName}" and all its children?`
-                : `Delete "${taskName}"?`;
-            
+            const message = isParent ? `Delete "${taskName}" and all its children?` : `Delete "${taskName}"?`;
             if (!confirm(message)) return;
-            
             this.saveCheckpoint();
-            
             let idsToRemove = [id];
-            
             if (isParent) {
                 const getDescendants = (pid) => {
                     this.tasks.filter(c => c.parentId === pid).forEach(c => {
@@ -2188,18 +2086,11 @@
                 };
                 getDescendants(id);
             }
-            
-            // Remove tasks
             this.tasks = this.tasks.filter(t => !idsToRemove.includes(t.id));
-            
-            // Clean up dependencies referencing deleted tasks
             this.tasks.forEach(t => {
                 t.dependencies = t.dependencies.filter(d => !idsToRemove.includes(d.id));
             });
-            
-            // Clean up selection
             idsToRemove.forEach(remId => this.selectedTaskIds.delete(remId));
-            
             this.recalculateAll();
             this.saveData();
             this.render();
@@ -2209,15 +2100,11 @@
         deleteSelectedTasks() {
             const count = this.selectedTaskIds.size;
             if (count === 0) return;
-            
             if (!confirm(`Delete ${count} selected task(s)?`)) return;
-            
             this.saveCheckpoint();
             const ids = Array.from(this.selectedTaskIds);
-            
             ids.forEach(id => {
                 let idsToRemove = [id];
-                
                 if (this.isParent(id)) {
                     const getDescendants = (pid) => {
                         this.tasks.filter(c => c.parentId === pid).forEach(c => {
@@ -2227,13 +2114,11 @@
                     };
                     getDescendants(id);
                 }
-                
                 this.tasks = this.tasks.filter(t => !idsToRemove.includes(t.id));
                 this.tasks.forEach(t => {
                     t.dependencies = t.dependencies.filter(d => !idsToRemove.includes(d.id));
                 });
             });
-            
             this.selectedTaskIds.clear();
             this.recalculateAll();
             this.saveData();
@@ -2245,20 +2130,16 @@
         handleDrag(task, start, end) {
             this.saveCheckpoint();
             const t = this.tasks.find(x => x.id === task.id);
-            
             if (!t || this.isParent(t.id)) {
                 this.render();
                 return;
             }
-            
             const startStr = start.toISOString().split('T')[0];
             const endStr = end.toISOString().split('T')[0];
-            
             t.start = startStr;
             t.duration = this.calcDurationWorkDays(startStr, endStr);
             t.constraintType = 'snet';
             t.constraintDate = startStr;
-            
             this.recalculateAll();
             this.saveData();
             this.renderGrid();
@@ -2269,13 +2150,11 @@
         render() {
             this.renderGrid();
             this.renderGantt();
-            // Scope icon creation to grid body only - much faster than full DOM scan
             lucide.createIcons({ nodes: [this.dom.gridBody] });
         }
 
         renderGantt() {
             const validTasks = this.tasks.filter(t => t.start && t.end && this.isVisible(t.id));
-            
             const ganttData = validTasks.map(t => ({
                 id: t.id,
                 name: t.name,
@@ -2285,15 +2164,12 @@
                 dependencies: (t.dependencies || []).map(d => d.id).join(", "),
                 custom_class: (this.isParent(t.id) ? 'parent' : '') + (t._isCritical ? ' critical' : '')
             }));
-            
             const chartEl = this.dom.ganttChart;
-            
             if (ganttData.length === 0) {
                 chartEl.innerHTML = '<div class="text-gray-400 text-xs p-4">No visible tasks with dates</div>';
                 this.gantt = null;
                 return;
             }
-            
             if (!this.gantt) {
                 this.gantt = new Gantt("#gantt-chart", ganttData, {
                     header_height: 50,
@@ -2333,11 +2209,9 @@
         renderModal() {
             const predBody = document.getElementById('pred-list-body');
             predBody.innerHTML = '';
-            
             this.tempDependencies.forEach((dep, idx) => {
                 const t = this.tasks.find(x => x.id === dep.id);
                 if (!t) return;
-                
                 predBody.innerHTML += `
                     <tr class="border-b border-gray-100 hover:bg-slate-50">
                         <td class="p-2">${this.escapeHtml(t.name)}</td>
@@ -2358,45 +2232,30 @@
                         </td>
                     </tr>`;
             });
-            
             if (this.tempDependencies.length === 0) {
                 predBody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-gray-400 italic">No predecessors. Add one above.</td></tr>`;
             }
             
-            // Populate dropdown
             const select = document.getElementById('new-pred-select');
             select.innerHTML = '<option value="">Select task...</option>';
-            
             const existingIds = this.tempDependencies.map(d => d.id);
-            this.tasks
-                .filter(t => t.id !== this.activeTaskId && !existingIds.includes(t.id) && !this.isParent(t.id))
+            this.tasks.filter(t => t.id !== this.activeTaskId && !existingIds.includes(t.id) && !this.isParent(t.id))
                 .forEach(t => {
                     select.innerHTML += `<option value="${t.id}">${this.escapeHtml(t.name)}</option>`;
                 });
             
-            // Successors tab
             const succBody = document.getElementById('succ-list-body');
             succBody.innerHTML = '';
-            
-            const successors = this.tasks.filter(t => 
-                t.dependencies && t.dependencies.some(d => d.id === this.activeTaskId)
-            );
-            
+            const successors = this.tasks.filter(t => t.dependencies && t.dependencies.some(d => d.id === this.activeTaskId));
             if (successors.length === 0) {
                 succBody.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-gray-400 italic">No successors found.</td></tr>`;
             } else {
                 successors.forEach(succ => {
                     const link = succ.dependencies.find(d => d.id === this.activeTaskId);
                     const typeLabels = { 'FS': 'Finish to Start', 'SS': 'Start to Start', 'FF': 'Finish to Finish' };
-                    succBody.innerHTML += `
-                        <tr class="border-b border-gray-100">
-                            <td class="p-2 font-medium">${this.escapeHtml(succ.name)}</td>
-                            <td class="p-2 text-gray-600">${typeLabels[link.type] || link.type}</td>
-                            <td class="p-2 text-gray-600">${link.lag || 0} days</td>
-                        </tr>`;
+                    succBody.innerHTML += `<tr class="border-b border-gray-100"><td class="p-2 font-medium">${this.escapeHtml(succ.name)}</td><td class="p-2 text-gray-600">${typeLabels[link.type] || link.type}</td><td class="p-2 text-gray-600">${link.lag || 0} days</td></tr>`;
                 });
             }
-            
             lucide.createIcons({ nodes: [document.getElementById('linkModal')] });
         }
 
@@ -2404,7 +2263,6 @@
             const select = document.getElementById('new-pred-select');
             const id = select.value;
             if (!id) return;
-            
             this.tempDependencies.push({ id: id, type: 'FS', lag: 0 });
             this.renderModal();
         }
@@ -2413,7 +2271,7 @@
             this.tempDependencies.splice(index, 1);
             this.renderModal();
         }
-
+        
         updateTempLink(index, field, value) {
             if (field === 'lag') value = parseInt(value) || 0;
             this.tempDependencies[index][field] = value;
