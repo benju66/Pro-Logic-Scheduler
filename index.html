@@ -128,7 +128,7 @@
             </div>
             <div>
                 <h1 class="font-bold text-lg text-slate-800 leading-none">Pro Logic <span class="text-xs font-normal text-gray-400 ml-1">v8.7</span></h1>
-                <p class="text-[10px] text-gray-500 font-medium">Double-Click Row for Details | Type Date to Pin 📌</p>
+                <p class="text-[10px] text-gray-500 font-medium">Double-Click Row for Details | ⚓ Anchored Date | 🔒 Hard Deadline</p>
             </div>
         </div>
 
@@ -804,10 +804,14 @@
                 const padding = depth * 20;
                 const isSelected = this.selectedTaskIds.has(task.id); 
 
-                let pinIcon = '';
-                if (task.constraintType === 'snet' || task.constraintType === 'mfo') {
-                    const color = task.constraintType === 'mfo' ? 'text-red-500' : 'text-gray-400';
-                    pinIcon = `<i data-lucide="pin" class="w-3 h-3 ${color} ml-1 absolute right-2 top-1/2 -translate-y-1/2"></i>`;
+                let constraintIcon = '';
+                let constraintPadding = '';
+                if (task.constraintType === 'snet') {
+                    constraintIcon = `<i data-lucide="anchor" class="w-3 h-3 text-blue-400 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Start No Earlier Than ${task.constraintDate || ''}"></i>`;
+                    constraintPadding = 'pr-5';
+                } else if (task.constraintType === 'mfo') {
+                    constraintIcon = `<i data-lucide="lock" class="w-3 h-3 text-red-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Must Finish On ${task.constraintDate || ''}"></i>`;
+                    constraintPadding = 'pr-5';
                 }
 
                 let collapseBtn = `<span class="w-5 inline-block"></span>`;
@@ -856,9 +860,9 @@
                             <input type="date" value="${task.start || ''}" 
                                 data-field="start" 
                                 data-task-id="${task.id}"
-                                class="cell-input text-xs ${isParent ? 'cell-readonly' : ''}" 
+                                class="cell-input text-xs ${constraintPadding} ${isParent ? 'cell-readonly' : ''}" 
                                 ${isParent ? 'readonly' : ''}>
-                            ${pinIcon}
+                            ${constraintIcon}
                         </div>
                         <div class="col-cell" style="width: var(--w-end)">
                             <input type="date" value="${task.end || ''}" readonly class="cell-input text-xs cell-readonly">
