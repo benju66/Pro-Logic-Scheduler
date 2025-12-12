@@ -131,7 +131,7 @@
             </div>
             <div>
                 <h1 class="font-bold text-lg text-slate-800 leading-none">Pro Logic <span class="text-xs font-normal text-gray-400 ml-1">v8.7</span></h1>
-                <p class="text-[10px] text-gray-500 font-medium">Double-Click for Details | ⚓ Anchored | ⏰ Deadline | ⏳ Wait | 🔒 Locked</p>
+                <p class="text-[10px] text-gray-500 font-medium">Double-Click Row for Details</p>
             </div>
         </div>
 
@@ -901,7 +901,7 @@
                     finishConstraintIcon = `<i data-lucide="hourglass" class="w-3 h-3 text-blue-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Finish No Earlier Than ${cDate}"></i>`;
                     finishPadding = 'pr-5';
                 } else if (cType === 'fnlt') {
-                    finishConstraintIcon = `<i data-lucide="alarm-clock" class="w-3 h-3 text-amber-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Finish No Later Than ${cDate}"></i>`;
+                    finishConstraintIcon = `<i data-lucide="flag" class="w-3 h-3 text-amber-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Finish No Later Than ${cDate}"></i>`;
                     finishPadding = 'pr-5';
                 } else if (cType === 'mfo') {
                     finishConstraintIcon = `<i data-lucide="lock" class="w-3 h-3 text-red-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Must Finish On ${cDate}"></i>`;
