@@ -32,6 +32,7 @@
             --w-dur: 50px;
             --w-start: 110px; 
             --w-end: 95px;
+            --w-constraint: 70px;
             --w-actions: 140px;
         }
 
@@ -80,6 +81,8 @@
         .cell-input { width: 100%; height: 100%; background: transparent; border: none; outline: none; padding: 0 8px; color: #334155; }
         .cell-input:focus { background: white; box-shadow: inset 0 0 0 2px #6366f1; }
         .cell-readonly { background: #f1f5f9; color: #94a3b8; font-style: italic; pointer-events: none; }
+        select.cell-input { padding: 0 2px; appearance: none; text-align: center; font-weight: 600; }
+        select.cell-input:not(:disabled):hover { background: #f1f5f9; }
         .drag-handle { cursor: grab; color: #94a3b8; }
         .drag-handle:active { cursor: grabbing; }
 
@@ -128,7 +131,7 @@
             </div>
             <div>
                 <h1 class="font-bold text-lg text-slate-800 leading-none">Pro Logic <span class="text-xs font-normal text-gray-400 ml-1">v8.7</span></h1>
-                <p class="text-[10px] text-gray-500 font-medium">Double-Click Row for Details | ⚓ Anchored Date | 🔒 Hard Deadline</p>
+                <p class="text-[10px] text-gray-500 font-medium">Double-Click for Details | ⚓ Anchored | ⏰ Deadline | ⏳ Wait | 🔒 Locked</p>
             </div>
         </div>
 
@@ -186,6 +189,9 @@
                 <div class="col-cell px-2" style="width: var(--w-end)">
                     Finish <div class="col-resizer" onmousedown="app.startColResize(event, '--w-end')"></div>
                 </div>
+                <div class="col-cell justify-center" style="width: var(--w-constraint)">
+                    Constr <div class="col-resizer" onmousedown="app.startColResize(event, '--w-constraint')"></div>
+                </div>
                 <div class="col-cell justify-center" style="width: var(--w-actions)">
                     Actions
                 </div>
@@ -226,8 +232,15 @@
                         <label class="form-label">Constraint Type</label>
                         <select id="drawer-constraintType" class="form-input bg-gray-50" onchange="app.updateFromDrawer('constraintType', this.value)">
                             <option value="asap">As Soon As Possible (Default)</option>
-                            <option value="snet">Start No Earlier Than (SNET)</option>
-                            <option value="mfo">Must Finish On (Hard Deadline)</option>
+                            <optgroup label="Start Constraints">
+                                <option value="snet">Start No Earlier Than (SNET)</option>
+                                <option value="snlt">Start No Later Than (SNLT)</option>
+                            </optgroup>
+                            <optgroup label="Finish Constraints">
+                                <option value="fnet">Finish No Earlier Than (FNET)</option>
+                                <option value="fnlt">Finish No Later Than (FNLT)</option>
+                                <option value="mfo">Must Finish On (MFO)</option>
+                            </optgroup>
                         </select>
                         <p class="text-[10px] text-gray-500 mt-1" id="constraint-desc">Tasks flow naturally based on dependencies.</p>
                     </div>
@@ -363,8 +376,11 @@
             const el = document.getElementById('constraint-desc');
             const descriptions = {
                 'asap': "Task flows naturally based on predecessors.",
-                'snet': "Task cannot start earlier than date, but can start later.",
-                'mfo': "Task MUST finish on this date. Overrides logic."
+                'snet': "Task cannot start before this date, but can start later if needed.",
+                'snlt': "Task must start by this date. Creates conflict if dependencies push later.",
+                'fnet': "Task cannot finish before this date. Useful for cure times, inspections.",
+                'fnlt': "Task must finish by this date. Common for contract deadlines.",
+                'mfo': "Task MUST finish exactly on this date. Hard constraint."
             };
             el.innerText = descriptions[type] || descriptions['asap'];
         }
@@ -672,22 +688,73 @@
                     const cDate = t.constraintDate;
                     
                     let finalStart = dependencyStart;
+                    let finalEnd = null;
                     
-                    if (type === 'snet' && cDate) {
-                        // Start No Earlier Than
-                        if (!finalStart || cDate > finalStart) {
-                            finalStart = cDate;
-                        }
-                    } else if (type === 'mfo' && cDate) {
-                        // Must Finish On - hard constraint
-                        t.end = cDate;
-                        t.start = this.addWorkDays(cDate, -(t.duration - 1));
-                        return; // Skip normal calculation
-                    } else if (type === 'asap') {
-                        // As Soon As Possible
-                        if (!finalStart && !t.start) {
-                            finalStart = new Date().toISOString().split('T')[0];
-                        }
+                    // Handle different constraint types
+                    switch (type) {
+                        case 'snet':
+                            // Start No Earlier Than - floor on start date
+                            if (cDate) {
+                                if (!finalStart || cDate > finalStart) {
+                                    finalStart = cDate;
+                                }
+                            }
+                            break;
+                            
+                        case 'snlt':
+                            // Start No Later Than - ceiling on start date
+                            if (cDate) {
+                                if (!finalStart || finalStart > cDate) {
+                                    finalStart = cDate;
+                                }
+                            }
+                            break;
+                            
+                        case 'fnet':
+                            // Finish No Earlier Than - floor on end date
+                            // Calculate normal end first, then adjust if needed
+                            if (cDate) {
+                                if (!finalStart) finalStart = t.start || new Date().toISOString().split('T')[0];
+                                const normalEnd = this.addWorkDays(finalStart, t.duration - 1);
+                                if (normalEnd < cDate) {
+                                    // Need to extend - push end to constraint date
+                                    finalEnd = cDate;
+                                    // Recalculate start to maintain duration
+                                    finalStart = this.addWorkDays(cDate, -(t.duration - 1));
+                                }
+                            }
+                            break;
+                            
+                        case 'fnlt':
+                            // Finish No Later Than - ceiling on end date
+                            if (cDate) {
+                                if (!finalStart) finalStart = t.start || new Date().toISOString().split('T')[0];
+                                const normalEnd = this.addWorkDays(finalStart, t.duration - 1);
+                                if (normalEnd > cDate) {
+                                    // Need to pull back - set end to constraint date
+                                    finalEnd = cDate;
+                                    // Recalculate start to maintain duration
+                                    finalStart = this.addWorkDays(cDate, -(t.duration - 1));
+                                }
+                            }
+                            break;
+                            
+                        case 'mfo':
+                            // Must Finish On - hard constraint on end date
+                            if (cDate) {
+                                t.end = cDate;
+                                t.start = this.addWorkDays(cDate, -(t.duration - 1));
+                                return; // Skip normal calculation
+                            }
+                            break;
+                            
+                        case 'asap':
+                        default:
+                            // As Soon As Possible - no constraint
+                            if (!finalStart && !t.start) {
+                                finalStart = new Date().toISOString().split('T')[0];
+                            }
+                            break;
                     }
                     
                     if (!finalStart) finalStart = t.start;
@@ -698,7 +765,8 @@
                     }
                     
                     if (t.start && t.duration >= 0) {
-                        const newEnd = this.addWorkDays(t.start, t.duration - 1);
+                        // Use finalEnd if set by constraint, otherwise calculate normally
+                        const newEnd = finalEnd || this.addWorkDays(t.start, t.duration - 1);
                         if (t.end !== newEnd) {
                             t.end = newEnd;
                             changed = true;
@@ -756,6 +824,13 @@
                     task.constraintType = value;
                     if (value === 'asap') {
                         task.constraintDate = '';
+                    } else if (!task.constraintDate && value !== 'asap') {
+                        // Auto-set constraint date based on type
+                        if (value === 'snet' || value === 'snlt') {
+                            task.constraintDate = task.start || new Date().toISOString().split('T')[0];
+                        } else if (value === 'fnet' || value === 'fnlt' || value === 'mfo') {
+                            task.constraintDate = task.end || new Date().toISOString().split('T')[0];
+                        }
                     }
                     break;
                 case 'constraintDate':
@@ -804,14 +879,30 @@
                 const padding = depth * 20;
                 const isSelected = this.selectedTaskIds.has(task.id); 
 
-                let constraintIcon = '';
-                let constraintPadding = '';
-                if (task.constraintType === 'snet') {
-                    constraintIcon = `<i data-lucide="anchor" class="w-3 h-3 text-blue-400 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Start No Earlier Than ${task.constraintDate || ''}"></i>`;
-                    constraintPadding = 'pr-5';
-                } else if (task.constraintType === 'mfo') {
-                    constraintIcon = `<i data-lucide="lock" class="w-3 h-3 text-red-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Must Finish On ${task.constraintDate || ''}"></i>`;
-                    constraintPadding = 'pr-5';
+                // Constraint icons - start constraints go in Start column, finish constraints in Finish column
+                let startConstraintIcon = '';
+                let finishConstraintIcon = '';
+                let startPadding = '';
+                let finishPadding = '';
+                
+                const cType = task.constraintType;
+                const cDate = task.constraintDate || '';
+                
+                if (cType === 'snet') {
+                    startConstraintIcon = `<i data-lucide="anchor" class="w-3 h-3 text-blue-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Start No Earlier Than ${cDate}"></i>`;
+                    startPadding = 'pr-5';
+                } else if (cType === 'snlt') {
+                    startConstraintIcon = `<i data-lucide="alarm-clock" class="w-3 h-3 text-amber-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Start No Later Than ${cDate}"></i>`;
+                    startPadding = 'pr-5';
+                } else if (cType === 'fnet') {
+                    finishConstraintIcon = `<i data-lucide="hourglass" class="w-3 h-3 text-blue-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Finish No Earlier Than ${cDate}"></i>`;
+                    finishPadding = 'pr-5';
+                } else if (cType === 'fnlt') {
+                    finishConstraintIcon = `<i data-lucide="alarm-clock" class="w-3 h-3 text-amber-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Finish No Later Than ${cDate}"></i>`;
+                    finishPadding = 'pr-5';
+                } else if (cType === 'mfo') {
+                    finishConstraintIcon = `<i data-lucide="lock" class="w-3 h-3 text-red-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Must Finish On ${cDate}"></i>`;
+                    finishPadding = 'pr-5';
                 }
 
                 let collapseBtn = `<span class="w-5 inline-block"></span>`;
@@ -860,12 +951,28 @@
                             <input type="date" value="${task.start || ''}" 
                                 data-field="start" 
                                 data-task-id="${task.id}"
-                                class="cell-input text-xs ${constraintPadding} ${isParent ? 'cell-readonly' : ''}" 
+                                class="cell-input text-xs ${startPadding} ${isParent ? 'cell-readonly' : ''}" 
                                 ${isParent ? 'readonly' : ''}>
-                            ${constraintIcon}
+                            ${startConstraintIcon}
                         </div>
-                        <div class="col-cell" style="width: var(--w-end)">
-                            <input type="date" value="${task.end || ''}" readonly class="cell-input text-xs cell-readonly">
+                        <div class="col-cell relative" style="width: var(--w-end)">
+                            <input type="date" value="${task.end || ''}" readonly class="cell-input text-xs cell-readonly ${finishPadding}">
+                            ${finishConstraintIcon}
+                        </div>
+                        <div class="col-cell" style="width: var(--w-constraint)">
+                            <select 
+                                data-field="constraintType" 
+                                data-task-id="${task.id}"
+                                class="cell-input text-[10px] bg-transparent cursor-pointer ${isParent ? 'cell-readonly' : ''}"
+                                ${isParent ? 'disabled' : ''}
+                                title="Constraint Type">
+                                <option value="asap" ${(task.constraintType || 'asap') === 'asap' ? 'selected' : ''}>ASAP</option>
+                                <option value="snet" ${task.constraintType === 'snet' ? 'selected' : ''}>SNET</option>
+                                <option value="snlt" ${task.constraintType === 'snlt' ? 'selected' : ''}>SNLT</option>
+                                <option value="fnet" ${task.constraintType === 'fnet' ? 'selected' : ''}>FNET</option>
+                                <option value="fnlt" ${task.constraintType === 'fnlt' ? 'selected' : ''}>FNLT</option>
+                                <option value="mfo" ${task.constraintType === 'mfo' ? 'selected' : ''}>MFO</option>
+                            </select>
                         </div>
                         <div class="col-cell justify-center" style="width: var(--w-actions)">${actions}</div>
                     </div>
@@ -913,14 +1020,23 @@
                 }
             });
             
-            // Handle input changes via delegation
+            // Handle input changes via delegation (blur for text/date inputs)
             gridBody.addEventListener('blur', (e) => {
-                if (e.target.classList.contains('cell-input') && e.target.dataset.field) {
+                if (e.target.classList.contains('cell-input') && e.target.dataset.field && e.target.tagName !== 'SELECT') {
                     const field = e.target.dataset.field;
                     const taskId = e.target.dataset.taskId;
                     this.update(taskId, field, e.target.value);
                 }
             }, true); // Use capture phase for blur
+            
+            // Handle select changes via delegation (change event for dropdowns)
+            gridBody.addEventListener('change', (e) => {
+                if (e.target.classList.contains('cell-input') && e.target.dataset.field && e.target.tagName === 'SELECT') {
+                    const field = e.target.dataset.field;
+                    const taskId = e.target.dataset.taskId;
+                    this.update(taskId, field, e.target.value);
+                }
+            });
             
             // Handle Enter key in inputs
             gridBody.addEventListener('keydown', (e) => {
