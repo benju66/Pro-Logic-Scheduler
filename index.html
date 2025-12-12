@@ -841,14 +841,17 @@
             this.recalculateAll(); 
             this.saveData(); 
             
-            // Check if we should re-render (avoid killing active input)
+            // Check if we should re-render (avoid killing active text input)
             const activeEl = document.activeElement;
-            const isTypingInGrid = activeEl && activeEl.classList.contains('cell-input');
+            const isTypingInTextInput = activeEl && 
+                activeEl.classList.contains('cell-input') && 
+                (activeEl.tagName === 'INPUT' && activeEl.type !== 'date');
             
-            if (!isTypingInGrid) {
+            // Always re-render for constraint changes (affects icons) or if not typing in text input
+            if (field === 'constraintType' || field === 'constraintDate' || !isTypingInTextInput) {
                 this.render();
             } else {
-                // Only update Gantt when typing
+                // Only update Gantt when typing in text inputs
                 this.renderGantt();
             }
             
