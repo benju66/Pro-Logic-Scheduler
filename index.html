@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro Logic Scheduler | V8.4 (Copy & Paste)</title>
+    <title>Pro Logic Scheduler | V8.5 (Constraints & Drawer)</title>
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
@@ -15,7 +15,7 @@
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
         
         /* LAYOUT */
-        .split-container { display: flex; height: calc(100vh - 56px); width: 100%; overflow: hidden; }
+        .split-container { display: flex; height: calc(100vh - 56px); width: 100%; overflow: hidden; position: relative; }
         
         /* GRID PANE & COLUMNS */
         .grid-pane { 
@@ -30,7 +30,7 @@
             --w-id: 30px;
             --w-name: 220px;
             --w-dur: 50px;
-            --w-start: 95px;
+            --w-start: 110px; /* Widened for Pin Icon */
             --w-end: 95px;
             --w-actions: 140px;
         }
@@ -83,6 +83,20 @@
         .drag-handle { cursor: grab; color: #94a3b8; }
         .drag-handle:active { cursor: grabbing; }
 
+        /* SIDE DRAWER */
+        .side-drawer {
+            position: absolute; top: 0; right: -400px; width: 400px; height: 100%;
+            background: white; border-left: 1px solid #cbd5e1; shadow: -5px 0 15px rgba(0,0,0,0.05);
+            z-index: 100; transition: right 0.3s ease-in-out; display: flex; flex-direction: column;
+        }
+        .side-drawer.open { right: 0; box-shadow: -10px 0 25px -5px rgba(0, 0, 0, 0.1); }
+        .drawer-header { padding: 16px; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; background: #f8fafc; }
+        .drawer-body { padding: 20px; overflow-y: auto; flex: 1; }
+        .form-group { margin-bottom: 16px; }
+        .form-label { display: block; font-size: 11px; font-weight: 700; color: #64748b; margin-bottom: 4px; text-transform: uppercase; }
+        .form-input { width: 100%; border: 1px solid #cbd5e1; rounded: 4px; padding: 8px; font-size: 13px; outline: none; transition: border-color 0.2s; }
+        .form-input:focus { border-color: #6366f1; ring: 2px solid #e0e7ff; }
+
         /* GANTT OVERRIDES */
         .bar-wrapper.parent .bar { fill: #334155; height: 10px !important; transform: translateY(6px); opacity: 0.8; }
         .bar-wrapper .bar { fill: #93c5fd; rx: 2; ry: 2; }
@@ -102,8 +116,8 @@
                 <i data-lucide="maximize" class="w-5 h-5"></i>
             </div>
             <div>
-                <h1 class="font-bold text-lg text-slate-800 leading-none">Pro Logic <span class="text-xs font-normal text-gray-400 ml-1">v8.4</span></h1>
-                <p class="text-[10px] text-gray-500 font-medium">Ctrl+C Copy | Ctrl+V Paste | Ctrl+Z Undo</p>
+                <h1 class="font-bold text-lg text-slate-800 leading-none">Pro Logic <span class="text-xs font-normal text-gray-400 ml-1">v8.5</span></h1>
+                <p class="text-[10px] text-gray-500 font-medium">Double-Click Row for Details | Type Date to Pin 📌</p>
             </div>
         </div>
 
@@ -172,6 +186,51 @@
         <div class="gantt-pane" id="ganttPane">
             <div id="gantt-chart" class="h-full"></div>
         </div>
+
+        <div id="sideDrawer" class="side-drawer shadow-2xl">
+            <div class="drawer-header">
+                <h3 class="font-bold text-slate-800">Task Details</h3>
+                <button onclick="app.closeDrawer()" class="text-gray-400 hover:text-gray-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+            </div>
+            <div class="drawer-body">
+                <div class="form-group">
+                    <label class="form-label">Task Name</label>
+                    <input type="text" id="drawer-name" class="form-input" onchange="app.updateFromDrawer('name', this.value)">
+                </div>
+                <div class="form-group grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="form-label">Duration (Days)</label>
+                        <input type="number" id="drawer-duration" class="form-input" onchange="app.updateFromDrawer('duration', this.value)">
+                    </div>
+                    <div>
+                         <label class="form-label">% Complete</label>
+                         <input type="number" id="drawer-progress" class="form-input" onchange="app.updateFromDrawer('progress', this.value)">
+                    </div>
+                </div>
+
+                <div class="my-4 border-t border-gray-100 pt-4">
+                    <h4 class="font-bold text-xs text-slate-800 mb-3 uppercase tracking-wider">Constraints & Logic</h4>
+                    
+                    <div class="form-group">
+                        <label class="form-label">Constraint Type</label>
+                        <select id="drawer-constraintType" class="form-input bg-gray-50" onchange="app.updateFromDrawer('constraintType', this.value)">
+                            <option value="asap">As Soon As Possible (Default)</option>
+                            <option value="snet">Start No Earlier Than (SNET)</option>
+                            <option value="mfo">Must Finish On (Hard Deadline)</option>
+                        </select>
+                        <p class="text-[10px] text-gray-500 mt-1" id="constraint-desc">Tasks flow naturally based on dependencies.</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label class="form-label">Constraint Date</label>
+                        <input type="date" id="drawer-constraintDate" class="form-input" onchange="app.updateFromDrawer('constraintDate', this.value)">
+                    </div>
+                </div>
+            </div>
+            <div class="p-4 bg-gray-50 border-t border-gray-200">
+                <button onclick="app.deleteTask(app.activeTaskId); app.closeDrawer();" class="w-full text-red-600 bg-white border border-gray-300 hover:bg-red-50 font-medium text-xs py-2 rounded">Delete Task</button>
+            </div>
+        </div>
     </div>
 
     <dialog id="linkModal" class="rounded-lg shadow-2xl border border-gray-200 w-[500px] backdrop:bg-black/20 p-0 overflow-hidden">
@@ -214,16 +273,15 @@
     class ProScheduler {
         constructor() {
             this.tasks = [];
-            this.history = []; // Undo Stack
-            this.future = [];  // Redo Stack
-            this.clipboard = null; // Copy/Paste buffer
+            this.history = []; 
+            this.future = [];  
+            this.clipboard = null;
             this.gantt = null;
             
             // --- STATE ---
             this.selectedTaskIds = new Set(); 
             this.lastFocusedTaskId = null;    
             this.anchorTaskId = null;         
-            
             this.activeTaskId = null;         
             this.viewMode = 'Week';
             this.viewOptions = ['Day', 'Week', 'Month'];
@@ -242,504 +300,62 @@
             lucide.createIcons();
         }
 
-        // --- COPY / PASTE LOGIC ---
-        copySelection() {
-            const selected = this.tasks.filter(t => this.selectedTaskIds.has(t.id));
-            if (selected.length === 0) return;
-
-            // Smart Expansion: Include descendants if parent is selected
-            const payload = new Set();
-            
-            // Helper to get all descendants recursively
-            const getDescendants = (parentId) => {
-                const children = this.tasks.filter(t => t.parentId === parentId);
-                children.forEach(child => {
-                    payload.add(child);
-                    getDescendants(child.id);
-                });
-            };
-
-            selected.forEach(task => {
-                payload.add(task);
-                if (this.isParent(task.id)) {
-                    getDescendants(task.id);
-                }
-            });
-
-            // Sort by visual order to maintain structure
-            this.clipboard = Array.from(payload).sort((a, b) => 
-                this.tasks.indexOf(a) - this.tasks.indexOf(b)
-            );
-            
-            // Deep copy to clipboard
-            this.clipboard = JSON.parse(JSON.stringify(this.clipboard));
-            console.log(`Copied ${this.clipboard.length} tasks to clipboard.`);
-        }
-
-        pasteTasks() {
-            if (!this.clipboard || this.clipboard.length === 0) return;
-            this.saveCheckpoint(); // Undo point
-
-            // 1. Determine Insertion Point (After focused task, or at end)
-            const targetId = this.lastFocusedTaskId;
-            let targetIndex = targetId ? this.tasks.findIndex(t => t.id === targetId) : this.tasks.length - 1;
-            // If nothing selected, append to end
-            if (targetIndex === -1) targetIndex = this.tasks.length - 1;
-
-            const targetTask = this.tasks[targetIndex];
-            const targetParentId = targetTask ? targetTask.parentId : null;
-
-            const idMap = new Map(); // Old ID -> New ID
-            const newTasks = [];
-
-            // 2. First Pass: Create Tasks & Generate IDs
-            this.clipboard.forEach(task => {
-                const newId = Date.now() + Math.random().toString().slice(2,8);
-                idMap.set(task.id, newId);
-                
-                // Create Clone
-                const newTask = JSON.parse(JSON.stringify(task));
-                newTask.id = newId;
-                // Optional: Append (Copy) to name if desired, or keep same
-                // newTask.name += " (Copy)"; 
-                newTasks.push(newTask);
-            });
-
-            // 3. Second Pass: Re-link Hierarchy & Dependencies
-            newTasks.forEach(task => {
-                // A. Hierarchy (Parent ID)
-                // If the original parent was also copied, link to the new copy of the parent.
-                // If the original parent was NOT copied, graft this task onto the current target's parent.
-                const originalPid = this.clipboard.find(t => t.id === task.id)?.parentId; // Get old parent ID from clipboard source logic
-                
-                // Actually, we can just look at the task.parentId on the clone, because it currently holds the OLD ID.
-                const oldPid = task.parentId;
-
-                if (oldPid && idMap.has(oldPid)) {
-                    // Internal Parent -> Remap
-                    task.parentId = idMap.get(oldPid);
-                } else {
-                    // External Parent (Root of the copy) -> Graft to target location
-                    task.parentId = targetParentId; 
-                }
-
-                // B. Dependencies
-                task.dependencies.forEach(dep => {
-                    if (idMap.has(dep.id)) {
-                        // Internal Link (Predecessor is in the clipboard) -> Remap to new task
-                        dep.id = idMap.get(dep.id);
-                    }
-                    // Else: Leave as is (External Link to existing task)
-                });
-            });
-
-            // 4. Insert into Array
-            this.tasks.splice(targetIndex + 1, 0, ...newTasks);
-            
-            // 5. Select the new pasted items
-            this.selectedTaskIds.clear();
-            newTasks.forEach(t => this.selectedTaskIds.add(t.id));
-            if (newTasks.length > 0) this.lastFocusedTaskId = newTasks[0].id;
-
-            this.recalculateAll();
-            this.saveData();
-            this.render();
-        }
-
-        // --- UNDO / REDO LOGIC ---
-        saveCheckpoint() {
-            // Save deep copy of current tasks to history
-            const snapshot = JSON.stringify(this.tasks);
-            if (this.history.length > 0 && this.history[this.history.length - 1] === snapshot) return;
-            
-            this.history.push(snapshot);
-            this.future = []; 
-        }
-
-        undo() {
-            if (this.history.length === 0) return;
-            this.future.push(JSON.stringify(this.tasks));
-            const previousState = this.history.pop();
-            this.tasks = JSON.parse(previousState);
-            this.recalculateAll();
-            this.saveData();
-            this.render();
-        }
-
-        redo() {
-            if (this.future.length === 0) return;
-            this.history.push(JSON.stringify(this.tasks));
-            const nextState = this.future.pop();
-            this.tasks = JSON.parse(nextState);
-            this.recalculateAll();
-            this.saveData();
-            this.render();
-        }
-
-        // --- 0. KEYBOARD & SELECTION LOGIC ---
-        initKeyboardShortcuts() {
-            document.addEventListener('keydown', (e) => {
-                const isEditing = e.target.classList.contains('cell-input');
-                const isCtrl = e.ctrlKey || e.metaKey;
-
-                // COPY (Ctrl+C)
-                if (isCtrl && e.key === 'c' && !isEditing) {
-                    e.preventDefault();
-                    this.copySelection();
-                    return;
-                }
-
-                // PASTE (Ctrl+V)
-                if (isCtrl && e.key === 'v' && !isEditing) {
-                    e.preventDefault();
-                    this.pasteTasks();
-                    return;
-                }
-
-                // UNDO (Ctrl+Z)
-                if (isCtrl && e.key === 'z' && !e.shiftKey) {
-                    e.preventDefault();
-                    this.undo();
-                    return;
-                }
-                // REDO (Ctrl+Y or Ctrl+Shift+Z)
-                if ((isCtrl && e.key === 'y') || (isCtrl && e.shiftKey && e.key === 'z')) {
-                    e.preventDefault();
-                    this.redo();
-                    return;
-                }
-
-                // 0. EDIT MODE (F2) & INSERT
-                if (e.key === 'F2' && !isEditing && this.lastFocusedTaskId) {
-                    e.preventDefault();
-                    this.enterEditMode();
-                    return;
-                }
-                if (e.key === 'Insert' && !isEditing) {
-                    e.preventDefault();
-                    this.insertTaskAbove();
-                    return;
-                }
-                
-                // 0.5 EXIT EDIT MODE (Enter)
-                if (e.key === 'Enter' && isEditing) {
-                    e.target.blur(); // Triggers onchange
-                    return;
-                }
-
-                // 1. MOVE ROW (Ctrl + Up/Down)
-                if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && isCtrl) {
-                    e.preventDefault();
-                    this.moveTaskVertical(e.key === 'ArrowUp' ? -1 : 1);
-                    return;
-                }
-
-                // 2. INDENT / OUTDENT (Tab / Shift+Tab)
-                if (e.key === 'Tab' && !isEditing && this.selectedTaskIds.size > 0) {
-                    e.preventDefault();
-                    if (e.shiftKey) this.outdentSelection();
-                    else this.indentSelection();
-                    return;
-                }
-
-                // 3. NAVIGATION (Arrow Up/Down)
-                if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.ctrlKey && !isEditing) {
-                    e.preventDefault();
-                    this.handleArrowNavigation(e.key === 'ArrowUp' ? -1 : 1, e.shiftKey);
-                    return;
-                }
-                
-                // 4. EXPAND / COLLAPSE (Arrow Left/Right)
-                if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !isEditing && this.lastFocusedTaskId) {
-                    const task = this.tasks.find(t => t.id === this.lastFocusedTaskId);
-                    if (task && this.isParent(task.id)) {
-                        e.preventDefault(); 
-                        if (e.key === 'ArrowRight' && task._collapsed) {
-                            task._collapsed = false; 
-                            this.render();
-                        } else if (e.key === 'ArrowLeft' && !task._collapsed) {
-                            task._collapsed = true; 
-                            this.render();
-                        }
-                    }
-                    return;
-                }
-
-                // 5. GLOBAL SHORTCUTS
-                if (e.key === 'Escape') {
-                    if (isEditing) e.target.blur();
-                    else this.deselectAll();
-                    return;
-                }
-                
-                if ((e.key === 'Delete' || e.key === 'Backspace') && !isEditing && this.selectedTaskIds.size > 0) {
-                    this.deleteSelectedTasks();
-                }
-            });
-        }
-        
-        // --- NEW KEYBOARD HELPERS ---
-        enterEditMode() {
-            const row = document.querySelector(`.grid-row[data-id="${this.lastFocusedTaskId}"]`);
-            if (!row) return;
-            const input = row.querySelector('.cell-input'); // Selects first input (Name)
-            if (input) {
-                input.focus();
-                input.select(); // Select all text
-            }
-        }
-        
-        insertTaskAbove() {
-            this.saveCheckpoint(); // SAVE STATE
-            
-            if (!this.lastFocusedTaskId) {
-                this.addTask(); // Fallback to append if nothing selected
+        // --- DRAWER & CONSTRAINTS ---
+        openDrawer(id) {
+            // Close if already open for same task
+            if (this.activeTaskId === id && document.getElementById('sideDrawer').classList.contains('open')) {
+                this.closeDrawer();
                 return;
             }
-
-            const targetIndex = this.tasks.findIndex(t => t.id === this.lastFocusedTaskId);
-            if (targetIndex === -1) return;
-
-            const targetTask = this.tasks[targetIndex];
-            const newId = Date.now().toString();
-            const today = new Date().toISOString().split('T')[0];
-
-            const newTask = {
-                id: newId,
-                name: "New Task",
-                start: today,
-                end: today,
-                duration: 1,
-                parentId: targetTask.parentId, // Inherit parent (sibling logic)
-                dependencies: [],
-                progress: 0,
-                _collapsed: false
-            };
-
-            // Insert at index
-            this.tasks.splice(targetIndex, 0, newTask);
-
-            this.recalculateAll();
-            this.saveData();
-            this.render();
-            
-            // Auto-select the new task
-            this.lastFocusedTaskId = newId;
-            this.selectedTaskIds.clear();
-            this.selectedTaskIds.add(newId);
-            this.renderGrid();
-            this.scrollToRow(newId);
-        }
-
-        handleArrowNavigation(direction, isShift) {
-            const visibleTasks = this.getFlatList().filter(t => this.isVisible(t.id));
-            if (visibleTasks.length === 0) return;
-
-            let currentIndex = visibleTasks.findIndex(t => t.id === this.lastFocusedTaskId);
-            if (currentIndex === -1) currentIndex = 0;
-
-            let newIndex = currentIndex + direction;
-            if (newIndex < 0) newIndex = 0;
-            if (newIndex >= visibleTasks.length) newIndex = visibleTasks.length - 1;
-
-            const targetTask = visibleTasks[newIndex];
-            this.lastFocusedTaskId = targetTask.id;
-
-            if (!isShift) {
-                // Simple Move
-                this.anchorTaskId = targetTask.id;
-                this.selectedTaskIds.clear();
-                this.selectedTaskIds.add(targetTask.id);
-            } else {
-                // Bulk Select
-                if (!this.anchorTaskId) this.anchorTaskId = visibleTasks[currentIndex].id;
-                
-                const anchorIndex = visibleTasks.findIndex(t => t.id === this.anchorTaskId);
-                const start = Math.min(anchorIndex, newIndex);
-                const end = Math.max(anchorIndex, newIndex);
-
-                this.selectedTaskIds.clear();
-                for (let i = start; i <= end; i++) {
-                    this.selectedTaskIds.add(visibleTasks[i].id);
-                }
-            }
-
-            this.renderGrid();
-            this.scrollToRow(targetTask.id);
-        }
-
-        handleRowClick(e, id) {
-            if (e.target.classList.contains('cell-input') || e.target.closest('button')) return;
-
-            const visibleTasks = this.getFlatList().filter(t => this.isVisible(t.id));
-            const clickedIndex = visibleTasks.findIndex(t => t.id === id);
-            
-            this.lastFocusedTaskId = id;
-
-            if (e.shiftKey && this.anchorTaskId) {
-                const anchorIndex = visibleTasks.findIndex(t => t.id === this.anchorTaskId);
-                const start = Math.min(anchorIndex, clickedIndex);
-                const end = Math.max(anchorIndex, clickedIndex);
-                this.selectedTaskIds.clear();
-                for (let i = start; i <= end; i++) {
-                    this.selectedTaskIds.add(visibleTasks[i].id);
-                }
-            } else if (e.ctrlKey || e.metaKey) {
-                if (this.selectedTaskIds.has(id)) this.selectedTaskIds.delete(id);
-                else { this.selectedTaskIds.add(id); this.anchorTaskId = id; }
-            } else {
-                this.selectedTaskIds.clear();
-                this.selectedTaskIds.add(id);
-                this.anchorTaskId = id;
-            }
-            this.renderGrid();
-        }
-
-        scrollToRow(id) {
-            const row = document.querySelector(`.grid-row[data-id="${id}"]`);
-            if (row) row.scrollIntoView({ block: 'nearest', behavior: 'auto' });
-        }
-
-        deselectAll() {
-            this.selectedTaskIds.clear();
-            this.renderGrid();
-        }
-
-        moveTaskVertical(direction) {
-            if (!this.lastFocusedTaskId) return;
-            this.saveCheckpoint(); // SAVE STATE
-
-            const task = this.tasks.find(t => t.id === this.lastFocusedTaskId);
+            this.activeTaskId = id;
+            const task = this.tasks.find(t => t.id === id);
             if (!task) return;
+
+            // Populate Fields
+            document.getElementById('drawer-name').value = task.name;
+            document.getElementById('drawer-duration').value = task.duration;
+            document.getElementById('drawer-progress').value = task.progress || 0;
+            document.getElementById('drawer-constraintType').value = task.constraintType || 'asap';
+            document.getElementById('drawer-constraintDate').value = task.constraintDate || '';
             
-            const siblings = this.tasks.filter(t => t.parentId === task.parentId);
-            
-            const currentSiblingIndex = siblings.findIndex(t => t.id === task.id);
-            if (currentSiblingIndex === -1) return;
-            
-            const targetSiblingIndex = currentSiblingIndex + direction;
-            if (targetSiblingIndex < 0 || targetSiblingIndex >= siblings.length) return;
-            
-            const siblingTarget = siblings[targetSiblingIndex];
-            
-            const indexA = this.tasks.indexOf(task);
-            const indexB = this.tasks.indexOf(siblingTarget);
-            
-            if (indexA > -1 && indexB > -1) {
-                [this.tasks[indexA], this.tasks[indexB]] = [this.tasks[indexB], this.tasks[indexA]];
-                
-                this.saveData();
-                this.render();
-                this.scrollToRow(this.lastFocusedTaskId);
-            }
+            // Update Description Text
+            this.updateConstraintDesc(task.constraintType || 'asap');
+
+            // Slide In
+            document.getElementById('sideDrawer').classList.add('open');
         }
 
-        // --- 1. SCROLL & SORTABLE ---
-        initScrollSync() {
-            const grid = document.getElementById('grid-body');
-            const gantt = document.getElementById('ganttPane');
-            let isSyncingLeft = false; let isSyncingRight = false;
+        closeDrawer() {
+            document.getElementById('sideDrawer').classList.remove('open');
+            this.activeTaskId = null;
+        }
+
+        updateFromDrawer(field, value) {
+            if (!this.activeTaskId) return;
             
-            grid.onscroll = function() { 
-                if (!isSyncingLeft) { isSyncingRight = true; gantt.scrollTop = this.scrollTop; } 
-                isSyncingLeft = false; 
-            };
-            gantt.onscroll = function() { 
-                if (!isSyncingRight) { isSyncingLeft = true; grid.scrollTop = this.scrollTop; } 
-                isSyncingRight = false; 
-            };
+            // Special handling for constraints
+            if (field === 'constraintType') {
+                this.updateConstraintDesc(value);
+            }
+            
+            this.update(this.activeTaskId, field, value);
         }
 
-        initSortable() {
-            const el = document.getElementById('grid-body');
-            if (typeof Sortable === 'undefined') return;
-            this.sortable = Sortable.create(el, {
-                animation: 150,
-                handle: '.drag-handle',
-                ghostClass: 'sortable-ghost',
-                dragClass: 'sortable-drag',
-                onEnd: (evt) => {
-                    const { oldIndex, newIndex } = evt;
-                    if (oldIndex === newIndex) return;
-                    this.saveCheckpoint(); // SAVE STATE (Before Sort Move)
-                    this.render(); 
-                }
-            });
-        }
-        
-        // ... (Logic helpers) ...
-        validateMove(movedTaskId, newParentId) { /* ... */ }
-        checkDependencyCycle(predId, succId) { /* ... */ }
-        
-        zoom(direction) {
-            const idx = this.viewOptions.indexOf(this.viewMode);
-            if (direction === 'in' && idx > 0) { this.changeView(this.viewOptions[idx - 1]); } 
-            else if (direction === 'out' && idx < this.viewOptions.length - 1) { this.changeView(this.viewOptions[idx + 1]); }
-        }
-        changeView(mode) { this.viewMode = mode; document.getElementById('zoom-label').innerText = mode; if(this.gantt) this.gantt.change_view_mode(mode); }
-        
-        openPopout() {
-             const win = window.open('', 'ProLogicGantt', 'width=1200,height=800,menubar=no,toolbar=no');
-            if(!win) { alert('Popup blocked!'); return; }
-            const tasksJson = JSON.stringify(this.tasks.filter(t => t.start && t.end && this.isVisible(t.id)).map(t => ({
-                id: t.id, name: t.name, start: t.start, end: t.end, progress: t.progress,
-                dependencies: t.dependencies.map(d => d.id).join(", "), 
-                custom_class: (this.isParent(t.id) ? 'parent' : '') + (t._isCritical ? ' critical' : '')
-            })));
-            const html = `<!DOCTYPE html><html><head><title>Pro Logic Detached</title><script src="https://cdnjs.cloudflare.com/ajax/libs/frappe-gantt/0.6.1/frappe-gantt.min.js"><\/script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/frappe-gantt/0.6.1/frappe-gantt.css"><style>body{font-family:sans-serif;padding:20px}.bar-wrapper.parent .bar{fill:#334155;height:10px;opacity:0.8}.bar-wrapper .bar{fill:#93c5fd}.bar-wrapper.critical .bar{fill:#f87171;stroke:#dc2626}</style></head><body><h3>Pro Logic Detached View</h3><svg id="gantt"></svg><script>new Gantt("#gantt", ${tasksJson}, {header_height:50,column_width:30,view_modes:['Day','Week','Month'],bar_height:20,view_mode:'Week'});<\/script></body></html>`;
-            win.document.write(html); win.document.close();
+        updateConstraintDesc(type) {
+            const el = document.getElementById('constraint-desc');
+            if (type === 'asap') el.innerText = "Task flows naturally based on predecessors.";
+            if (type === 'snet') el.innerText = "Task cannot start earlier than date, but can start later.";
+            if (type === 'mfo') el.innerText = "Task MUST finish on this date. Overrides logic.";
         }
 
-        // --- 3. DATA MANAGEMENT ---
-        loadData() {
-            const stored = localStorage.getItem('pro_v7_9_data');
-            if (stored) { this.tasks = JSON.parse(stored); } 
-            else {
-                const fri = this.getNextDayOfWeek(5); 
-                this.tasks = [
-                    { id: "1", name: "Structure Phase", start: "", end: "", duration: 0, parentId: null, dependencies: [], progress: 0, _collapsed: false },
-                    { id: "2", name: "Framing", start: fri, end: "", duration: 3, parentId: "1", dependencies: [], progress: 0 },
-                    { id: "3", name: "Sheathing", start: "", end: "", duration: 2, parentId: "1", dependencies: [{id: "2", type: "FS", lag: 0}], progress: 0 },
-                ];
-            }
-        }
-        saveData() { localStorage.setItem('pro_v7_9_data', JSON.stringify(this.tasks)); }
-
-        // --- 4. LOGIC ENGINE ---
-        addWorkDays(startDateStr, days) {
-            if (!startDateStr) return "";
-            let date = new Date(startDateStr);
-            const direction = days >= 0 ? 1 : -1;
-            let remaining = Math.abs(days);
-            while (remaining > 0) {
-                date.setDate(date.getDate() + direction);
-                const day = date.getDay();
-                if (day !== 0 && day !== 6) remaining--;
-            }
-            return date.toISOString().split('T')[0];
-        }
-        calcDurationWorkDays(startStr, endStr) {
-            if (!startStr || !endStr) return 0;
-            let current = new Date(startStr);
-            let end = new Date(endStr);
-            if (current > end) return 0;
-            let count = 0;
-            while (current < end) {
-                current.setDate(current.getDate() + 1);
-                const day = current.getDay();
-                if (day !== 0 && day !== 6) count++;
-            }
-            return count; 
-        }
-        getNextDayOfWeek(dayIndex) {
-            const d = new Date(); d.setDate(d.getDate() + (7 + dayIndex - d.getDay()) % 7);
-            return d.toISOString().split('T')[0];
-        }
+        // --- CORE LOGIC (V8.5 Update) ---
         recalculateAll() {
              let changed = true; let loops = 0;
             while (changed && loops < 50) {
                 changed = false; loops++;
                 this.tasks.forEach(t => {
+                    // 1. Calculate Early Start from Dependencies
+                    let dependencyStart = null;
                     if (t.dependencies.length > 0) {
                         let maxStart = [];
                         t.dependencies.forEach(dep => {
@@ -751,23 +367,61 @@
                             }
                         });
                         if (maxStart.length > 0) {
-                            maxStart.sort().reverse();
-                            if (this.isParent(t.id)) t._minStartConstraint = maxStart[0];
-                            else if (t.start !== maxStart[0]) { t.start = maxStart[0]; changed = true; }
+                            maxStart.sort().reverse(); // Get latest date
+                            dependencyStart = maxStart[0];
                         }
                     }
-                    if (!this.isParent(t.id) && t.start && t.duration >= 0) {
-                        const newEnd = this.addWorkDays(t.start, t.duration);
-                        if (t.end !== newEnd) { t.end = newEnd; changed = true; }
+
+                    // 2. Apply Constraints
+                    const type = t.constraintType || 'asap';
+                    const cDate = t.constraintDate;
+                    
+                    if (this.isParent(t.id)) {
+                        // Parents don't have constraints usually, they wrap children. 
+                        // But we can store the dep start as a constraint for children logic if needed.
+                        t._minStartConstraint = dependencyStart; 
+                    } else {
+                        // LEAF TASK LOGIC
+                        let finalStart = dependencyStart;
+
+                        // Constraint Logic
+                        if (type === 'snet' && cDate) {
+                            // Start No Earlier Than: MAX(Dep, Constraint)
+                            if (!finalStart || cDate > finalStart) finalStart = cDate;
+                        } 
+                        else if (type === 'mfo' && cDate) {
+                            // Must Finish On: Backwards calculation
+                            t.end = cDate;
+                            t.start = this.addWorkDays(cDate, -(t.duration)); // Approx start
+                            // Note: We bypass normal forward pass for MFO
+                        }
+                        else if (type === 'asap') {
+                            // Keep purely dependency based (or today if no deps)
+                            if (!finalStart && !t.start) finalStart = new Date().toISOString().split('T')[0];
+                        }
+
+                        // Apply Start
+                        if (type !== 'mfo') {
+                             // If no deps and no constraint, keep existing start (manual float) or default to today
+                            if (!finalStart) finalStart = t.start; 
+                            if (t.start !== finalStart) { t.start = finalStart; changed = true; }
+                        }
+
+                        // Apply End (Forward Pass)
+                        if (type !== 'mfo' && t.start && t.duration >= 0) {
+                            const newEnd = this.addWorkDays(t.start, t.duration);
+                            if (t.end !== newEnd) { t.end = newEnd; changed = true; }
+                        }
                     }
                 });
+
+                // 3. Parent Rollup
                 this.tasks.forEach(p => {
                     if (!this.isParent(p.id)) return;
                     const children = this.tasks.filter(c => c.parentId === p.id && c.start && c.end);
                     if (children.length > 0) {
                         let minStart = children.map(c => c.start).sort()[0];
                         const maxEnd = children.map(c => c.end).sort().reverse()[0];
-                        if (p._minStartConstraint && minStart < p._minStartConstraint) minStart = p._minStartConstraint;
                         if (p.start !== minStart || p.end !== maxEnd) { 
                             p.start = minStart; p.end = maxEnd; 
                             p.duration = this.calcDurationWorkDays(minStart, maxEnd); 
@@ -778,34 +432,37 @@
             }
             this.calcCriticalPath();
         }
-        calcCriticalPath() {
-             const validEnds = this.tasks.filter(t => t.end).map(t => t.end);
-            const projectEnd = validEnds.sort().reverse()[0];
-            this.tasks.forEach(t => t._isCritical = false); 
-            if (projectEnd) {
-                const mark = (task) => {
-                    if(task._isCritical) return;
-                    task._isCritical = true;
-                    task.dependencies.forEach(dep => { const pred = this.tasks.find(x => x.id === dep.id); if(pred) mark(pred); });
-                    if (task.parentId) { const p = this.tasks.find(x => x.id === task.parentId); if(p) p._isCritical = true; }
-                };
-                this.tasks.filter(t => t.end === projectEnd).forEach(t => mark(t));
+
+        update(id, field, value) {
+            this.saveCheckpoint(); 
+            const task = this.tasks.find(t => t.id === id);
+            
+            if (field === 'duration') task.duration = parseInt(value) || 0;
+            if (field === 'name') task.name = value;
+            if (field === 'progress') task.progress = parseInt(value) || 0;
+            
+            // Special: Manual Date Entry -> SNET Constraint
+            if (field === 'start') {
+                task.constraintType = 'snet';
+                task.constraintDate = value;
+                // We do NOT set task.start directly here; we let recalculateAll() apply the constraint logic
+            }
+
+            // Drawer Updates
+            if (field === 'constraintType') task.constraintType = value;
+            if (field === 'constraintDate') task.constraintDate = value;
+
+            this.recalculateAll(); 
+            this.saveData(); 
+            this.render();
+            
+            // If drawer is open, keep fields in sync
+            if(this.activeTaskId === id && document.getElementById('sideDrawer').classList.contains('open')) {
+                // Refresh drawer values if logic changed them (e.g. duration recalc)
             }
         }
-        isParent(id) { return this.tasks.some(t => t.parentId === id); }
-        isVisible(taskId) {
-            let curr = this.tasks.find(t => t.id === taskId);
-            while (curr && curr.parentId) {
-                const parent = this.tasks.find(p => p.id === curr.parentId);
-                if (parent && parent._collapsed) return false;
-                curr = parent;
-            }
-            return true;
-        }
 
-        // --- 5. UI RENDERING ---
-        render() { this.renderGrid(); this.renderGantt(); lucide.createIcons(); }
-
+        // --- RENDER GRID (Updated for Pins & Double Click) ---
         renderGrid() {
             const container = document.getElementById('grid-body');
             container.innerHTML = '';
@@ -816,9 +473,14 @@
                 const depth = this.getDepth(task.id);
                 const isParent = this.isParent(task.id);
                 const padding = depth * 20;
-                
-                // SELECTION CHECK
                 const isSelected = this.selectedTaskIds.has(task.id); 
+
+                // Pin Logic
+                let pinIcon = '';
+                if (task.constraintType === 'snet' || task.constraintType === 'mfo') {
+                    const color = task.constraintType === 'mfo' ? 'text-red-500' : 'text-gray-400';
+                    pinIcon = `<i data-lucide="pin" class="w-3 h-3 ${color} ml-1 absolute right-2 top-1/2 -translate-y-1/2"></i>`;
+                }
 
                 let collapseBtn = `<span class="w-5 inline-block"></span>`;
                 if (isParent) {
@@ -827,16 +489,17 @@
                 }
 
                 let actions = `<div class="flex items-center justify-center gap-1">`;
-                actions += `<button onclick="app.outdent('${task.id}')" class="p-1 text-gray-400 hover:text-slate-800 rounded hover:bg-slate-100" title="Outdent (Shift+Tab)"><i data-lucide="outdent" class="w-3 h-3"></i></button>`;
-                actions += `<button onclick="app.indent('${task.id}')" class="p-1 text-gray-400 hover:text-slate-800 rounded hover:bg-slate-100" title="Indent (Tab)"><i data-lucide="indent" class="w-3 h-3"></i></button>`;
-                if (!isParent) actions += `<button onclick="app.openLinks('${task.id}')" class="p-1 text-gray-400 hover:text-indigo-600 rounded hover:bg-indigo-50 ml-1" title="Edit Links"><i data-lucide="link" class="w-3 h-3"></i></button>`;
-                actions += `<button onclick="app.deleteTask('${task.id}')" class="p-1 text-gray-400 hover:text-red-600 rounded hover:bg-red-50 ml-1" title="Delete"><i data-lucide="trash-2" class="w-3 h-3"></i></button>`;
+                actions += `<button onclick="app.outdent('${task.id}')" class="p-1 text-gray-400 hover:text-slate-800 rounded hover:bg-slate-100"><i data-lucide="outdent" class="w-3 h-3"></i></button>`;
+                actions += `<button onclick="app.indent('${task.id}')" class="p-1 text-gray-400 hover:text-slate-800 rounded hover:bg-slate-100"><i data-lucide="indent" class="w-3 h-3"></i></button>`;
+                if (!isParent) actions += `<button onclick="app.openLinks('${task.id}')" class="p-1 text-gray-400 hover:text-indigo-600 rounded hover:bg-indigo-50 ml-1"><i data-lucide="link" class="w-3 h-3"></i></button>`;
+                actions += `<button onclick="app.deleteTask('${task.id}')" class="p-1 text-gray-400 hover:text-red-600 rounded hover:bg-red-50 ml-1"><i data-lucide="trash-2" class="w-3 h-3"></i></button>`;
                 actions += `</div>`;
 
                 container.innerHTML += `
                     <div class="grid-row group ${isParent ? 'bg-slate-50' : ''} ${isSelected ? 'row-selected' : ''}" 
                          data-id="${task.id}"
                          onclick="app.handleRowClick(event, '${task.id}')"
+                         ondblclick="app.openDrawer('${task.id}')"
                     >
                         
                         <div class="col-cell justify-center" style="width: var(--w-chk)">
@@ -863,8 +526,9 @@
                             <input type="number" value="${task.duration}" onchange="app.update('${task.id}', 'duration', this.value)" class="cell-input text-center ${isParent ? 'cell-readonly' : ''}" ${isParent ? 'readonly' : ''}>
                             <div class="col-resizer" onmousedown="app.startColResize(event, '--w-dur')"></div>
                         </div>
-                        <div class="col-cell" style="width: var(--w-start)">
+                        <div class="col-cell relative" style="width: var(--w-start)">
                             <input type="date" value="${task.start}" onchange="app.update('${task.id}', 'start', this.value)" class="cell-input text-xs ${isParent ? 'cell-readonly' : ''}" ${isParent ? 'readonly' : ''}>
+                            ${pinIcon}
                             <div class="col-resizer" onmousedown="app.startColResize(event, '--w-start')"></div>
                         </div>
                         <div class="col-cell" style="width: var(--w-end)">
@@ -877,328 +541,105 @@
             });
         }
 
-        renderGantt() {
-             const validTasks = this.tasks.filter(t => t.start && t.end && this.isVisible(t.id));
-            const ganttData = validTasks.map(t => ({
-                id: t.id, name: t.name, start: t.start, end: t.end, progress: t.progress,
-                dependencies: t.dependencies.map(d => d.id).join(", "), 
-                custom_class: (this.isParent(t.id) ? 'parent' : '') + (t._isCritical ? ' critical' : '')
-            }));
-            if(ganttData.length === 0) { document.getElementById('gantt-chart').innerHTML = '<div class="text-gray-400 text-xs p-4">No visible tasks</div>'; return; }
-            if (!this.gantt) {
-                this.gantt = new Gantt("#gantt-chart", ganttData, {
-                    header_height: 50, column_width: 30, step: 24, view_modes: ['Day', 'Week', 'Month'],
-                    bar_height: 20, bar_corner_radius: 3, arrow_curve: 5, padding: 18,
-                    view_mode: this.viewMode, date_format: 'YYYY-MM-DD', 
-                    on_date_change: (task, start, end) => this.handleDrag(task, start, end)
-                });
-            } else { this.gantt.refresh(ganttData); }
-        }
-
-        // --- 6. ACTIONS ---
-        toggleCollapse(id) { const t = this.tasks.find(x => x.id === id); if (t) { t._collapsed = !t._collapsed; this.render(); } }
+        // --- (EXISTING METHODS RETAINED BELOW) ---
+        // ... (Undo/Redo, Copy/Paste, Hierarchy, Import/Export, Scroll, etc.) ...
         
-        deleteTask(id) {
-            this.saveCheckpoint(); // SAVE STATE
-            const isParent = this.isParent(id);
-            if (confirm(`Delete? ${isParent ? '(This will delete all children tasks)' : ''}`)) {
-                let idsToRemove = [id];
-                if (isParent) { const getDescendants = (pid) => { this.tasks.filter(c => c.parentId === pid).forEach(c => { idsToRemove.push(c.id); getDescendants(c.id); }); }; getDescendants(id); }
-                this.tasks = this.tasks.filter(t => !idsToRemove.includes(t.id));
-                this.tasks.forEach(t => { t.dependencies = t.dependencies.filter(d => !idsToRemove.includes(d.id)); });
-                
-                // Cleanup
-                idsToRemove.forEach(remId => this.selectedTaskIds.delete(remId));
-                this.recalculateAll(); this.saveData(); this.render();
-            }
+        saveCheckpoint() {
+            const snapshot = JSON.stringify(this.tasks);
+            if (this.history.length > 0 && this.history[this.history.length - 1] === snapshot) return;
+            this.history.push(snapshot); this.future = []; 
         }
-        
-        deleteSelectedTasks() {
-            this.saveCheckpoint(); // SAVE STATE
-            if(confirm(`Delete ${this.selectedTaskIds.size} tasks?`)) {
-                const ids = Array.from(this.selectedTaskIds);
-                ids.forEach(id => {
-                    let idsToRemove = [id];
-                    if (this.isParent(id)) { 
-                        const getDescendants = (pid) => { this.tasks.filter(c => c.parentId === pid).forEach(c => { idsToRemove.push(c.id); getDescendants(c.id); }); }; 
-                        getDescendants(id); 
-                    }
-                    this.tasks = this.tasks.filter(t => !idsToRemove.includes(t.id));
-                    this.tasks.forEach(t => { t.dependencies = t.dependencies.filter(d => !idsToRemove.includes(d.id)); });
-                });
-                this.selectedTaskIds.clear();
-                this.recalculateAll(); this.saveData(); this.render();
-            }
-        }
+        undo() { if (this.history.length === 0) return; this.future.push(JSON.stringify(this.tasks)); const previousState = this.history.pop(); this.tasks = JSON.parse(previousState); this.recalculateAll(); this.saveData(); this.render(); }
+        redo() { if (this.future.length === 0) return; this.history.push(JSON.stringify(this.tasks)); const nextState = this.future.pop(); this.tasks = JSON.parse(nextState); this.recalculateAll(); this.saveData(); this.render(); }
 
-        update(id, field, value) {
-            this.saveCheckpoint(); // SAVE STATE
-            const task = this.tasks.find(t => t.id === id);
-            if (field === 'duration') task.duration = parseInt(value) || 0;
-            if (field === 'start') task.start = value;
-            if (field === 'name') task.name = value;
+        copySelection() {
+            const selected = this.tasks.filter(t => this.selectedTaskIds.has(t.id)); if (selected.length === 0) return;
+            const payload = new Set();
+            const getDescendants = (parentId) => { this.tasks.filter(t => t.parentId === parentId).forEach(child => { payload.add(child); getDescendants(child.id); }); };
+            selected.forEach(task => { payload.add(task); if (this.isParent(task.id)) { getDescendants(task.id); } });
+            this.clipboard = Array.from(payload).sort((a, b) => this.tasks.indexOf(a) - this.tasks.indexOf(b));
+            this.clipboard = JSON.parse(JSON.stringify(this.clipboard));
+        }
+        pasteTasks() {
+            if (!this.clipboard || this.clipboard.length === 0) return;
+            this.saveCheckpoint(); 
+            const targetId = this.lastFocusedTaskId;
+            let targetIndex = targetId ? this.tasks.findIndex(t => t.id === targetId) : this.tasks.length - 1;
+            if (targetIndex === -1) targetIndex = this.tasks.length - 1;
+            const targetTask = this.tasks[targetIndex];
+            const targetParentId = targetTask ? targetTask.parentId : null;
+            const idMap = new Map(); const newTasks = [];
+            this.clipboard.forEach(task => { const newId = Date.now() + Math.random().toString().slice(2,8); idMap.set(task.id, newId); const newTask = JSON.parse(JSON.stringify(task)); newTask.id = newId; newTasks.push(newTask); });
+            newTasks.forEach(task => {
+                const oldPid = task.parentId;
+                if (oldPid && idMap.has(oldPid)) { task.parentId = idMap.get(oldPid); } else { task.parentId = targetParentId; }
+                task.dependencies.forEach(dep => { if (idMap.has(dep.id)) { dep.id = idMap.get(dep.id); } });
+            });
+            this.tasks.splice(targetIndex + 1, 0, ...newTasks);
+            this.selectedTaskIds.clear(); newTasks.forEach(t => this.selectedTaskIds.add(t.id));
             this.recalculateAll(); this.saveData(); this.render();
         }
-        handleDrag(task, start, end) {
-            this.saveCheckpoint(); // SAVE STATE (Before applying drag)
-            const t = this.tasks.find(x => x.id === task.id);
-            if (this.isParent(t.id)) { this.render(); return; }
-            const startStr = start.toISOString().split('T')[0];
-            const endStr = end.toISOString().split('T')[0];
-            t.start = startStr; t.duration = this.calcDurationWorkDays(startStr, endStr);
-            this.recalculateAll(); this.saveData(); this.renderGrid(); 
+        
+        // --- KEYBOARD & EVENT ---
+        initKeyboardShortcuts() {
+            document.addEventListener('keydown', (e) => {
+                const isEditing = e.target.classList.contains('cell-input'); const isCtrl = e.ctrlKey || e.metaKey;
+                if (isCtrl && e.key === 'c' && !isEditing) { e.preventDefault(); this.copySelection(); return; }
+                if (isCtrl && e.key === 'v' && !isEditing) { e.preventDefault(); this.pasteTasks(); return; }
+                if (isCtrl && e.key === 'z' && !e.shiftKey) { e.preventDefault(); this.undo(); return; }
+                if ((isCtrl && e.key === 'y') || (isCtrl && e.shiftKey && e.key === 'z')) { e.preventDefault(); this.redo(); return; }
+                if (e.key === 'F2' && !isEditing && this.lastFocusedTaskId) { e.preventDefault(); this.enterEditMode(); return; }
+                if (e.key === 'Insert' && !isEditing) { e.preventDefault(); this.insertTaskAbove(); return; }
+                if (e.key === 'Enter' && isEditing) { e.target.blur(); return; }
+                if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && isCtrl) { e.preventDefault(); this.moveTaskVertical(e.key === 'ArrowUp' ? -1 : 1); return; }
+                if (e.key === 'Tab' && !isEditing && this.selectedTaskIds.size > 0) { e.preventDefault(); if (e.shiftKey) this.outdentSelection(); else this.indentSelection(); return; }
+                if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.ctrlKey && !isEditing) { e.preventDefault(); this.handleArrowNavigation(e.key === 'ArrowUp' ? -1 : 1, e.shiftKey); return; }
+                if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && !isEditing && this.lastFocusedTaskId) { const task = this.tasks.find(t => t.id === this.lastFocusedTaskId); if (task && this.isParent(task.id)) { e.preventDefault(); if (e.key === 'ArrowRight' && task._collapsed) { task._collapsed = false; this.render(); } else if (e.key === 'ArrowLeft' && !task._collapsed) { task._collapsed = true; this.render(); } } return; }
+                if (e.key === 'Escape') { if (isEditing) e.target.blur(); else if(document.getElementById('sideDrawer').classList.contains('open')) this.closeDrawer(); else this.deselectAll(); return; }
+                if ((e.key === 'Delete' || e.key === 'Backspace') && !isEditing && this.selectedTaskIds.size > 0) { this.deleteSelectedTasks(); }
+            });
         }
-        addTask() {
-            this.saveCheckpoint(); // SAVE STATE
-            const id = Date.now().toString();
-            const today = new Date().toISOString().split('T')[0];
-            this.tasks.push({ id, name: "New Task", start: today, end: today, duration: 1, parentId: null, dependencies: [], progress: 0, _collapsed: false });
-            this.recalculateAll(); this.saveData(); this.render();
-        }
-
-        // --- 7. HIERARCHY ---
-        getFlatList() {
-            const res = [];
-            const add = (pid) => this.tasks.filter(t => t.parentId === pid).forEach(t => { res.push(t); add(t.id); });
-            add(null);
-            const knownIds = res.map(t => t.id);
-            this.tasks.filter(t => !knownIds.includes(t.id)).forEach(t => { t.parentId = null; res.push(t); });
-            return res;
-        }
+        enterEditMode() { const row = document.querySelector(`.grid-row[data-id="${this.lastFocusedTaskId}"]`); if (!row) return; const input = row.querySelector('.cell-input'); if (input) { input.focus(); input.select(); } }
+        insertTaskAbove() { this.saveCheckpoint(); if (!this.lastFocusedTaskId) { this.addTask(); return; } const targetIndex = this.tasks.findIndex(t => t.id === this.lastFocusedTaskId); if (targetIndex === -1) return; const targetTask = this.tasks[targetIndex]; const newId = Date.now().toString(); const today = new Date().toISOString().split('T')[0]; const newTask = { id: newId, name: "New Task", start: today, end: today, duration: 1, parentId: targetTask.parentId, dependencies: [], progress: 0, _collapsed: false }; this.tasks.splice(targetIndex, 0, newTask); this.recalculateAll(); this.saveData(); this.render(); this.lastFocusedTaskId = newId; this.selectedTaskIds.clear(); this.selectedTaskIds.add(newId); this.renderGrid(); this.scrollToRow(newId); }
+        handleArrowNavigation(direction, isShift) { const visibleTasks = this.getFlatList().filter(t => this.isVisible(t.id)); if (visibleTasks.length === 0) return; let currentIndex = visibleTasks.findIndex(t => t.id === this.lastFocusedTaskId); if (currentIndex === -1) currentIndex = 0; let newIndex = currentIndex + direction; if (newIndex < 0) newIndex = 0; if (newIndex >= visibleTasks.length) newIndex = visibleTasks.length - 1; const targetTask = visibleTasks[newIndex]; this.lastFocusedTaskId = targetTask.id; if (!isShift) { this.anchorTaskId = targetTask.id; this.selectedTaskIds.clear(); this.selectedTaskIds.add(targetTask.id); } else { if (!this.anchorTaskId) this.anchorTaskId = visibleTasks[currentIndex].id; const anchorIndex = visibleTasks.findIndex(t => t.id === this.anchorTaskId); const start = Math.min(anchorIndex, newIndex); const end = Math.max(anchorIndex, newIndex); this.selectedTaskIds.clear(); for (let i = start; i <= end; i++) { this.selectedTaskIds.add(visibleTasks[i].id); } } this.renderGrid(); this.scrollToRow(targetTask.id); }
+        handleRowClick(e, id) { if (e.target.classList.contains('cell-input') || e.target.closest('button')) return; const visibleTasks = this.getFlatList().filter(t => this.isVisible(t.id)); const clickedIndex = visibleTasks.findIndex(t => t.id === id); this.lastFocusedTaskId = id; if (e.shiftKey && this.anchorTaskId) { const anchorIndex = visibleTasks.findIndex(t => t.id === this.anchorTaskId); const start = Math.min(anchorIndex, clickedIndex); const end = Math.max(anchorIndex, clickedIndex); this.selectedTaskIds.clear(); for (let i = start; i <= end; i++) { this.selectedTaskIds.add(visibleTasks[i].id); } } else if (e.ctrlKey || e.metaKey) { if (this.selectedTaskIds.has(id)) this.selectedTaskIds.delete(id); else { this.selectedTaskIds.add(id); this.anchorTaskId = id; } } else { this.selectedTaskIds.clear(); this.selectedTaskIds.add(id); this.anchorTaskId = id; } this.renderGrid(); }
+        scrollToRow(id) { const row = document.querySelector(`.grid-row[data-id="${id}"]`); if (row) row.scrollIntoView({ block: 'nearest', behavior: 'auto' }); }
+        deselectAll() { this.selectedTaskIds.clear(); this.renderGrid(); }
+        moveTaskVertical(direction) { if (!this.lastFocusedTaskId) return; this.saveCheckpoint(); const task = this.tasks.find(t => t.id === this.lastFocusedTaskId); if (!task) return; const siblings = this.tasks.filter(t => t.parentId === task.parentId); const currentSiblingIndex = siblings.findIndex(t => t.id === task.id); if (currentSiblingIndex === -1) return; const targetSiblingIndex = currentSiblingIndex + direction; if (targetSiblingIndex < 0 || targetSiblingIndex >= siblings.length) return; const siblingTarget = siblings[targetSiblingIndex]; const indexA = this.tasks.indexOf(task); const indexB = this.tasks.indexOf(siblingTarget); if (indexA > -1 && indexB > -1) { [this.tasks[indexA], this.tasks[indexB]] = [this.tasks[indexB], this.tasks[indexA]]; this.saveData(); this.render(); this.scrollToRow(this.lastFocusedTaskId); } }
+        initScrollSync() { const grid = document.getElementById('grid-body'); const gantt = document.getElementById('ganttPane'); let isSyncingLeft = false; let isSyncingRight = false; grid.onscroll = function() { if (!isSyncingLeft) { isSyncingRight = true; gantt.scrollTop = this.scrollTop; } isSyncingLeft = false; }; gantt.onscroll = function() { if (!isSyncingRight) { isSyncingLeft = true; grid.scrollTop = this.scrollTop; } isSyncingRight = false; }; }
+        initSortable() { const el = document.getElementById('grid-body'); if (typeof Sortable === 'undefined') return; this.sortable = Sortable.create(el, { animation: 150, handle: '.drag-handle', ghostClass: 'sortable-ghost', dragClass: 'sortable-drag', onEnd: (evt) => { const { oldIndex, newIndex } = evt; if (oldIndex === newIndex) return; this.saveCheckpoint(); this.render(); } }); }
+        zoom(direction) { const idx = this.viewOptions.indexOf(this.viewMode); if (direction === 'in' && idx > 0) { this.changeView(this.viewOptions[idx - 1]); } else if (direction === 'out' && idx < this.viewOptions.length - 1) { this.changeView(this.viewOptions[idx + 1]); } }
+        changeView(mode) { this.viewMode = mode; document.getElementById('zoom-label').innerText = mode; if(this.gantt) this.gantt.change_view_mode(mode); }
+        openPopout() { const win = window.open('', 'ProLogicGantt', 'width=1200,height=800,menubar=no,toolbar=no'); if(!win) { alert('Popup blocked!'); return; } const tasksJson = JSON.stringify(this.tasks.filter(t => t.start && t.end && this.isVisible(t.id)).map(t => ({ id: t.id, name: t.name, start: t.start, end: t.end, progress: t.progress, dependencies: t.dependencies.map(d => d.id).join(", "), custom_class: (this.isParent(t.id) ? 'parent' : '') + (t._isCritical ? ' critical' : '') }))); const html = `<!DOCTYPE html><html><head><title>Pro Logic Detached</title><script src="https://cdnjs.cloudflare.com/ajax/libs/frappe-gantt/0.6.1/frappe-gantt.min.js"><\/script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/frappe-gantt/0.6.1/frappe-gantt.css"><style>body{font-family:sans-serif;padding:20px}.bar-wrapper.parent .bar{fill:#334155;height:10px;opacity:0.8}.bar-wrapper .bar{fill:#93c5fd}.bar-wrapper.critical .bar{fill:#f87171;stroke:#dc2626}</style></head><body><h3>Pro Logic Detached View</h3><svg id="gantt"></svg><script>new Gantt("#gantt", ${tasksJson}, {header_height:50,column_width:30,view_modes:['Day','Week','Month'],bar_height:20,view_mode:'Week'});<\/script></body></html>`; win.document.write(html); win.document.close(); }
+        loadData() { const stored = localStorage.getItem('pro_v7_9_data'); if (stored) { this.tasks = JSON.parse(stored); } else { const fri = this.getNextDayOfWeek(5); this.tasks = [ { id: "1", name: "Structure Phase", start: "", end: "", duration: 0, parentId: null, dependencies: [], progress: 0, _collapsed: false }, { id: "2", name: "Framing", start: fri, end: "", duration: 3, parentId: "1", dependencies: [], progress: 0 }, { id: "3", name: "Sheathing", start: "", end: "", duration: 2, parentId: "1", dependencies: [{id: "2", type: "FS", lag: 0}], progress: 0 }, ]; } }
+        saveData() { localStorage.setItem('pro_v7_9_data', JSON.stringify(this.tasks)); }
+        addWorkDays(startDateStr, days) { if (!startDateStr) return ""; let date = new Date(startDateStr); const direction = days >= 0 ? 1 : -1; let remaining = Math.abs(days); while (remaining > 0) { date.setDate(date.getDate() + direction); const day = date.getDay(); if (day !== 0 && day !== 6) remaining--; } return date.toISOString().split('T')[0]; }
+        calcDurationWorkDays(startStr, endStr) { if (!startStr || !endStr) return 0; let current = new Date(startStr); let end = new Date(endStr); if (current > end) return 0; let count = 0; while (current < end) { current.setDate(current.getDate() + 1); const day = current.getDay(); if (day !== 0 && day !== 6) count++; } return count; }
+        getNextDayOfWeek(dayIndex) { const d = new Date(); d.setDate(d.getDate() + (7 + dayIndex - d.getDay()) % 7); return d.toISOString().split('T')[0]; }
+        calcCriticalPath() { const validEnds = this.tasks.filter(t => t.end).map(t => t.end); const projectEnd = validEnds.sort().reverse()[0]; this.tasks.forEach(t => t._isCritical = false); if (projectEnd) { const mark = (task) => { if(task._isCritical) return; task._isCritical = true; task.dependencies.forEach(dep => { const pred = this.tasks.find(x => x.id === dep.id); if(pred) mark(pred); }); if (task.parentId) { const p = this.tasks.find(x => x.id === task.parentId); if(p) p._isCritical = true; } }; this.tasks.filter(t => t.end === projectEnd).forEach(t => mark(t)); } }
+        isParent(id) { return this.tasks.some(t => t.parentId === id); }
+        isVisible(taskId) { let curr = this.tasks.find(t => t.id === taskId); while (curr && curr.parentId) { const parent = this.tasks.find(p => p.id === curr.parentId); if (parent && parent._collapsed) return false; curr = parent; } return true; }
+        render() { this.renderGrid(); this.renderGantt(); lucide.createIcons(); }
+        renderGantt() { const validTasks = this.tasks.filter(t => t.start && t.end && this.isVisible(t.id)); const ganttData = validTasks.map(t => ({ id: t.id, name: t.name, start: t.start, end: t.end, progress: t.progress, dependencies: t.dependencies.map(d => d.id).join(", "), custom_class: (this.isParent(t.id) ? 'parent' : '') + (t._isCritical ? ' critical' : '') })); if(ganttData.length === 0) { document.getElementById('gantt-chart').innerHTML = '<div class="text-gray-400 text-xs p-4">No visible tasks</div>'; return; } if (!this.gantt) { this.gantt = new Gantt("#gantt-chart", ganttData, { header_height: 50, column_width: 30, step: 24, view_modes: ['Day', 'Week', 'Month'], bar_height: 20, bar_corner_radius: 3, arrow_curve: 5, padding: 18, view_mode: this.viewMode, date_format: 'YYYY-MM-DD', on_date_change: (task, start, end) => this.handleDrag(task, start, end) }); } else { this.gantt.refresh(ganttData); } }
+        deleteTask(id) { this.saveCheckpoint(); const isParent = this.isParent(id); if (confirm(`Delete? ${isParent ? '(This will delete all children tasks)' : ''}`)) { let idsToRemove = [id]; if (isParent) { const getDescendants = (pid) => { this.tasks.filter(c => c.parentId === pid).forEach(c => { idsToRemove.push(c.id); getDescendants(c.id); }); }; getDescendants(id); } this.tasks = this.tasks.filter(t => !idsToRemove.includes(t.id)); this.tasks.forEach(t => { t.dependencies = t.dependencies.filter(d => !idsToRemove.includes(d.id)); }); idsToRemove.forEach(remId => this.selectedTaskIds.delete(remId)); this.recalculateAll(); this.saveData(); this.render(); } }
+        deleteSelectedTasks() { this.saveCheckpoint(); if(confirm(`Delete ${this.selectedTaskIds.size} tasks?`)) { const ids = Array.from(this.selectedTaskIds); ids.forEach(id => { let idsToRemove = [id]; if (this.isParent(id)) { const getDescendants = (pid) => { this.tasks.filter(c => c.parentId === pid).forEach(c => { idsToRemove.push(c.id); getDescendants(c.id); }); }; getDescendants(id); } this.tasks = this.tasks.filter(t => !idsToRemove.includes(t.id)); this.tasks.forEach(t => { t.dependencies = t.dependencies.filter(d => !idsToRemove.includes(d.id)); }); }); this.selectedTaskIds.clear(); this.recalculateAll(); this.saveData(); this.render(); } }
+        handleDrag(task, start, end) { this.saveCheckpoint(); const t = this.tasks.find(x => x.id === task.id); if (this.isParent(t.id)) { this.render(); return; } const startStr = start.toISOString().split('T')[0]; const endStr = end.toISOString().split('T')[0]; t.start = startStr; t.duration = this.calcDurationWorkDays(startStr, endStr); this.recalculateAll(); this.saveData(); this.renderGrid(); }
+        addTask() { this.saveCheckpoint(); const id = Date.now().toString(); const today = new Date().toISOString().split('T')[0]; this.tasks.push({ id, name: "New Task", start: today, end: today, duration: 1, parentId: null, dependencies: [], progress: 0, _collapsed: false }); this.recalculateAll(); this.saveData(); this.render(); }
+        getFlatList() { const res = []; const add = (pid) => this.tasks.filter(t => t.parentId === pid).forEach(t => { res.push(t); add(t.id); }); add(null); const knownIds = res.map(t => t.id); this.tasks.filter(t => !knownIds.includes(t.id)).forEach(t => { t.parentId = null; res.push(t); }); return res; }
         getDepth(id, d=0) { const t = this.tasks.find(x => x.id === id); return (t && t.parentId) ? this.getDepth(t.parentId, d+1) : d; }
-        
-        indent(id) {
-            this.saveCheckpoint(); // SAVE STATE
-            const list = this.getFlatList();
-            const idx = list.findIndex(t => t.id === id);
-            if (idx <= 0) return;
-
-            const task = list[idx];
-            const prev = list[idx - 1];
-            
-            const taskDepth = this.getDepth(task.id);
-            const prevDepth = this.getDepth(prev.id);
-
-            // Constraint: Can only indent if prev is at same level or deeper
-            if (prevDepth < taskDepth) return; 
-
-            let newParentId = null;
-
-            if (prevDepth === taskDepth) {
-                // Simplest case: Previous becomes parent
-                newParentId = prev.id;
-            } else {
-                // Previous is deeper (e.g. child of our intended parent)
-                // We need to walk up the previous task's ancestors until we find one that matches our current depth.
-                let curr = prev;
-                while (curr && this.getDepth(curr.id) > taskDepth) {
-                    curr = this.tasks.find(t => t.id === curr.parentId);
-                }
-                if (curr) newParentId = curr.id;
-            }
-
-            this.tasks.find(t => t.id === id).parentId = newParentId;
-            this.recalculateAll(); this.saveData(); this.render();
-        }
-
-        indentSelection() {
-            this.saveCheckpoint(); // SAVE STATE
-            const list = this.getFlatList();
-            const selectedIds = new Set(this.selectedTaskIds);
-            const updates = new Map();
-
-            const sortedSelection = list.filter(t => selectedIds.has(t.id));
-            
-            sortedSelection.forEach(task => {
-                // If the task's parent is ALSO selected, do nothing (it moves with the group)
-                if (task.parentId && selectedIds.has(task.parentId)) return;
-
-                const idx = list.findIndex(t => t.id === task.id);
-                if (idx <= 0) return;
-                const prev = list[idx - 1];
-
-                const taskDepth = this.getDepth(task.id);
-                const prevDepth = this.getDepth(prev.id);
-
-                if (prevDepth < taskDepth) return; // Cannot indent
-
-                let newParentId = null;
-                if (prevDepth === taskDepth) {
-                     newParentId = prev.id;
-                } else {
-                     let curr = prev;
-                     while(curr && this.getDepth(curr.id) > taskDepth) {
-                         const p = this.tasks.find(t => t.id === curr.parentId);
-                         curr = p;
-                     }
-                     if (curr) newParentId = curr.id;
-                }
-                
-                updates.set(task.id, newParentId);
-            });
-
-            if (updates.size > 0) {
-                updates.forEach((newPid, taskId) => {
-                    this.tasks.find(t => t.id === taskId).parentId = newPid;
-                });
-                this.recalculateAll();
-                this.saveData();
-                this.render();
-            }
-        }
-        
-        outdent(id) {
-            this.saveCheckpoint(); // SAVE STATE
-            const t = this.tasks.find(t => t.id === id);
-            if (t.parentId) { 
-                const parent = this.tasks.find(p => p.id === t.parentId); 
-                t.parentId = parent ? parent.parentId : null; 
-                this.recalculateAll(); this.saveData(); this.render(); 
-            }
-        }
-
-        outdentSelection() {
-            this.saveCheckpoint(); // SAVE STATE
-            const list = this.getFlatList();
-            const selectedIds = new Set(this.selectedTaskIds);
-            const updates = new Map();
-
-            const sortedSelection = list.filter(t => selectedIds.has(t.id));
-
-            sortedSelection.forEach(task => {
-                if (!task.parentId) return;
-                // Only outdent if the parent is NOT selected (otherwise it moves with the group)
-                if (!selectedIds.has(task.parentId)) {
-                    const currentParent = this.tasks.find(p => p.id === task.parentId);
-                    const newParentId = currentParent ? currentParent.parentId : null;
-                    updates.set(task.id, newParentId);
-                }
-            });
-
-            if (updates.size > 0) {
-                updates.forEach((newPid, taskId) => {
-                    this.tasks.find(t => t.id === taskId).parentId = newPid;
-                });
-                this.recalculateAll();
-                this.saveData();
-                this.render();
-            }
-        }
-
-        // --- 8. IMPORT / EXPORT ---
-        uploadFile(input) {
-            const file = input.files[0]; if(!file) return;
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                const content = e.target.result;
-                if (file.name.endsWith('.xml')) { this.parseMSPXML(content); } 
-                else { try { this.tasks = JSON.parse(content); this.saveData(); this.recalculateAll(); this.render(); } catch(err) { alert("Invalid file"); } }
-            }; reader.readAsText(file);
-        }
-        parseMSPXML(content) {
-             try {
-                const parser = new DOMParser(); const doc = parser.parseFromString(content, "text/xml");
-                const xmlTasks = Array.from(doc.getElementsByTagName("Task"));
-                const newTasks = []; const uidMap = {}; const stack = []; 
-                xmlTasks.forEach(xt => {
-                    const uid = xt.querySelector("UID")?.textContent; const name = xt.querySelector("Name")?.textContent;
-                    const start = xt.querySelector("Start")?.textContent?.split('T')[0];
-                    const finish = xt.querySelector("Finish")?.textContent?.split('T')[0];
-                    const outlineLevel = parseInt(xt.querySelector("OutlineLevel")?.textContent || "0");
-                    if(!uid || !name) return;
-                    const newId = Date.now() + Math.random().toString().slice(2,8); uidMap[uid] = newId;
-                    let parentId = null; if (outlineLevel > 1) parentId = stack[outlineLevel - 1]; stack[outlineLevel] = newId;
-                    newTasks.push({ id: newId, mspUid: uid, name: name, start: start||"", end: finish||"", duration: 0, parentId: parentId, dependencies: [], progress: 0, _collapsed: false, xmlEl: xt });
-                });
-                newTasks.forEach(t => {
-                    Array.from(t.xmlEl.getElementsByTagName("PredecessorLink")).forEach(p => {
-                        const predUid = p.querySelector("PredecessorUID")?.textContent;
-                        const typeCode = p.querySelector("Type")?.textContent; 
-                        const lagMinutes = parseInt(p.querySelector("LinkLag")?.textContent || "0");
-                        const predId = uidMap[predUid];
-                        if (predId) { let type = 'FS'; if (typeCode === '0') type = 'SS'; if (typeCode === '2') type = 'FF'; const lag = Math.round(lagMinutes / 4800); t.dependencies.push({ id: predId, type, lag }); }
-                    }); delete t.xmlEl; delete t.mspUid; 
-                });
-                this.tasks = newTasks; this.saveData(); this.recalculateAll(); this.render(); alert("Imported MS Project XML Successfully!");
-            } catch (e) { console.error(e); alert("Error parsing XML."); }
-        }
-        downloadJSON() {
-            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(this.tasks));
-            const a = document.createElement('a'); a.href = dataStr; a.download = "pro_schedule.json"; document.body.appendChild(a); a.click(); a.remove();
-        }
-        exportToMSP() {
-             const now = new Date().toISOString();
-            let xml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Project xmlns="http://schemas.microsoft.com/project"><Name>Pro Logic</Name><Title>Pro Logic</Title><CreationDate>${now}</CreationDate><LastSaved>${now}</LastSaved><ScheduleFromStart>1</ScheduleFromStart><CalendarUID>1</CalendarUID><Calendars><Calendar><UID>1</UID><Name>Standard</Name><IsBaseCalendar>1</IsBaseCalendar><WeekDays><WeekDay><DayType>1</DayType><DayWorking>0</DayWorking></WeekDay><WeekDay><DayType>2</DayType><DayWorking>1</DayWorking><WorkingTimes><WorkingTime><FromTime>08:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime></WorkingTimes></WeekDay><WeekDay><DayType>3</DayType><DayWorking>1</DayWorking><WorkingTimes><WorkingTime><FromTime>08:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime></WorkingTimes></WeekDay><WeekDay><DayType>4</DayType><DayWorking>1</DayWorking><WorkingTimes><WorkingTime><FromTime>08:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime></WorkingTimes></WeekDay><WeekDay><DayType>5</DayType><DayWorking>1</DayWorking><WorkingTimes><WorkingTime><FromTime>08:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime></WorkingTimes></WeekDay><WeekDay><DayType>6</DayType><DayWorking>1</DayWorking><WorkingTimes><WorkingTime><FromTime>08:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime></WorkingTimes></WeekDay><WeekDay><DayType>7</DayType><DayWorking>0</DayWorking></WeekDay></WeekDays></Calendar></Calendars><Tasks>`;
-            const sorted = this.getFlatList(); const uidMap = {}; sorted.forEach((t, i) => uidMap[t.id] = i + 1);
-            sorted.forEach((t, idx) => {
-                const uid = uidMap[t.id]; const outlineLevel = this.getDepth(t.id) + 1; const summary = this.isParent(t.id) ? 1 : 0;
-                xml += `<Task><UID>${uid}</UID><ID>${idx + 1}</ID><Name>${t.name.replace(/&/g, '&amp;')}</Name><Type>0</Type><Start>${t.start}T08:00:00</Start><Finish>${t.end}T17:00:00</Finish><Duration>PT${t.duration * 8}H0M0S</Duration><Manual>0</Manual><Summary>${summary}</Summary><OutlineLevel>${outlineLevel}</OutlineLevel>`;
-                if (t.dependencies.length > 0) { t.dependencies.forEach(dep => { const predUID = uidMap[dep.id]; if (predUID) { let typeCode = 1; if(dep.type === 'SS') typeCode = 0; if(dep.type === 'FF') typeCode = 2; xml += `<PredecessorLink><PredecessorUID>${predUID}</PredecessorUID><Type>${typeCode}</Type><LinkLag>${(dep.lag || 0) * 8 * 60}</LinkLag><LagFormat>7</LagFormat></PredecessorLink>`; } }); }
-                xml += `</Task>`;
-            });
-            xml += `</Tasks></Project>`;
-            const blob = new Blob([xml], { type: "application/xml" }); const url = URL.createObjectURL(blob);
-            const a = document.createElement('a'); a.href = url; a.download = "pro_schedule_export.xml"; document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        }
-
-        // --- 9. UTILS ---
-        makeResizable() {
-             const resizer = document.getElementById('resizer'); const leftSide = document.getElementById('gridPane');
-            let x = 0; let leftWidth = 0;
-            const onMouseDown = (e) => { x = e.clientX; leftWidth = leftSide.getBoundingClientRect().width; document.addEventListener('mousemove', onMouseMove); document.addEventListener('mouseup', onMouseUp); resizer.classList.add('active'); document.body.style.userSelect = 'none'; document.body.style.cursor = 'col-resize'; };
-            const onMouseMove = (e) => { leftSide.style.width = `${leftWidth + e.clientX - x}px`; };
-            const onMouseUp = () => { resizer.classList.remove('active'); document.body.style.userSelect = ''; document.body.style.cursor = ''; document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); };
-            resizer.addEventListener('mousedown', onMouseDown);
-        }
-        
-        startColResize(e, varName) {
-            e.preventDefault();
-            e.stopPropagation();
-            const gridPane = document.getElementById('gridPane');
-            const startX = e.clientX;
-            const startWidth = parseInt(getComputedStyle(gridPane).getPropertyValue(varName));
-            
-            e.target.classList.add('active');
-            document.body.style.cursor = 'col-resize';
-
-            const onMouseMove = (moveEvent) => {
-                const diff = moveEvent.clientX - startX;
-                const newWidth = Math.max(30, startWidth + diff);
-                gridPane.style.setProperty(varName, newWidth + 'px');
-            };
-
-            const onMouseUp = () => {
-                e.target.classList.remove('active');
-                document.body.style.cursor = '';
-                document.removeEventListener('mousemove', onMouseMove);
-                document.removeEventListener('mouseup', onMouseUp);
-            };
-
-            document.addEventListener('mousemove', onMouseMove);
-            document.addEventListener('mouseup', onMouseUp);
-        }
-
+        indent(id) { this.saveCheckpoint(); const list = this.getFlatList(); const idx = list.findIndex(t => t.id === id); if (idx <= 0) return; const task = list[idx]; const prev = list[idx - 1]; const taskDepth = this.getDepth(task.id); const prevDepth = this.getDepth(prev.id); if (prevDepth < taskDepth) return; let newParentId = null; if (prevDepth === taskDepth) { newParentId = prev.id; } else { let curr = prev; while (curr && this.getDepth(curr.id) > taskDepth) { curr = this.tasks.find(t => t.id === curr.parentId); } if (curr) newParentId = curr.id; } this.tasks.find(t => t.id === id).parentId = newParentId; this.recalculateAll(); this.saveData(); this.render(); }
+        indentSelection() { this.saveCheckpoint(); const list = this.getFlatList(); const selectedIds = new Set(this.selectedTaskIds); const updates = new Map(); const sortedSelection = list.filter(t => selectedIds.has(t.id)); sortedSelection.forEach(task => { if (task.parentId && selectedIds.has(task.parentId)) return; const idx = list.findIndex(t => t.id === task.id); if (idx <= 0) return; const prev = list[idx - 1]; const taskDepth = this.getDepth(task.id); const prevDepth = this.getDepth(prev.id); if (prevDepth < taskDepth) return; let newParentId = null; if (prevDepth === taskDepth) { newParentId = prev.id; } else { let curr = prev; while(curr && this.getDepth(curr.id) > taskDepth) { const p = this.tasks.find(t => t.id === curr.parentId); curr = p; } if (curr) newParentId = curr.id; } updates.set(task.id, newParentId); }); if (updates.size > 0) { updates.forEach((newPid, taskId) => { this.tasks.find(t => t.id === taskId).parentId = newPid; }); this.recalculateAll(); this.saveData(); this.render(); } }
+        outdent(id) { this.saveCheckpoint(); const t = this.tasks.find(t => t.id === id); if (t.parentId) { const parent = this.tasks.find(p => p.id === t.parentId); t.parentId = parent ? parent.parentId : null; this.recalculateAll(); this.saveData(); this.render(); } }
+        outdentSelection() { this.saveCheckpoint(); const list = this.getFlatList(); const selectedIds = new Set(this.selectedTaskIds); const updates = new Map(); const sortedSelection = list.filter(t => selectedIds.has(t.id)); sortedSelection.forEach(task => { if (!task.parentId) return; if (!selectedIds.has(task.parentId)) { const currentParent = this.tasks.find(p => p.id === task.parentId); const newParentId = currentParent ? currentParent.parentId : null; updates.set(task.id, newParentId); } }); if (updates.size > 0) { updates.forEach((newPid, taskId) => { this.tasks.find(t => t.id === taskId).parentId = newPid; }); this.recalculateAll(); this.saveData(); this.render(); } }
+        makeResizable() { const resizer = document.getElementById('resizer'); const leftSide = document.getElementById('gridPane'); let x = 0; let leftWidth = 0; const onMouseDown = (e) => { x = e.clientX; leftWidth = leftSide.getBoundingClientRect().width; document.addEventListener('mousemove', onMouseMove); document.addEventListener('mouseup', onMouseUp); resizer.classList.add('active'); document.body.style.userSelect = 'none'; document.body.style.cursor = 'col-resize'; }; const onMouseMove = (e) => { leftSide.style.width = `${leftWidth + e.clientX - x}px`; }; const onMouseUp = () => { resizer.classList.remove('active'); document.body.style.userSelect = ''; document.body.style.cursor = ''; document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); }; resizer.addEventListener('mousedown', onMouseDown); }
+        startColResize(e, varName) { e.preventDefault(); e.stopPropagation(); const gridPane = document.getElementById('gridPane'); const startX = e.clientX; const startWidth = parseInt(getComputedStyle(gridPane).getPropertyValue(varName)); e.target.classList.add('active'); document.body.style.cursor = 'col-resize'; const onMouseMove = (moveEvent) => { const diff = moveEvent.clientX - startX; const newWidth = Math.max(30, startWidth + diff); gridPane.style.setProperty(varName, newWidth + 'px'); }; const onMouseUp = () => { e.target.classList.remove('active'); document.body.style.cursor = ''; document.removeEventListener('mousemove', onMouseMove); document.removeEventListener('mouseup', onMouseUp); }; document.addEventListener('mousemove', onMouseMove); document.addEventListener('mouseup', onMouseUp); }
         openLinks(id) { this.activeTaskId = id; const task = this.tasks.find(t => t.id === id); this.tempDependencies = JSON.parse(JSON.stringify(task.dependencies || [])); this.renderModal(); document.getElementById('linkModal').showModal(); }
         switchTab(tab) { document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active')); document.getElementById(`tab-${tab}`).classList.add('active'); document.getElementById('view-pred').classList.add('hidden'); document.getElementById('view-succ').classList.add('hidden'); document.getElementById(`view-${tab}`).classList.remove('hidden'); }
-        renderModal() {
-             const predBody = document.getElementById('pred-list-body'); predBody.innerHTML = '';
-            this.tempDependencies.forEach((dep, idx) => {
-                const t = this.tasks.find(x => x.id === dep.id); if(!t) return;
-                predBody.innerHTML += `<tr class="border-b border-gray-100 hover:bg-slate-50"><td class="p-2">${t.name}</td><td class="p-2"><select onchange="app.updateTempLink(${idx}, 'type', this.value)" class="border rounded p-1 text-xs w-full bg-white"><option value="FS" ${dep.type === 'FS' ? 'selected' : ''}>Finish to Start</option><option value="SS" ${dep.type === 'SS' ? 'selected' : ''}>Start to Start</option><option value="FF" ${dep.type === 'FF' ? 'selected' : ''}>Finish to Finish</option></select></td><td class="p-2"><input type="number" value="${dep.lag || 0}" onchange="app.updateTempLink(${idx}, 'lag', this.value)" class="border rounded p-1 w-16 text-xs text-center"></td><td class="p-2 text-center"><button onclick="app.removeTempLink(${idx})" class="text-red-400 hover:text-red-600"><i data-lucide="trash-2" class="w-3 h-3"></i></button></td></tr>`;
-            });
-            const select = document.getElementById('new-pred-select'); select.innerHTML = '<option value="">Select task...</option>';
-            const existingIds = this.tempDependencies.map(d => d.id);
-            this.tasks.filter(t => t.id !== this.activeTaskId && !existingIds.includes(t.id) && !this.isParent(t.id)).forEach(t => { select.innerHTML += `<option value="${t.id}">${t.name}</option>`; });
-            const succBody = document.getElementById('succ-list-body'); succBody.innerHTML = '';
-            const successors = this.tasks.filter(t => t.dependencies.some(d => d.id === this.activeTaskId));
-            if (successors.length === 0) succBody.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-gray-400 italic">No successors found.</td></tr>`;
-            else successors.forEach(succ => { const link = succ.dependencies.find(d => d.id === this.activeTaskId); succBody.innerHTML += `<tr class="border-b border-gray-100"><td class="p-2 font-medium">${succ.name}</td><td class="p-2 text-gray-600">${link.type}</td><td class="p-2 text-gray-600">${link.lag} days</td></tr>`; });
-            lucide.createIcons();
-        }
+        renderModal() { const predBody = document.getElementById('pred-list-body'); predBody.innerHTML = ''; this.tempDependencies.forEach((dep, idx) => { const t = this.tasks.find(x => x.id === dep.id); if(!t) return; predBody.innerHTML += `<tr class="border-b border-gray-100 hover:bg-slate-50"><td class="p-2">${t.name}</td><td class="p-2"><select onchange="app.updateTempLink(${idx}, 'type', this.value)" class="border rounded p-1 text-xs w-full bg-white"><option value="FS" ${dep.type === 'FS' ? 'selected' : ''}>Finish to Start</option><option value="SS" ${dep.type === 'SS' ? 'selected' : ''}>Start to Start</option><option value="FF" ${dep.type === 'FF' ? 'selected' : ''}>Finish to Finish</option></select></td><td class="p-2"><input type="number" value="${dep.lag || 0}" onchange="app.updateTempLink(${idx}, 'lag', this.value)" class="border rounded p-1 w-16 text-xs text-center"></td><td class="p-2 text-center"><button onclick="app.removeTempLink(${idx})" class="text-red-400 hover:text-red-600"><i data-lucide="trash-2" class="w-3 h-3"></i></button></td></tr>`; }); const select = document.getElementById('new-pred-select'); select.innerHTML = '<option value="">Select task...</option>'; const existingIds = this.tempDependencies.map(d => d.id); this.tasks.filter(t => t.id !== this.activeTaskId && !existingIds.includes(t.id) && !this.isParent(t.id)).forEach(t => { select.innerHTML += `<option value="${t.id}">${t.name}</option>`; }); const succBody = document.getElementById('succ-list-body'); succBody.innerHTML = ''; const successors = this.tasks.filter(t => t.dependencies.some(d => d.id === this.activeTaskId)); if (successors.length === 0) succBody.innerHTML = `<tr><td colspan="3" class="p-4 text-center text-gray-400 italic">No successors found.</td></tr>`; else successors.forEach(succ => { const link = succ.dependencies.find(d => d.id === this.activeTaskId); succBody.innerHTML += `<tr class="border-b border-gray-100"><td class="p-2 font-medium">${succ.name}</td><td class="p-2 text-gray-600">${link.type}</td><td class="p-2 text-gray-600">${link.lag} days</td></tr>`; }); lucide.createIcons(); }
         addPredecessor() { const select = document.getElementById('new-pred-select'); const id = select.value; if (!id) return; this.tempDependencies.push({ id: id, type: 'FS', lag: 0 }); this.renderModal(); }
         removeTempLink(index) { this.tempDependencies.splice(index, 1); this.renderModal(); }
         updateTempLink(index, field, value) { if (field === 'lag') value = parseInt(value) || 0; this.tempDependencies[index][field] = value; }
-        saveLinks() { this.saveCheckpoint(); /* SAVE STATE */ const task = this.tasks.find(t => t.id === this.activeTaskId); task.dependencies = JSON.parse(JSON.stringify(this.tempDependencies)); document.getElementById('linkModal').close(); this.recalculateAll(); this.saveData(); this.render(); }
+        saveLinks() { this.saveCheckpoint(); const task = this.tasks.find(t => t.id === this.activeTaskId); task.dependencies = JSON.parse(JSON.stringify(this.tempDependencies)); document.getElementById('linkModal').close(); this.recalculateAll(); this.saveData(); this.render(); }
     }
 
     const app = new ProScheduler();
