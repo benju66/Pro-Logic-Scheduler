@@ -827,7 +827,9 @@
 
                 container.innerHTML += `
                     <div class="grid-row group ${isParent ? 'bg-slate-50' : ''} ${isSelected ? 'row-selected' : ''}" 
-                         data-id="${task.id}">
+                         data-id="${task.id}"
+                         onclick="app.handleRowClick(event, '${task.id}')"
+                         ondblclick="app.openDrawer('${task.id}')">
                         <div class="col-cell justify-center" style="width: var(--w-chk)">
                             <input type="checkbox" class="select-checkbox" ${isSelected ? 'checked' : ''} style="pointer-events:none;">
                         </div>
@@ -879,16 +881,11 @@
         initEventDelegation() {
             const gridBody = document.getElementById('grid-body');
             
-            // Handle clicks via delegation
+            // Handle action button clicks via delegation
             gridBody.addEventListener('click', (e) => {
-                const row = e.target.closest('.grid-row');
-                if (!row) return;
-                
-                const taskId = row.dataset.id;
-                
-                // Check for action buttons
                 const actionBtn = e.target.closest('[data-action]');
                 if (actionBtn) {
+                    e.stopPropagation(); // Prevent row click
                     const action = actionBtn.dataset.action;
                     const btnTaskId = actionBtn.dataset.taskId;
                     
@@ -909,21 +906,6 @@
                             this.deleteTask(btnTaskId);
                             break;
                     }
-                    return;
-                }
-                
-                // Skip if clicking on input
-                if (e.target.classList.contains('cell-input')) return;
-                
-                // Handle row selection
-                this.handleRowClick(e, taskId);
-            });
-            
-            // Handle double-click for drawer
-            gridBody.addEventListener('dblclick', (e) => {
-                const row = e.target.closest('.grid-row');
-                if (row && !e.target.classList.contains('cell-input')) {
-                    this.openDrawer(row.dataset.id);
                 }
             });
             
@@ -1254,6 +1236,11 @@
         }
 
         handleRowClick(e, id) {
+            // Skip if clicking on input or button
+            if (e.target.classList.contains('cell-input') || e.target.closest('button')) {
+                return;
+            }
+            
             const visibleTasks = this.getFlatList().filter(t => this.isVisible(t.id));
             const clickedIndex = visibleTasks.findIndex(t => t.id === id);
             this.lastFocusedTaskId = id;
