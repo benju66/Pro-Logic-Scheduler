@@ -316,11 +316,30 @@
             this.activeTaskId = null;         
             this.viewMode = 'Week';
             this.tempDependencies = [];
+            
+            // Cached DOM references for performance
+            this.dom = {};
+            
+            // Debounce timers
+            this._ganttDebounceTimer = null;
+            this._renderDebounceTimer = null;
+            
             this.init();
         }
 
         // ===== INITIALIZATION =====
         init() {
+            // Cache DOM references
+            this.dom = {
+                gridBody: document.getElementById('grid-body'),
+                ganttPane: document.getElementById('ganttPane'),
+                ganttChart: document.getElementById('gantt-chart'),
+                sideDrawer: document.getElementById('sideDrawer'),
+                toast: document.getElementById('toast'),
+                zoomLabel: document.getElementById('zoom-label'),
+                gridPane: document.getElementById('gridPane')
+            };
+            
             this.loadData();
             this.recalculateAll(); 
             this.render();
@@ -334,7 +353,7 @@
 
         // ===== TOAST NOTIFICATIONS =====
         showToast(message, type = 'info') {
-            const toast = document.getElementById('toast');
+            const toast = this.dom.toast;
             toast.textContent = message;
             toast.className = 'toast ' + type;
             toast.classList.add('show');
@@ -343,7 +362,7 @@
 
         // ===== DRAWER & CONSTRAINTS =====
         openDrawer(id) {
-            if (this.activeTaskId === id && document.getElementById('sideDrawer').classList.contains('open')) {
+            if (this.activeTaskId === id && this.dom.sideDrawer.classList.contains('open')) {
                 this.closeDrawer();
                 return;
             }
@@ -356,11 +375,11 @@
             document.getElementById('drawer-constraintType').value = task.constraintType || 'asap';
             document.getElementById('drawer-constraintDate').value = task.constraintDate || '';
             this.updateConstraintDesc(task.constraintType || 'asap');
-            document.getElementById('sideDrawer').classList.add('open');
+            this.dom.sideDrawer.classList.add('open');
         }
 
         closeDrawer() {
-            document.getElementById('sideDrawer').classList.remove('open');
+            this.dom.sideDrawer.classList.remove('open');
             this.activeTaskId = null;
         }
 
@@ -804,6 +823,10 @@
             const task = this.tasks.find(t => t.id === id);
             if (!task) return;
             
+            // Track what changed for targeted updates
+            const oldStart = task.start;
+            const oldEnd = task.end;
+            
             switch (field) {
                 case 'duration':
                     task.duration = Math.max(1, parseInt(value) || 1);
@@ -841,24 +864,48 @@
             this.recalculateAll(); 
             this.saveData(); 
             
-            // Check if we should re-render (avoid killing active text input)
+            // Determine if dates changed (affects other tasks)
+            const datesChanged = task.start !== oldStart || task.end !== oldEnd;
+            
+            // Check if we're actively typing in a text input
             const activeEl = document.activeElement;
             const isTypingInTextInput = activeEl && 
                 activeEl.classList.contains('cell-input') && 
-                (activeEl.tagName === 'INPUT' && activeEl.type !== 'date');
+                activeEl.tagName === 'INPUT' && 
+                activeEl.type === 'text';
             
-            // Always re-render for constraint changes (affects icons) or if not typing in text input
-            if (field === 'constraintType' || field === 'constraintDate' || !isTypingInTextInput) {
-                this.render();
+            // For simple name changes while typing, just update Gantt
+            if (field === 'name' && isTypingInTextInput) {
+                this.renderGanttDebounced();
+                return;
+            }
+            
+            // For changes that affect scheduling, update affected rows
+            if (datesChanged || field === 'duration' || field === 'constraintType' || field === 'constraintDate' || field === 'start') {
+                // Get all affected tasks and update their rows
+                const affectedIds = this.getAffectedTaskIds(id);
+                this.updateRows(affectedIds);
+                this.renderGanttDebounced();
             } else {
-                // Only update Gantt when typing in text inputs
-                this.renderGantt();
+                // Simple field change - just update this row
+                this.updateRow(id);
+                this.renderGanttDebounced();
             }
             
             // Sync drawer if open
-            if (this.activeTaskId === id && document.getElementById('sideDrawer').classList.contains('open')) {
+            if (this.activeTaskId === id && this.dom.sideDrawer.classList.contains('open')) {
                 this.syncDrawer(task);
             }
+        }
+        
+        // Debounced Gantt render to avoid excessive redraws
+        renderGanttDebounced() {
+            if (this._ganttDebounceTimer) {
+                clearTimeout(this._ganttDebounceTimer);
+            }
+            this._ganttDebounceTimer = setTimeout(() => {
+                this.renderGantt();
+            }, 50);
         }
 
         syncDrawer(task) {
@@ -869,118 +916,211 @@
             document.getElementById('drawer-constraintDate').value = task.constraintDate || '';
         }
 
-        // ===== RENDER GRID =====
-        renderGrid() {
-            const container = document.getElementById('grid-body');
-            container.innerHTML = '';
-            const sorted = this.getFlatList();
+        // ===== RENDER GRID (OPTIMIZED) =====
+        
+        // Generate HTML for a single row
+        generateRowHtml(task, index) {
+            const depth = this.getDepth(task.id);
+            const isParent = this.isParent(task.id);
+            const padding = depth * 20;
+            const isSelected = this.selectedTaskIds.has(task.id); 
 
-            sorted.forEach((task, index) => {
-                if (!this.isVisible(task.id)) return; 
-                const depth = this.getDepth(task.id);
-                const isParent = this.isParent(task.id);
-                const padding = depth * 20;
-                const isSelected = this.selectedTaskIds.has(task.id); 
+            // Constraint icons - start constraints go in Start column, finish constraints in Finish column
+            let startConstraintIcon = '';
+            let finishConstraintIcon = '';
+            let startPadding = '';
+            let finishPadding = '';
+            
+            const cType = task.constraintType;
+            const cDate = task.constraintDate || '';
+            
+            if (cType === 'snet') {
+                startConstraintIcon = `<i data-lucide="anchor" class="w-3 h-3 text-blue-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Start No Earlier Than ${cDate}"></i>`;
+                startPadding = 'pr-5';
+            } else if (cType === 'snlt') {
+                startConstraintIcon = `<i data-lucide="alarm-clock" class="w-3 h-3 text-amber-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Start No Later Than ${cDate}"></i>`;
+                startPadding = 'pr-5';
+            } else if (cType === 'fnet') {
+                finishConstraintIcon = `<i data-lucide="hourglass" class="w-3 h-3 text-blue-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Finish No Earlier Than ${cDate}"></i>`;
+                finishPadding = 'pr-5';
+            } else if (cType === 'fnlt') {
+                finishConstraintIcon = `<i data-lucide="flag" class="w-3 h-3 text-amber-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Finish No Later Than ${cDate}"></i>`;
+                finishPadding = 'pr-5';
+            } else if (cType === 'mfo') {
+                finishConstraintIcon = `<i data-lucide="lock" class="w-3 h-3 text-red-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Must Finish On ${cDate}"></i>`;
+                finishPadding = 'pr-5';
+            }
 
-                // Constraint icons - start constraints go in Start column, finish constraints in Finish column
-                let startConstraintIcon = '';
-                let finishConstraintIcon = '';
-                let startPadding = '';
-                let finishPadding = '';
-                
-                const cType = task.constraintType;
-                const cDate = task.constraintDate || '';
-                
-                if (cType === 'snet') {
-                    startConstraintIcon = `<i data-lucide="anchor" class="w-3 h-3 text-blue-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Start No Earlier Than ${cDate}"></i>`;
-                    startPadding = 'pr-5';
-                } else if (cType === 'snlt') {
-                    startConstraintIcon = `<i data-lucide="alarm-clock" class="w-3 h-3 text-amber-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Start No Later Than ${cDate}"></i>`;
-                    startPadding = 'pr-5';
-                } else if (cType === 'fnet') {
-                    finishConstraintIcon = `<i data-lucide="hourglass" class="w-3 h-3 text-blue-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Finish No Earlier Than ${cDate}"></i>`;
-                    finishPadding = 'pr-5';
-                } else if (cType === 'fnlt') {
-                    finishConstraintIcon = `<i data-lucide="flag" class="w-3 h-3 text-amber-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Finish No Later Than ${cDate}"></i>`;
-                    finishPadding = 'pr-5';
-                } else if (cType === 'mfo') {
-                    finishConstraintIcon = `<i data-lucide="lock" class="w-3 h-3 text-red-500 absolute right-1 top-1/2 -translate-y-1/2 z-10 pointer-events-none" title="Must Finish On ${cDate}"></i>`;
-                    finishPadding = 'pr-5';
-                }
+            let collapseBtn = `<span class="w-5 inline-block"></span>`;
+            if (isParent) {
+                const icon = task._collapsed ? 'chevron-right' : 'chevron-down';
+                collapseBtn = `<button data-action="collapse" data-task-id="${task.id}" class="w-5 h-5 flex items-center justify-center hover:bg-gray-100 rounded text-gray-500 mr-1"><i data-lucide="${icon}" class="w-3 h-3"></i></button>`;
+            }
 
-                let collapseBtn = `<span class="w-5 inline-block"></span>`;
-                if (isParent) {
-                    const icon = task._collapsed ? 'chevron-right' : 'chevron-down';
-                    collapseBtn = `<button data-action="collapse" data-task-id="${task.id}" class="w-5 h-5 flex items-center justify-center hover:bg-gray-100 rounded text-gray-500 mr-1"><i data-lucide="${icon}" class="w-3 h-3"></i></button>`;
-                }
+            let actions = `<div class="flex items-center justify-center gap-1">`;
+            actions += `<button data-action="outdent" data-task-id="${task.id}" class="p-1 text-gray-400 hover:text-slate-800 rounded hover:bg-slate-100" title="Outdent"><i data-lucide="outdent" class="w-3 h-3"></i></button>`;
+            actions += `<button data-action="indent" data-task-id="${task.id}" class="p-1 text-gray-400 hover:text-slate-800 rounded hover:bg-slate-100" title="Indent"><i data-lucide="indent" class="w-3 h-3"></i></button>`;
+            if (!isParent) {
+                actions += `<button data-action="links" data-task-id="${task.id}" class="p-1 text-gray-400 hover:text-indigo-600 rounded hover:bg-indigo-50 ml-1" title="Dependencies"><i data-lucide="link" class="w-3 h-3"></i></button>`;
+            }
+            actions += `<button data-action="delete" data-task-id="${task.id}" class="p-1 text-gray-400 hover:text-red-600 rounded hover:bg-red-50 ml-1" title="Delete"><i data-lucide="trash-2" class="w-3 h-3"></i></button>`;
+            actions += `</div>`;
 
-                let actions = `<div class="flex items-center justify-center gap-1">`;
-                actions += `<button data-action="outdent" data-task-id="${task.id}" class="p-1 text-gray-400 hover:text-slate-800 rounded hover:bg-slate-100" title="Outdent"><i data-lucide="outdent" class="w-3 h-3"></i></button>`;
-                actions += `<button data-action="indent" data-task-id="${task.id}" class="p-1 text-gray-400 hover:text-slate-800 rounded hover:bg-slate-100" title="Indent"><i data-lucide="indent" class="w-3 h-3"></i></button>`;
-                if (!isParent) {
-                    actions += `<button data-action="links" data-task-id="${task.id}" class="p-1 text-gray-400 hover:text-indigo-600 rounded hover:bg-indigo-50 ml-1" title="Dependencies"><i data-lucide="link" class="w-3 h-3"></i></button>`;
-                }
-                actions += `<button data-action="delete" data-task-id="${task.id}" class="p-1 text-gray-400 hover:text-red-600 rounded hover:bg-red-50 ml-1" title="Delete"><i data-lucide="trash-2" class="w-3 h-3"></i></button>`;
-                actions += `</div>`;
-
-                container.innerHTML += `
-                    <div class="grid-row group ${isParent ? 'bg-slate-50' : ''} ${isSelected ? 'row-selected' : ''}" 
-                         data-id="${task.id}"
-                         onclick="app.handleRowClick(event, '${task.id}')"
-                         ondblclick="app.openDrawer('${task.id}')">
-                        <div class="col-cell justify-center" style="width: var(--w-chk)">
-                            <input type="checkbox" class="select-checkbox" ${isSelected ? 'checked' : ''} style="pointer-events:none;">
-                        </div>
-                        <div class="col-cell justify-center text-gray-400 text-[10px] drag-handle transition-colors h-full" style="width: var(--w-id)">
-                            ${index + 1}
-                        </div>
-                        <div class="col-cell px-2 relative overflow-hidden" style="width: var(--w-name)">
-                            <div style="width: ${padding}px" class="flex-none border-r border-dashed border-gray-300 h-full mr-2"></div>
-                            ${collapseBtn}
-                            <input value="${this.escapeHtml(task.name)}" 
-                                data-field="name" 
-                                data-task-id="${task.id}"
-                                class="cell-input font-medium ${isParent ? 'font-bold' : ''}" 
-                            >
-                        </div>
-                        <div class="col-cell" style="width: var(--w-dur)">
-                            <input type="number" value="${task.duration}" 
-                                data-field="duration" 
-                                data-task-id="${task.id}"
-                                class="cell-input text-center ${isParent ? 'cell-readonly' : ''}" 
-                                ${isParent ? 'readonly' : ''}>
-                        </div>
-                        <div class="col-cell relative" style="width: var(--w-start)">
-                            <input type="date" value="${task.start || ''}" 
-                                data-field="start" 
-                                data-task-id="${task.id}"
-                                class="cell-input text-xs ${startPadding} ${isParent ? 'cell-readonly' : ''}" 
-                                ${isParent ? 'readonly' : ''}>
-                            ${startConstraintIcon}
-                        </div>
-                        <div class="col-cell relative" style="width: var(--w-end)">
-                            <input type="date" value="${task.end || ''}" readonly class="cell-input text-xs cell-readonly ${finishPadding}">
-                            ${finishConstraintIcon}
-                        </div>
-                        <div class="col-cell" style="width: var(--w-constraint)">
-                            <select 
-                                data-field="constraintType" 
-                                data-task-id="${task.id}"
-                                class="cell-input text-[10px] bg-transparent cursor-pointer ${isParent ? 'cell-readonly' : ''}"
-                                ${isParent ? 'disabled' : ''}
-                                title="Constraint Type">
-                                <option value="asap" ${(task.constraintType || 'asap') === 'asap' ? 'selected' : ''}>ASAP</option>
-                                <option value="snet" ${task.constraintType === 'snet' ? 'selected' : ''}>SNET</option>
-                                <option value="snlt" ${task.constraintType === 'snlt' ? 'selected' : ''}>SNLT</option>
-                                <option value="fnet" ${task.constraintType === 'fnet' ? 'selected' : ''}>FNET</option>
-                                <option value="fnlt" ${task.constraintType === 'fnlt' ? 'selected' : ''}>FNLT</option>
-                                <option value="mfo" ${task.constraintType === 'mfo' ? 'selected' : ''}>MFO</option>
-                            </select>
-                        </div>
-                        <div class="col-cell justify-center" style="width: var(--w-actions)">${actions}</div>
+            return `
+                <div class="grid-row group ${isParent ? 'bg-slate-50' : ''} ${isSelected ? 'row-selected' : ''}" 
+                     data-id="${task.id}"
+                     onclick="app.handleRowClick(event, '${task.id}')"
+                     ondblclick="app.openDrawer('${task.id}')">
+                    <div class="col-cell justify-center" style="width: var(--w-chk)">
+                        <input type="checkbox" class="select-checkbox" ${isSelected ? 'checked' : ''} style="pointer-events:none;">
                     </div>
-                `;
+                    <div class="col-cell justify-center text-gray-400 text-[10px] drag-handle transition-colors h-full" style="width: var(--w-id)">
+                        ${index + 1}
+                    </div>
+                    <div class="col-cell px-2 relative overflow-hidden" style="width: var(--w-name)">
+                        <div style="width: ${padding}px" class="flex-none border-r border-dashed border-gray-300 h-full mr-2"></div>
+                        ${collapseBtn}
+                        <input value="${this.escapeHtml(task.name)}" 
+                            data-field="name" 
+                            data-task-id="${task.id}"
+                            class="cell-input font-medium ${isParent ? 'font-bold' : ''}" 
+                        >
+                    </div>
+                    <div class="col-cell" style="width: var(--w-dur)">
+                        <input type="number" value="${task.duration}" 
+                            data-field="duration" 
+                            data-task-id="${task.id}"
+                            class="cell-input text-center ${isParent ? 'cell-readonly' : ''}" 
+                            ${isParent ? 'readonly' : ''}>
+                    </div>
+                    <div class="col-cell relative" style="width: var(--w-start)">
+                        <input type="date" value="${task.start || ''}" 
+                            data-field="start" 
+                            data-task-id="${task.id}"
+                            class="cell-input text-xs ${startPadding} ${isParent ? 'cell-readonly' : ''}" 
+                            ${isParent ? 'readonly' : ''}>
+                        ${startConstraintIcon}
+                    </div>
+                    <div class="col-cell relative" style="width: var(--w-end)">
+                        <input type="date" value="${task.end || ''}" readonly class="cell-input text-xs cell-readonly ${finishPadding}">
+                        ${finishConstraintIcon}
+                    </div>
+                    <div class="col-cell" style="width: var(--w-constraint)">
+                        <select 
+                            data-field="constraintType" 
+                            data-task-id="${task.id}"
+                            class="cell-input text-[10px] bg-transparent cursor-pointer ${isParent ? 'cell-readonly' : ''}"
+                            ${isParent ? 'disabled' : ''}
+                            title="Constraint Type">
+                            <option value="asap" ${(task.constraintType || 'asap') === 'asap' ? 'selected' : ''}>ASAP</option>
+                            <option value="snet" ${task.constraintType === 'snet' ? 'selected' : ''}>SNET</option>
+                            <option value="snlt" ${task.constraintType === 'snlt' ? 'selected' : ''}>SNLT</option>
+                            <option value="fnet" ${task.constraintType === 'fnet' ? 'selected' : ''}>FNET</option>
+                            <option value="fnlt" ${task.constraintType === 'fnlt' ? 'selected' : ''}>FNLT</option>
+                            <option value="mfo" ${task.constraintType === 'mfo' ? 'selected' : ''}>MFO</option>
+                        </select>
+                    </div>
+                    <div class="col-cell justify-center" style="width: var(--w-actions)">${actions}</div>
+                </div>
+            `;
+        }
+        
+        // Full grid render - used for initial load and major changes
+        renderGrid() {
+            const container = this.dom.gridBody;
+            const sorted = this.getFlatList();
+            
+            // Build all HTML at once, then insert (faster than incremental)
+            const htmlParts = [];
+            let visibleIndex = 0;
+            
+            sorted.forEach((task) => {
+                if (!this.isVisible(task.id)) return;
+                htmlParts.push(this.generateRowHtml(task, visibleIndex));
+                visibleIndex++;
             });
+            
+            container.innerHTML = htmlParts.join('');
+        }
+        
+        // Update a single row without re-rendering entire grid
+        updateRow(taskId) {
+            const existingRow = this.dom.gridBody.querySelector(`.grid-row[data-id="${taskId}"]`);
+            if (!existingRow) return false;
+            
+            const task = this.tasks.find(t => t.id === taskId);
+            if (!task || !this.isVisible(taskId)) {
+                existingRow.remove();
+                return true;
+            }
+            
+            // Get current index
+            const allRows = this.dom.gridBody.querySelectorAll('.grid-row');
+            let index = 0;
+            for (let i = 0; i < allRows.length; i++) {
+                if (allRows[i].dataset.id === taskId) {
+                    index = i;
+                    break;
+                }
+            }
+            
+            // Create new row element
+            const temp = document.createElement('div');
+            temp.innerHTML = this.generateRowHtml(task, index);
+            const newRow = temp.firstElementChild;
+            
+            // Replace old row with new
+            existingRow.replaceWith(newRow);
+            
+            // Initialize icons only for this row
+            lucide.createIcons({ nodes: [newRow] });
+            
+            return true;
+        }
+        
+        // Update multiple rows efficiently
+        updateRows(taskIds) {
+            const rowsToUpdate = new Set(taskIds);
+            
+            // Also include parent tasks that might need updating
+            taskIds.forEach(id => {
+                const task = this.tasks.find(t => t.id === id);
+                if (task && task.parentId) {
+                    rowsToUpdate.add(task.parentId);
+                }
+            });
+            
+            // Update each row
+            rowsToUpdate.forEach(id => this.updateRow(id));
+        }
+        
+        // Get all tasks affected by a change (successors, parents)
+        getAffectedTaskIds(taskId) {
+            const affected = new Set([taskId]);
+            
+            // Add parent
+            const task = this.tasks.find(t => t.id === taskId);
+            if (task && task.parentId) {
+                affected.add(task.parentId);
+            }
+            
+            // Add all successors (tasks that depend on this one)
+            const addSuccessors = (id) => {
+                this.tasks.forEach(t => {
+                    if (t.dependencies && t.dependencies.some(d => d.id === id)) {
+                        if (!affected.has(t.id)) {
+                            affected.add(t.id);
+                            // Recursively add successors of successors
+                            addSuccessors(t.id);
+                            // Add parent of successor
+                            if (t.parentId) affected.add(t.parentId);
+                        }
+                    }
+                });
+            };
+            addSuccessors(taskId);
+            
+            return affected;
         }
 
         escapeHtml(str) {
@@ -993,7 +1133,7 @@
 
         // ===== EVENT DELEGATION =====
         initEventDelegation() {
-            const gridBody = document.getElementById('grid-body');
+            const gridBody = this.dom.gridBody;
             
             // Handle action button clicks via delegation
             gridBody.addEventListener('click', (e) => {
@@ -1354,7 +1494,7 @@
             }
             
             this.renderGrid();
-            lucide.createIcons();
+            lucide.createIcons({ nodes: [this.dom.gridBody] });
             this.scrollToRow(targetTask.id);
         }
 
@@ -1390,7 +1530,7 @@
             }
             
             this.renderGrid();
-            lucide.createIcons();
+            lucide.createIcons({ nodes: [this.dom.gridBody] });
         }
 
         scrollToRow(id) {
@@ -1401,7 +1541,7 @@
         deselectAll() {
             this.selectedTaskIds.clear();
             this.renderGrid();
-            lucide.createIcons();
+            lucide.createIcons({ nodes: [this.dom.gridBody] });
         }
 
         moveTaskVertical(direction) {
@@ -1432,8 +1572,8 @@
 
         // ===== SCROLL SYNC =====
         initScrollSync() {
-            const grid = document.getElementById('grid-body');
-            const gantt = document.getElementById('ganttPane');
+            const grid = this.dom.gridBody;
+            const gantt = this.dom.ganttPane;
             let isSyncingLeft = false;
             let isSyncingRight = false;
             
@@ -1456,7 +1596,7 @@
 
         // ===== SORTABLE (DRAG & DROP) =====
         initSortable() {
-            const el = document.getElementById('grid-body');
+            const el = this.dom.gridBody;
             if (typeof Sortable === 'undefined') return;
             
             this.sortable = Sortable.create(el, {
@@ -1550,7 +1690,7 @@
 
         changeView(mode) {
             this.viewMode = mode;
-            document.getElementById('zoom-label').innerText = mode;
+            this.dom.zoomLabel.innerText = mode;
             if (this.gantt) this.gantt.change_view_mode(mode);
         }
 
@@ -2122,14 +2262,15 @@
             this.recalculateAll();
             this.saveData();
             this.renderGrid();
-            lucide.createIcons();
+            lucide.createIcons({ nodes: [this.dom.gridBody] });
         }
 
         // ===== RENDER =====
         render() {
             this.renderGrid();
             this.renderGantt();
-            lucide.createIcons();
+            // Scope icon creation to grid body only - much faster than full DOM scan
+            lucide.createIcons({ nodes: [this.dom.gridBody] });
         }
 
         renderGantt() {
@@ -2145,7 +2286,7 @@
                 custom_class: (this.isParent(t.id) ? 'parent' : '') + (t._isCritical ? ' critical' : '')
             }));
             
-            const chartEl = document.getElementById('gantt-chart');
+            const chartEl = this.dom.ganttChart;
             
             if (ganttData.length === 0) {
                 chartEl.innerHTML = '<div class="text-gray-400 text-xs p-4">No visible tasks with dates</div>';
@@ -2256,7 +2397,7 @@
                 });
             }
             
-            lucide.createIcons();
+            lucide.createIcons({ nodes: [document.getElementById('linkModal')] });
         }
 
         addPredecessor() {
