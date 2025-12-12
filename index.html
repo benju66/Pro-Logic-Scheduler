@@ -957,6 +957,13 @@
                         task.constraintDate = value;
                     }
                     break;
+                case 'end':
+                    if (value && !this.isParent(id)) {
+                        const newDuration = this.calcDurationWorkDays(task.start, value);
+                        task.duration = Math.max(1, newDuration);
+                        task.end = value;
+                    }
+                    break;
                 case 'constraintType':
                     task.constraintType = value;
                     if (value === 'asap') {
@@ -1096,7 +1103,11 @@
                         ${startConstraintIcon}
                     </div>
                     <div class="col-cell relative" style="width: var(--w-end)">
-                        <input type="date" value="${task.end || ''}" readonly class="cell-input text-xs cell-readonly ${finishPadding}">
+                        <input type="date" value="${task.end || ''}" 
+                            data-field="end" 
+                            data-task-id="${task.id}"
+                            class="cell-input text-xs ${finishPadding} ${isParent ? 'cell-readonly' : ''}" 
+                            ${isParent ? 'readonly' : ''}>
                         ${finishConstraintIcon}
                     </div>
                     <div class="col-cell" style="width: var(--w-constraint)">
