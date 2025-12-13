@@ -68,12 +68,12 @@ export class SchedulerService {
     /**
      * Create a new SchedulerService instance
      * 
-     * @param {Object} options - Configuration options
-     * @param {HTMLElement} options.gridContainer - Container for the grid
-     * @param {HTMLElement} options.ganttContainer - Container for the Gantt
-     * @param {HTMLElement} options.drawerContainer - Container for side drawer
-     * @param {HTMLElement} options.modalContainer - Container for modals
-     * @param {boolean} options.isTauri - Whether running in Tauri environment
+     * @param {Object} [options={}] - Configuration options
+     * @param {HTMLElement} [options.gridContainer] - Container for the grid
+     * @param {HTMLElement} [options.ganttContainer] - Container for the Gantt
+     * @param {HTMLElement} [options.drawerContainer] - Container for side drawer
+     * @param {HTMLElement} [options.modalContainer] - Container for modals
+     * @param {boolean} [options.isTauri] - Whether running in Tauri environment
      */
     constructor(options = {}) {
         this.options = options;
@@ -386,7 +386,7 @@ export class SchedulerService {
      * Handle row click
      * @private
      * @param {string} taskId - Task ID
-     * @param {Event} e - Click event
+     * @param {MouseEvent} e - Click event
      */
     _handleRowClick(taskId, e) {
         // Selection logic here
@@ -926,6 +926,8 @@ export class SchedulerService {
      * Insert task above focused task
      */
     insertTaskAbove() {
+        this.saveCheckpoint();
+        
         if (!this.focusedId) {
             this.addTask();
             return;
@@ -933,26 +935,100 @@ export class SchedulerService {
 
         const tasks = this.taskStore.getAll();
         const focusedIndex = tasks.findIndex(t => t.id === this.focusedId);
-        const focusedTask = tasks[focusedIndex];
+        if (focusedIndex === -1) return;
         
-        const newTask = this.addTask({
-            parentId: focusedTask.parentId
-        });
-
-        // Move to correct position (simplified - would need proper reordering)
+        const focusedTask = tasks[focusedIndex];
+        const today = DateUtils.today();
+        
+        // Create new task object
+        const newTask = {
+            id: `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: 'New Task',
+            start: today,
+            end: today,
+            duration: 1,
+            parentId: focusedTask.parentId,
+            dependencies: [],
+            progress: 0,
+            constraintType: 'asap',
+            constraintDate: '',
+            notes: '',
+            _collapsed: false
+        };
+        
+        // Insert at focused task's index
+        tasks.splice(focusedIndex, 0, newTask);
+        
+        // Update store with new array
+        this.taskStore.setAll(tasks);
+        this.recalculateAll();
+        this.saveData();
+        
+        // Select and focus the new task
         this.selectedIds.clear();
         this.selectedIds.add(newTask.id);
         this.focusedId = newTask.id;
         this._updateSelection();
+        
+        // Render and scroll to new task
+        this.render();
+        
+        if (this.grid) {
+            requestAnimationFrame(() => {
+                this.grid.scrollToTask(newTask.id);
+                // Focus the name cell for immediate editing
+                setTimeout(() => {
+                    this.grid.focusCell(newTask.id, 'name');
+                }, 100);
+            });
+        }
     }
 
     /**
-     * Move selected tasks vertically
+     * Move selected tasks vertically (reorder within siblings)
      * @param {number} direction - -1 for up, 1 for down
      */
     moveSelectedTasks(direction) {
-        // TODO: Implement task reordering
-        this.toastService.info('Task reordering coming soon');
+        if (!this.focusedId) return;
+        
+        this.saveCheckpoint();
+        
+        const tasks = this.taskStore.getAll();
+        const focusedTask = tasks.find(t => t.id === this.focusedId);
+        if (!focusedTask) return;
+        
+        // Find siblings (tasks with same parentId)
+        const siblings = tasks.filter(t => t.parentId === focusedTask.parentId);
+        const currentSiblingIndex = siblings.findIndex(t => t.id === focusedTask.id);
+        if (currentSiblingIndex === -1) return;
+        
+        // Calculate target position
+        const targetSiblingIndex = currentSiblingIndex + direction;
+        if (targetSiblingIndex < 0 || targetSiblingIndex >= siblings.length) return;
+        
+        const siblingTarget = siblings[targetSiblingIndex];
+        
+        // Find indices in full tasks array
+        const indexA = tasks.findIndex(t => t.id === focusedTask.id);
+        const indexB = tasks.findIndex(t => t.id === siblingTarget.id);
+        
+        if (indexA > -1 && indexB > -1) {
+            // Swap tasks in array
+            [tasks[indexA], tasks[indexB]] = [tasks[indexB], tasks[indexA]];
+            
+            // Update store with reordered array
+            this.taskStore.setAll(tasks);
+            this.recalculateAll();
+            this.saveData();
+            this.render();
+            
+            // Scroll to focused task
+            if (this.grid) {
+                requestAnimationFrame(() => {
+                    this.grid.scrollToTask(this.focusedId);
+                });
+            }
+        }
     }
 
     /**

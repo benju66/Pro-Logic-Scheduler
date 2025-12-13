@@ -84,17 +84,20 @@ export class VirtualScrollGrid {
      * Create a new VirtualScrollGrid instance
      * 
      * @param {HTMLElement} container - The container element for the grid
-     * @param {Object} options - Configuration options
-     * @param {number} options.rowHeight - Height of each row in pixels
+     * @param {Object} [options={}] - Configuration options
+     * @param {number} [options.rowHeight=38] - Height of each row in pixels
      * @param {Array} options.columns - Column definitions
-     * @param {Function} options.onRowClick - Callback for row click
-     * @param {Function} options.onRowDoubleClick - Callback for row double-click
-     * @param {Function} options.onCellChange - Callback for cell value change
-     * @param {Function} options.onSelectionChange - Callback for selection change
-     * @param {Function} options.onAction - Callback for action button clicks
-     * @param {Function} options.getRowClass - Function to get additional row classes
-     * @param {Function} options.isParent - Function to check if task is a parent
-     * @param {Function} options.getDepth - Function to get task hierarchy depth
+     * @param {Function} [options.onRowClick] - Callback for row click
+     * @param {Function} [options.onRowDoubleClick] - Callback for row double-click
+     * @param {Function} [options.onCellChange] - Callback for cell value change
+     * @param {Function} [options.onSelectionChange] - Callback for selection change
+     * @param {Function} [options.onAction] - Callback for action button clicks
+     * @param {Function} [options.onToggleCollapse] - Callback for collapse/expand toggle
+     * @param {Function} [options.onScroll] - Callback for scroll events
+     * @param {Function} [options.onRowMove] - Callback for row drag-and-drop reordering
+     * @param {Function} [options.getRowClass] - Function to get additional row classes
+     * @param {Function} [options.isParent] - Function to check if task is a parent
+     * @param {Function} [options.getDepth] - Function to get task hierarchy depth
      */
     constructor(container, options = {}) {
         // Merge options with defaults

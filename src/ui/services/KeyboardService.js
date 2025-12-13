@@ -139,8 +139,8 @@ export class KeyboardService {
             return;
         }
 
-        // Insert key - add task above
-        if (e.key === 'Insert' && this.options.onInsert) {
+        // Insert key or Ctrl+I / Cmd+I - add task above
+        if ((e.key === 'Insert' || (isCtrl && e.key === 'i')) && this.options.onInsert) {
             e.preventDefault();
             this.options.onInsert();
             return;
