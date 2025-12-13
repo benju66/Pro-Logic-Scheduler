@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Button Test</title>
+</head>
+<body>
+    <h1>Button Interaction Test</h1>
+    <button data-action="test-action" id="test-btn">Test Button</button>
+    <div id="output"></div>
+    
+    <script>
+        // Test if event delegation works
+        document.addEventListener('click', (e) => {
+            const button = e.target.closest('[data-action]');
+            if (button) {
+                const output = document.getElementById('output');
+                output.innerHTML = `Button clicked: ${button.dataset.action}<br>Time: ${new Date().toLocaleTimeString()}`;
+                console.log('✅ Event delegation working!', button.dataset.action);
+            }
+        });
+        
+        // Test direct click
+        document.getElementById('test-btn').addEventListener('click', () => {
+            console.log('✅ Direct event listener also working!');
+        });
+        
+        console.log('✅ Test page loaded');
+        console.log('✅ Buttons found:', document.querySelectorAll('[data-action]').length);
+    </script>
+</body>
+</html>
+

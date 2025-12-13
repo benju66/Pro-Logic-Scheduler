@@ -1,0 +1,1603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro Logic Scheduler | Ferrari Engine v2.0</title>
+    
+    <style>
+        /* ============================================================
+           RESET & BASE
+           ============================================================ */
+        *, *::before, *::after {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: #f8fafc;
+            color: #1e293b;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* ============================================================
+           BUTTONS
+           ============================================================ */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border: none;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            text-decoration: none;
+            position: relative;
+            z-index: 1;
+            pointer-events: auto;
+        }
+        
+        .btn-primary {
+            background: #1e293b;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #0f172a;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+        
+        .btn-secondary {
+            background: #f1f5f9;
+            color: #475569;
+        }
+        .btn-secondary:hover {
+            background: #e2e8f0;
+            transform: translateY(-1px);
+        }
+        
+        .btn-secondary:active {
+            transform: translateY(0);
+        }
+        
+        .btn-success {
+            background: #10b981;
+            color: white;
+        }
+        .btn-success:hover {
+            background: #059669;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .btn-success:active {
+            transform: translateY(0);
+        }
+        
+        .btn-danger {
+            background: white;
+            color: #dc2626;
+            border: 1px solid #fecaca;
+        }
+        .btn-danger:hover {
+            background: #fef2f2;
+        }
+        
+        .btn-outline {
+            background: white;
+            color: #475569;
+            border: 1px solid #e2e8f0;
+        }
+        .btn-outline:hover {
+            background: #f8fafc;
+            border-color: #cbd5e1;
+            transform: translateY(-1px);
+        }
+        
+        .btn-outline:active {
+            transform: translateY(0);
+        }
+        
+        .btn-icon {
+            padding: 8px;
+        }
+        
+        .btn-block {
+            width: 100%;
+        }
+        
+        .btn-group {
+            display: flex;
+            background: #f1f5f9;
+            border-radius: 6px;
+            padding: 2px;
+        }
+        
+        .btn-group .btn {
+            background: transparent;
+            padding: 6px 12px;
+        }
+        .btn-group .btn:hover {
+            background: #e2e8f0;
+        }
+        .btn-group .btn.active {
+            background: white;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+        }
+        
+        .btn-icon-only {
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #64748b;
+        }
+        .btn-icon-only:hover {
+            background: #f1f5f9;
+            color: #1e293b;
+        }
+        
+        /* ============================================================
+           DROPDOWN MENU
+           ============================================================ */
+        .dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        
+        .dropdown-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .dropdown-menu {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            margin-top: 4px;
+            min-width: 220px;
+            background: white;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-8px);
+            transition: all 0.15s ease;
+        }
+        
+        .dropdown-menu.show {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+        
+        .dropdown-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            width: 100%;
+            padding: 10px 14px;
+            border: none;
+            background: transparent;
+            font-size: 13px;
+            color: #334155;
+            cursor: pointer;
+            text-align: left;
+        }
+        
+        .dropdown-item:first-child {
+            border-radius: 7px 7px 0 0;
+        }
+        
+        .dropdown-item:last-child {
+            border-radius: 0 0 7px 7px;
+        }
+        
+        .dropdown-item:hover {
+            background: #f1f5f9;
+        }
+        
+        .dropdown-item svg {
+            color: #64748b;
+            flex-shrink: 0;
+        }
+        
+        .dropdown-shortcut {
+            margin-left: auto;
+            font-size: 11px;
+            color: #94a3b8;
+        }
+        
+        .dropdown-divider {
+            height: 1px;
+            margin: 4px 0;
+            background: #e2e8f0;
+        }
+        
+        .divider {
+            width: 1px;
+            height: 24px;
+            background: #e2e8f0;
+            margin: 0 8px;
+        }
+        
+        /* ============================================================
+           HEADER
+           ============================================================ */
+        .header {
+            height: 56px;
+            background: white;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 16px;
+            flex-shrink: 0;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+            position: relative;
+            z-index: 100;
+        }
+        
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .logo {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        
+        .title {
+            font-size: 18px;
+            font-weight: 700;
+            color: #1e293b;
+        }
+        
+        .title span {
+            font-size: 11px;
+            font-weight: 500;
+            color: #94a3b8;
+            margin-left: 8px;
+        }
+        
+        .subtitle {
+            font-size: 11px;
+            color: #64748b;
+        }
+        
+        .header-center {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        /* ============================================================
+           MAIN LAYOUT
+           ============================================================ */
+        .main {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .grid-pane {
+            width: 45%;
+            min-width: 400px;
+            display: flex;
+            flex-direction: column;
+            background: white;
+            border-right: 1px solid #e2e8f0;
+            
+            /* Column widths as CSS variables */
+            --w-drag: 28px;
+            --w-checkbox: 30px;
+            --w-rowNum: 35px;
+            --w-name: 220px;
+            --w-duration: 50px;
+            --w-start: 110px;
+            --w-end: 95px;
+            --w-constraintType: 70px;
+            --w-actions: 120px;
+        }
+        
+        .grid-header {
+            height: 50px;
+            background: #f8fafc;
+            border-bottom: 1px solid #cbd5e1;
+            display: flex;
+            align-items: center;
+            font-size: 11px;
+            font-weight: 700;
+            color: #64748b;
+            text-transform: uppercase;
+            flex-shrink: 0;
+            min-width: fit-content;
+        }
+        
+        .grid-header-cell {
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-right: 1px solid #e2e8f0;
+            padding: 0 8px;
+            flex-shrink: 0;
+        }
+        
+        .grid-container {
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        .resizer {
+            width: 6px;
+            background: #f1f5f9;
+            border-left: 1px solid #e2e8f0;
+            border-right: 1px solid #e2e8f0;
+            cursor: col-resize;
+            flex-shrink: 0;
+            transition: background 0.15s;
+        }
+        
+        .resizer:hover,
+        .resizer.active {
+            background: #cbd5e1;
+        }
+        
+        .gantt-pane {
+            flex: 1;
+            min-width: 300px;
+            background: #f8fafc;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .gantt-toolbar {
+            height: 32px;
+            background: #f1f5f9;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 8px;
+            flex-shrink: 0;
+        }
+        
+        .gantt-toolbar-title {
+            font-size: 11px;
+            font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase;
+        }
+        
+        .gantt-container {
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        /* ============================================================
+           GRID STYLES (Virtual Scroll Grid)
+           ============================================================ */
+        .vsg-row {
+            cursor: default;
+            user-select: none;
+        }
+        
+        .vsg-row:hover {
+            background: #f8fafc;
+        }
+        
+        .vsg-row.row-selected {
+            background: #f5f3ff !important;
+            box-shadow: inset 3px 0 0 0 #6366f1;
+        }
+        
+        .vsg-row.is-parent {
+            background: #f8fafc;
+        }
+        
+        .vsg-cell {
+            padding: 0 4px;
+        }
+        
+        .vsg-input {
+            width: 100%;
+            height: 100%;
+            border: none;
+            background: transparent;
+            padding: 0 8px;
+            font-size: 13px;
+            color: #334155;
+            outline: none;
+        }
+        
+        .vsg-input:focus {
+            background: white;
+            box-shadow: inset 0 0 0 2px #6366f1;
+        }
+        
+        .vsg-select {
+            width: 100%;
+            height: 100%;
+            border: none;
+            background: transparent;
+            font-size: 11px;
+            font-weight: 600;
+            color: #64748b;
+            text-align: center;
+            cursor: pointer;
+            outline: none;
+        }
+        
+        .vsg-select:hover {
+            background: #f1f5f9;
+        }
+        
+        .vsg-checkbox {
+            width: 14px;
+            height: 14px;
+            cursor: pointer;
+            accent-color: #6366f1;
+        }
+        
+        .vsg-action-btn:hover {
+            background: #f1f5f9 !important;
+        }
+        
+        .cell-readonly {
+            background: #f1f5f9;
+            color: #94a3b8;
+            font-style: italic;
+        }
+        
+        /* ============================================================
+           COLUMN RESIZERS
+           ============================================================ */
+        .col-resizer {
+            position: absolute;
+            right: -3px;
+            top: 0;
+            width: 6px;
+            height: 100%;
+            cursor: col-resize;
+            z-index: 10;
+            background: transparent;
+        }
+        
+        .col-resizer:hover,
+        .col-resizer.active {
+            background: #6366f1;
+        }
+        
+        .col-resizer::after {
+            content: '';
+            position: absolute;
+            right: 2px;
+            top: 25%;
+            height: 50%;
+            width: 2px;
+            background: #cbd5e1;
+            border-radius: 1px;
+            opacity: 0;
+            transition: opacity 0.15s;
+        }
+        
+        .grid-header-cell:hover .col-resizer::after {
+            opacity: 1;
+        }
+        
+        /* ============================================================
+           DRAG AND DROP
+           ============================================================ */
+        .vsg-drag-handle {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: grab;
+            color: #cbd5e1;
+            transition: color 0.15s;
+        }
+        
+        .vsg-drag-handle:hover {
+            color: #6366f1;
+        }
+        
+        .vsg-drag-handle:active {
+            cursor: grabbing;
+        }
+        
+        .vsg-row.dragging {
+            opacity: 0.5;
+            background: #f5f3ff !important;
+        }
+        
+        .vsg-row.drag-over-before::before {
+            content: '';
+            position: absolute;
+            top: -1px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: #6366f1;
+            z-index: 100;
+        }
+        
+        .vsg-row.drag-over-after::after {
+            content: '';
+            position: absolute;
+            bottom: -1px;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: #6366f1;
+            z-index: 100;
+        }
+        
+        .vsg-row.drag-over-child {
+            background: #f5f3ff !important;
+            box-shadow: inset 0 0 0 2px #6366f1;
+        }
+        
+        .drag-ghost {
+            position: fixed;
+            pointer-events: none;
+            z-index: 1000;
+            padding: 8px 16px;
+            background: white;
+            border: 1px solid #6366f1;
+            border-radius: 6px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            font-size: 13px;
+            color: #1e293b;
+            max-width: 300px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .drag-ghost .drag-count {
+            display: inline-block;
+            background: #6366f1;
+            color: white;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 6px;
+            border-radius: 10px;
+            margin-left: 8px;
+        }
+        
+        /* ============================================================
+           SIDE DRAWER
+           ============================================================ */
+        .side-drawer {
+            position: absolute;
+            top: 0;
+            right: -400px;
+            width: 400px;
+            height: 100%;
+            background: white;
+            border-left: 1px solid #e2e8f0;
+            box-shadow: -10px 0 25px -5px rgba(0, 0, 0, 0.1);
+            z-index: 100;
+            transition: right 0.3s ease-in-out;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .side-drawer.open {
+            right: 0;
+        }
+        
+        .drawer-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #f8fafc;
+            flex-shrink: 0;
+        }
+        
+        .drawer-title {
+            font-size: 16px;
+            font-weight: 700;
+            color: #1e293b;
+        }
+        
+        .drawer-close {
+            width: 32px;
+            height: 32px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #64748b;
+        }
+        
+        .drawer-close:hover {
+            background: #e2e8f0;
+            color: #1e293b;
+        }
+        
+        .drawer-body {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        
+        .drawer-footer {
+            padding: 16px 20px;
+            border-top: 1px solid #e2e8f0;
+            background: #f8fafc;
+            flex-shrink: 0;
+        }
+        
+        /* ============================================================
+           FORM ELEMENTS
+           ============================================================ */
+        .form-group {
+            margin-bottom: 16px;
+        }
+        
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        
+        .form-label {
+            display: block;
+            font-size: 11px;
+            font-weight: 700;
+            color: #64748b;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.025em;
+        }
+        
+        .form-input {
+            width: 100%;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            padding: 10px 12px;
+            font-size: 13px;
+            color: #334155;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            background: white;
+        }
+        
+        .form-input:focus {
+            border-color: #6366f1;
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+        }
+        
+        .form-input:disabled,
+        .form-input-readonly {
+            background: #f8fafc;
+            color: #94a3b8;
+            cursor: not-allowed;
+        }
+        
+        .form-select {
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 10px center;
+            padding-right: 32px;
+            cursor: pointer;
+        }
+        
+        .form-select-sm {
+            padding: 6px 8px;
+            font-size: 12px;
+        }
+        
+        .form-input-sm {
+            padding: 6px 8px;
+            font-size: 12px;
+        }
+        
+        .form-textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+        
+        .form-hint {
+            font-size: 11px;
+            color: #94a3b8;
+            margin-top: 6px;
+            line-height: 1.4;
+        }
+        
+        .form-section {
+            margin-top: 24px;
+            padding-top: 20px;
+            border-top: 1px solid #e2e8f0;
+        }
+        
+        .form-section-title {
+            font-size: 11px;
+            font-weight: 700;
+            color: #1e293b;
+            margin-bottom: 16px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        
+        /* ============================================================
+           CPM ANALYSIS DISPLAY
+           ============================================================ */
+        .cpm-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        
+        .cpm-item {
+            background: #f8fafc;
+            padding: 10px 12px;
+            border-radius: 6px;
+            border: 1px solid #e2e8f0;
+        }
+        
+        .cpm-label {
+            display: block;
+            font-size: 10px;
+            font-weight: 600;
+            color: #94a3b8;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        
+        .cpm-value {
+            font-size: 13px;
+            font-weight: 600;
+            color: #334155;
+        }
+        
+        .cpm-value.critical {
+            color: #dc2626;
+        }
+        
+        .cpm-critical {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 6px;
+            color: #dc2626;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        /* ============================================================
+           MODAL DIALOGS
+           ============================================================ */
+        .modal-dialog {
+            border: none;
+            border-radius: 12px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            padding: 0;
+            max-width: 90vw;
+            max-height: 90vh;
+            overflow: hidden;
+        }
+        
+        .modal-dialog::backdrop {
+            background: rgba(0, 0, 0, 0.3);
+        }
+        
+        .dependencies-modal {
+            width: 560px;
+        }
+        
+        .calendar-modal {
+            width: 520px;
+        }
+        
+        .modal-content {
+            display: flex;
+            flex-direction: column;
+            max-height: 80vh;
+        }
+        
+        .modal-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid #e2e8f0;
+            background: #f8fafc;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+        
+        .modal-header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .modal-icon {
+            width: 36px;
+            height: 36px;
+            background: #6366f1;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+        }
+        
+        .modal-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: #1e293b;
+        }
+        
+        .modal-subtitle {
+            font-size: 12px;
+            color: #64748b;
+            margin-top: 2px;
+        }
+        
+        .modal-close {
+            width: 32px;
+            height: 32px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #64748b;
+        }
+        
+        .modal-close:hover {
+            background: #e2e8f0;
+            color: #1e293b;
+        }
+        
+        .modal-tabs {
+            display: flex;
+            border-bottom: 1px solid #e2e8f0;
+            background: white;
+            flex-shrink: 0;
+        }
+        
+        .tab-btn {
+            flex: 1;
+            padding: 12px 16px;
+            border: none;
+            background: transparent;
+            font-size: 13px;
+            font-weight: 500;
+            color: #64748b;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            border-bottom: 2px solid transparent;
+            transition: all 0.15s;
+        }
+        
+        .tab-btn:hover {
+            background: #f8fafc;
+            color: #1e293b;
+        }
+        
+        .tab-btn.active {
+            color: #1e293b;
+            border-bottom-color: #6366f1;
+        }
+        
+        .tab-count {
+            background: #e2e8f0;
+            color: #64748b;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 2px 6px;
+            border-radius: 10px;
+        }
+        
+        .tab-btn.active .tab-count {
+            background: #6366f1;
+            color: white;
+        }
+        
+        .modal-body {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        
+        .tab-panel {
+            display: none;
+        }
+        
+        .tab-panel.active {
+            display: block;
+        }
+        
+        .modal-footer {
+            padding: 16px 20px;
+            border-top: 1px solid #e2e8f0;
+            background: #f8fafc;
+            display: flex;
+            justify-content: flex-end;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        
+        /* ============================================================
+           LINKS TABLE (Dependencies Modal)
+           ============================================================ */
+        .add-link-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        
+        .add-link-row .form-input {
+            flex: 1;
+        }
+        
+        .links-table-wrapper {
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .links-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        
+        .links-table thead {
+            background: #f8fafc;
+        }
+        
+        .links-table th {
+            padding: 10px 12px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .links-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #f1f5f9;
+            vertical-align: middle;
+        }
+        
+        .links-table tr:last-child td {
+            border-bottom: none;
+        }
+        
+        .links-table tr:hover {
+            background: #f8fafc;
+        }
+        
+        .links-table .empty-row td {
+            text-align: center;
+            color: #94a3b8;
+            font-style: italic;
+            padding: 24px;
+        }
+        
+        .links-table .empty-row:hover {
+            background: transparent;
+        }
+        
+        .task-name-cell {
+            max-width: 200px;
+        }
+        
+        .task-name {
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .text-muted {
+            color: #94a3b8;
+        }
+        
+        .link-type-select {
+            width: 100%;
+        }
+        
+        .lag-input {
+            width: 100%;
+            text-align: center;
+        }
+        
+        .btn-icon {
+            width: 28px;
+            height: 28px;
+            padding: 0;
+        }
+        
+        .btn-danger-icon {
+            color: #94a3b8;
+            background: transparent;
+            border: none;
+            cursor: pointer;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .btn-danger-icon:hover {
+            color: #dc2626;
+            background: #fef2f2;
+        }
+        
+        .link-help {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            margin-top: 16px;
+            padding: 12px;
+            background: #f8fafc;
+            border-radius: 6px;
+            font-size: 12px;
+            color: #64748b;
+        }
+        
+        .link-help svg {
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+        
+        /* ============================================================
+           CALENDAR MODAL
+           ============================================================ */
+        .calendar-section {
+            margin-bottom: 24px;
+        }
+        
+        .calendar-section:last-child {
+            margin-bottom: 0;
+        }
+        
+        .section-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            font-weight: 700;
+            color: #1e293b;
+            margin-bottom: 8px;
+        }
+        
+        .section-desc {
+            font-size: 12px;
+            color: #64748b;
+            margin-bottom: 16px;
+        }
+        
+        .weekday-grid {
+            display: flex;
+            gap: 8px;
+            justify-content: space-between;
+        }
+        
+        .weekday-btn {
+            width: 48px;
+            height: 48px;
+            border: 2px solid #e2e8f0;
+            border-radius: 8px;
+            background: white;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+        }
+        
+        .weekday-btn:hover {
+            border-color: #6366f1;
+        }
+        
+        .weekday-btn.active {
+            background: #6366f1;
+            border-color: #6366f1;
+            color: white;
+        }
+        
+        .weekday-btn.weekend {
+            border-style: dashed;
+        }
+        
+        .weekday-btn.weekend.active {
+            border-style: solid;
+        }
+        
+        .weekday-abbrev {
+            font-size: 14px;
+            font-weight: 700;
+        }
+        
+        .weekday-name {
+            font-size: 9px;
+            text-transform: uppercase;
+            opacity: 0.7;
+        }
+        
+        .work-week-summary {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 12px;
+            padding: 10px 12px;
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-radius: 6px;
+            font-size: 12px;
+            color: #166534;
+        }
+        
+        .add-exception-form {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+        
+        .add-exception-form input[type="date"] {
+            width: 140px;
+            flex-shrink: 0;
+        }
+        
+        .add-exception-form input[type="text"] {
+            flex: 1;
+        }
+        
+        .exceptions-list-wrapper {
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            overflow: hidden;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .exceptions-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        
+        .exceptions-table thead {
+            background: #f8fafc;
+            position: sticky;
+            top: 0;
+        }
+        
+        .exceptions-table th {
+            padding: 10px 12px;
+            text-align: left;
+            font-size: 11px;
+            font-weight: 600;
+            color: #64748b;
+            text-transform: uppercase;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        
+        .exceptions-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #f1f5f9;
+        }
+        
+        .exceptions-table tr:last-child td {
+            border-bottom: none;
+        }
+        
+        .exceptions-table tr:hover {
+            background: #f8fafc;
+        }
+        
+        .exceptions-table .empty-row td {
+            text-align: center;
+            color: #94a3b8;
+            font-style: italic;
+            padding: 24px;
+        }
+        
+        .exception-date-badge {
+            display: inline-block;
+            background: #fee2e2;
+            color: #dc2626;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 3px 8px;
+            border-radius: 4px;
+        }
+        
+        .exception-day {
+            margin-left: 8px;
+            color: #94a3b8;
+            font-size: 12px;
+        }
+        
+        .exception-desc {
+            color: #334155;
+        }
+        
+        /* ============================================================
+           PERFORMANCE STATS BAR
+           ============================================================ */
+        .stats-bar {
+            height: 28px;
+            background: #1e293b;
+            color: #94a3b8;
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            font-size: 11px;
+            font-family: 'Monaco', 'Menlo', monospace;
+            gap: 24px;
+            flex-shrink: 0;
+        }
+        
+        .stats-bar .stat {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .stats-bar .stat-label {
+            color: #64748b;
+        }
+        
+        .stats-bar .stat-value {
+            color: #10b981;
+            font-weight: 600;
+        }
+        
+        .stats-bar .stat-value.warning {
+            color: #f59e0b;
+        }
+        
+        .stats-bar .stat-value.error {
+            color: #ef4444;
+        }
+        
+        /* ============================================================
+           TOAST NOTIFICATION
+           ============================================================ */
+        .toast {
+            position: fixed;
+            bottom: 48px;
+            right: 20px;
+            padding: 12px 20px;
+            background: #1e293b;
+            color: white;
+            border-radius: 8px;
+            font-size: 13px;
+            z-index: 1000;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: all 0.3s ease;
+            pointer-events: none;
+        }
+        
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+        
+        .toast.success {
+            background: #059669;
+        }
+        
+        .toast.error {
+            background: #dc2626;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">PL</div>
+            <div>
+                <div class="title">Pro Logic Scheduler <span>Ferrari Engine v2.0</span></div>
+                <div class="subtitle">Double-click row for details</div>
+            </div>
+        </div>
+        
+            <div class="header-center">
+            <!-- File Menu Dropdown -->
+            <div class="dropdown">
+                <button class="btn btn-secondary dropdown-toggle" data-action="toggle-dropdown" data-target="file-menu">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                    File
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M6 9l6 6 6-6"/>
+                    </svg>
+                </button>
+                <div class="dropdown-menu" id="file-menu">
+                    <button class="dropdown-item" data-action="new-project">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
+                            <path d="M12 18v-6M9 15h6"/>
+                        </svg>
+                        New Project
+                    </button>
+                    <div class="dropdown-divider"></div>
+                    <button class="dropdown-item" data-action="open-file">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/>
+                        </svg>
+                        Open...
+                        <span class="dropdown-shortcut">Ctrl+O</span>
+                    </button>
+                    <button class="dropdown-item" data-action="save-file">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/>
+                            <polyline points="17 21 17 13 7 13 7 21"/>
+                            <polyline points="7 3 7 8 15 8"/>
+                        </svg>
+                        Save
+                        <span class="dropdown-shortcut">Ctrl+S</span>
+                    </button>
+                    <button class="dropdown-item" data-action="export-json">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        Export JSON...
+                    </button>
+                    <div class="dropdown-divider"></div>
+                    <button class="dropdown-item" data-action="import-xml">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                        Import MS Project XML...
+                    </button>
+                    <button class="dropdown-item" data-action="export-xml">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                        Export MS Project XML...
+                    </button>
+                </div>
+            </div>
+            
+            <div class="divider"></div>
+            
+            <button class="btn btn-secondary btn-icon" data-action="undo" title="Undo (Ctrl+Z)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 7v6h6"/><path d="M21 17a9 9 0 00-9-9 9 9 0 00-6 2.3L3 13"/>
+                </svg>
+            </button>
+            <button class="btn btn-secondary btn-icon" data-action="redo" title="Redo (Ctrl+Y)">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 7v6h-6"/><path d="M3 17a9 9 0 019-9 9 9 0 016 2.3l3 2.7"/>
+                </svg>
+            </button>
+            
+            <div class="divider"></div>
+            
+            <button class="btn btn-primary" data-action="add-task">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 5v14M5 12h14"/>
+                </svg>
+                Add Task
+            </button>
+            
+            <div class="divider"></div>
+            
+            <div class="btn-group">
+                <button class="btn" data-action="zoom-out" title="Zoom Out">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M5 12h14"/>
+                    </svg>
+                </button>
+                <button class="btn active" id="zoom-label">Week</button>
+                <button class="btn" data-action="zoom-in" title="Zoom In">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 5v14M5 12h14"/>
+                    </svg>
+                </button>
+            </div>
+            
+            <div class="divider"></div>
+            
+            <button class="btn btn-outline" data-action="open-calendar" title="Project Calendar">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
+                    <line x1="16" y1="2" x2="16" y2="6"/>
+                    <line x1="8" y1="2" x2="8" y2="6"/>
+                    <line x1="3" y1="10" x2="21" y2="10"/>
+                </svg>
+                Calendar
+            </button>
+        </div>
+        
+        <div class="header-right">
+            <button class="btn btn-success" data-action="generate-1000">+ 1,000 Tasks</button>
+            <button class="btn btn-success" data-action="generate-5000">+ 5,000 Tasks</button>
+            <div class="divider"></div>
+            <button class="btn btn-secondary" data-action="clear-tasks">Clear All</button>
+            <button class="btn btn-secondary" data-action="copy-console" title="Copy console output">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+                </svg>
+                Copy Console
+            </button>
+            <button class="btn btn-secondary" data-action="show-stats">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 20V10M12 20V4M6 20v-6"/>
+                </svg>
+                Stats
+            </button>
+        </div>
+    </header>
+    
+    <!-- Main Content -->
+    <main class="main">
+        <!-- Grid Pane -->
+        <div class="grid-pane" id="grid-pane">
+            <div class="grid-header" id="grid-header">
+                <div class="grid-header-cell" data-field="drag" style="width: var(--w-drag);">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.4">
+                        <circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/>
+                        <circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/>
+                    </svg>
+                </div>
+                <div class="grid-header-cell" data-field="checkbox" style="width: var(--w-checkbox);">☑</div>
+                <div class="grid-header-cell" data-field="rowNum" style="width: var(--w-rowNum);">#<div class="col-resizer" data-field="rowNum"></div></div>
+                <div class="grid-header-cell" data-field="name" style="width: var(--w-name); justify-content: flex-start;">Task Name<div class="col-resizer" data-field="name"></div></div>
+                <div class="grid-header-cell" data-field="duration" style="width: var(--w-duration);">Dur<div class="col-resizer" data-field="duration"></div></div>
+                <div class="grid-header-cell" data-field="start" style="width: var(--w-start); justify-content: flex-start;">Start<div class="col-resizer" data-field="start"></div></div>
+                <div class="grid-header-cell" data-field="end" style="width: var(--w-end); justify-content: flex-start;">Finish<div class="col-resizer" data-field="end"></div></div>
+                <div class="grid-header-cell" data-field="constraintType" style="width: var(--w-constraintType);">Constr<div class="col-resizer" data-field="constraintType"></div></div>
+                <div class="grid-header-cell" data-field="actions" style="width: var(--w-actions);">Actions</div>
+            </div>
+            <div class="grid-container" id="grid-container"></div>
+        </div>
+        
+        <!-- Resizer -->
+        <div class="resizer" id="resizer"></div>
+        
+        <!-- Gantt Pane -->
+        <div class="gantt-pane" id="gantt-pane">
+            <div class="gantt-toolbar">
+                <span class="gantt-toolbar-title">Gantt Chart</span>
+                <button class="btn btn-icon-only" data-action="popout-gantt" title="Open in new window">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/>
+                        <polyline points="15 3 21 3 21 9"/>
+                        <line x1="10" y1="14" x2="21" y2="3"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="gantt-container" id="gantt-container"></div>
+        </div>
+        
+        <!-- Side Drawer Container -->
+        <div id="drawer-container"></div>
+    </main>
+    
+    <!-- Stats Bar -->
+    <div class="stats-bar">
+        <div class="stat">
+            <span class="stat-label">Tasks:</span>
+            <span class="stat-value" id="stat-tasks">0</span>
+        </div>
+        <div class="stat">
+            <span class="stat-label">Visible:</span>
+            <span class="stat-value" id="stat-visible">0</span>
+        </div>
+        <div class="stat">
+            <span class="stat-label">Rendered Rows:</span>
+            <span class="stat-value" id="stat-rendered">0</span>
+        </div>
+        <div class="stat">
+            <span class="stat-label">CPM Calc:</span>
+            <span class="stat-value" id="stat-calc">0ms</span>
+        </div>
+        <div class="stat">
+            <span class="stat-label">Gantt Render:</span>
+            <span class="stat-value" id="stat-gantt">0ms</span>
+        </div>
+        <div class="stat">
+            <span class="stat-label">Memory:</span>
+            <span class="stat-value" id="stat-memory">0 MB</span>
+        </div>
+        <div class="stat">
+            <span class="stat-label">Buttons:</span>
+            <span class="stat-value" id="stat-buttons">0</span>
+        </div>
+        <div class="stat">
+            <span class="stat-label">Last Click:</span>
+            <span class="stat-value" id="stat-last-click" style="font-size: 10px;">none</span>
+        </div>
+    </div>
+    
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+    
+    <!-- Modal Container -->
+    <div id="modal-container"></div>
+    
+    <!-- Hidden File Inputs -->
+    <input type="file" id="file-input-json" accept=".json" style="display: none;">
+    <input type="file" id="file-input-xml" accept=".xml" style="display: none;">
+    
+    
+    <!-- Scripts (ES Modules) -->
+    <script type="module" src="/src/main.js"></script>
+    
+    <!-- Test Script (for debugging) -->
+    <script src="/test-button-setup.js"></script>
+</body>
+</html>
