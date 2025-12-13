@@ -16,17 +16,17 @@
  * @version 2.0.0 - Ferrari Engine
  */
 
+import { LINK_TYPE_LABELS } from '../../core/Constants.js';
+
 export class DependenciesModal {
     
     /**
      * Link type labels for display
+     * @deprecated Use LINK_TYPE_LABELS from core/Constants.js instead
      */
-    static LINK_TYPES = {
-        'FS': 'Finish to Start',
-        'SS': 'Start to Start',
-        'FF': 'Finish to Finish',
-        'SF': 'Start to Finish',
-    };
+    static get LINK_TYPES() {
+        return LINK_TYPE_LABELS;
+    }
 
     /**
      * Create a new DependenciesModal instance

@@ -42,6 +42,7 @@
  */
 
 import { DateUtils } from './DateUtils.js';
+import { LINK_TYPES, DEFAULT_LINK_TYPE } from './Constants.js';
 
 /**
  * @fileoverview Critical Path Method (CPM) calculation engine
@@ -183,7 +184,7 @@ export class CPM {
                     if (successors) {
                         successors.push({
                             id: task.id,
-                            type: dep.type || 'FS',
+                            type: dep.type || DEFAULT_LINK_TYPE,
                             lag: dep.lag || 0,
                         });
                     }

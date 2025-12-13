@@ -22,6 +22,7 @@
 
 import { CPM } from '../core/CPM.js';
 import { DateUtils } from '../core/DateUtils.js';
+import { LINK_TYPES, CONSTRAINT_TYPES } from '../core/Constants.js';
 import { TaskStore } from '../data/TaskStore.js';
 import { CalendarStore } from '../data/CalendarStore.js';
 import { HistoryManager } from '../data/HistoryManager.js';
@@ -48,15 +49,21 @@ export class SchedulerService {
 
     /**
      * Link types supported
-     * @type {string[]}
+     * @type {readonly string[]}
+     * @deprecated Use LINK_TYPES from core/Constants.js instead
      */
-    static LINK_TYPES = ['FS', 'SS', 'FF', 'SF'];
+    static get LINK_TYPES() {
+        return LINK_TYPES;
+    }
 
     /**
      * Constraint types supported
-     * @type {string[]}
+     * @type {readonly string[]}
+     * @deprecated Use CONSTRAINT_TYPES from core/Constants.js instead
      */
-    static CONSTRAINT_TYPES = ['asap', 'snet', 'snlt', 'fnet', 'fnlt', 'mfo'];
+    static get CONSTRAINT_TYPES() {
+        return CONSTRAINT_TYPES;
+    }
 
     /**
      * Create a new SchedulerService instance
