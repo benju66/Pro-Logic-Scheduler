@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @fileoverview Keyboard shortcut service - handles keyboard navigation and shortcuts
  * @module ui/services/KeyboardService

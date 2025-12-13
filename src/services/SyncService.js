@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @fileoverview Synchronization service - syncs scrolling between grid and Gantt
  * @module services/SyncService

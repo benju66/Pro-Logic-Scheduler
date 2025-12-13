@@ -121,13 +121,14 @@ try {
 console.log('\n🔗 Module Dependencies:');
 try {
     const mainJs = readFileSync(join(projectRoot, 'src/main.js'), 'utf-8');
-    const schedulerJs = readFileSync(join(projectRoot, 'src/SchedulerEngine.js'), 'utf-8');
+    const schedulerServiceJs = readFileSync(join(projectRoot, 'src/services/SchedulerService.js'), 'utf-8');
     
-    check('main.js imports SchedulerEngine', mainJs.includes('SchedulerEngine'));
+    check('main.js imports SchedulerService', mainJs.includes('SchedulerService'));
     check('main.js imports CanvasGantt', mainJs.includes('CanvasGantt'));
     check('main.js imports VirtualScrollGrid', mainJs.includes('VirtualScrollGrid'));
-    check('SchedulerEngine imports CPM', schedulerJs.includes('CPM'));
-    check('SchedulerEngine imports DateUtils', schedulerJs.includes('DateUtils'));
+    check('SchedulerService imports CPM', schedulerServiceJs.includes('CPM'));
+    check('SchedulerService imports DateUtils', schedulerServiceJs.includes('DateUtils'));
+    check('SchedulerService imports TaskStore', schedulerServiceJs.includes('TaskStore'));
 } catch (e) {
     check('Module imports check', false, e.message);
 }

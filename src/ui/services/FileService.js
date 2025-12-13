@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @fileoverview File I/O service - handles saving and loading schedule files
  * @module ui/services/FileService

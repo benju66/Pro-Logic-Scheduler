@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @fileoverview Task data store - manages task CRUD operations
  * @module data/TaskStore

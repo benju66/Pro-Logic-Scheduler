@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @fileoverview Date utility functions for working day calculations
  * @module core/DateUtils
@@ -117,7 +118,7 @@ export class DateUtils {
         if (!startStr || !endStr) return 0;
         
         let current = new Date(startStr + 'T12:00:00');
-        const end = new Date(endStr + 'T12:00:00');
+        let end = new Date(endStr + 'T12:00:00');
         
         // Handle reversed date range
         if (current > end) {

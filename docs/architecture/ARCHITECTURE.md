@@ -30,8 +30,7 @@ Same structure everywhere. Predictable naming conventions.
 src/
 ├── core/                    # Pure business logic (no dependencies on DOM/UI)
 │   ├── CPM.js              # Critical Path Method calculations
-│   ├── DateUtils.js        # Date calculations and utilities
-│   └── TaskModel.js         # Task data model and validation
+│   └── DateUtils.js        # Date calculations and utilities
 │
 ├── data/                    # Data management layer
 │   ├── TaskStore.js        # Task CRUD operations
@@ -301,9 +300,10 @@ Then integrate into `SchedulerService`.
 ## Migration Notes
 
 ### From Old Structure
-- `SchedulerEngine.js` → Split into `SchedulerService` + `TaskStore` + `CalendarStore`
-- `main.js` helpers → Move to `ui/services/`
-- Global `window` assignments → Remove, use dependency injection
+- ✅ `SchedulerEngine.js` → Removed (replaced by `SchedulerService`)
+- ✅ `SchedulerService` → Uses `TaskStore` + `CalendarStore` + `HistoryManager`
+- ⏳ `main.js` helpers → Move to `ui/services/` (in progress)
+- ⏳ Global `window` assignments → Refactor to use event delegation (in progress)
 
 ## AI-Friendly Features
 

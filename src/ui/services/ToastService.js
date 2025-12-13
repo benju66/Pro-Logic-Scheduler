@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @fileoverview Toast notification service
  * @module ui/services/ToastService

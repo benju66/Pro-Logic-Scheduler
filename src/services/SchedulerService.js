@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @fileoverview Scheduler Service - Main application orchestrator
  * @module services/SchedulerService

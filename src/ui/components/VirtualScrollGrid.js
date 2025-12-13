@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @fileoverview High-performance virtualized grid component
  * @module ui/components/VirtualScrollGrid

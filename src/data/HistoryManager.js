@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @fileoverview History manager - handles undo/redo functionality
  * @module data/HistoryManager

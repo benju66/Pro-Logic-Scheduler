@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * @fileoverview Calendar data store - manages calendar configuration
  * @module data/CalendarStore

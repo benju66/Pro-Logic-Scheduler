@@ -71,18 +71,24 @@ function testButtonSetup() {
     console.log('  4. Check for any error messages');
 }
 
-// Auto-run if in browser
+// Auto-run if in browser (dev mode only)
 if (typeof window !== 'undefined') {
     window.testButtonSetup = testButtonSetup;
-    console.log('💡 Run testButtonSetup() in console to test button setup');
     
-    // Auto-run after a delay
-    setTimeout(() => {
-        if (document.readyState === 'complete') {
-            testButtonSetup();
-        } else {
-            window.addEventListener('load', testButtonSetup);
-        }
-    }, 2000);
+    // Only auto-run in development (when Vite dev server is running)
+    const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    
+    if (isDev) {
+        console.log('💡 Run testButtonSetup() in console to test button setup');
+        
+        // Auto-run after a delay in dev mode
+        setTimeout(() => {
+            if (document.readyState === 'complete') {
+                testButtonSetup();
+            } else {
+                window.addEventListener('load', testButtonSetup);
+            }
+        }, 2000);
+    }
 }
 
