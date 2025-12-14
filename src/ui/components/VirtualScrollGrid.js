@@ -1042,6 +1042,12 @@ export class VirtualScrollGrid {
      * @param {Object} meta - Metadata (isParent, depth, etc.)
      */
     _bindCellData(cell, col, task, meta) {
+        // Handle special column: actions FIRST (before early return)
+        if (col.type === VirtualScrollGrid.COLUMN_TYPES.ACTIONS && col.actions) {
+            this._bindActionsCell(cell, col, task, meta);
+            return; // Actions column doesn't need input handling
+        }
+        
         const value = task[col.field];
         const input = cell.classList.contains('vsg-input') || 
                      cell.classList.contains('vsg-select') ||
@@ -1083,11 +1089,6 @@ export class VirtualScrollGrid {
         // Handle constraint icons on date cells
         if (col.showConstraintIcon && (col.field === 'start' || col.field === 'end')) {
             this._bindConstraintIcon(cell, col, task, meta);
-        }
-        
-        // Handle special column: actions
-        if (col.type === VirtualScrollGrid.COLUMN_TYPES.ACTIONS && col.actions) {
-            this._bindActionsCell(cell, col, task, meta);
         }
         
         // Handle custom renderer
@@ -1242,19 +1243,30 @@ export class VirtualScrollGrid {
         const container = cell.querySelector('.vsg-actions');
         if (!container) return;
         
-        let html = '<div style="display: flex; align-items: center; gap: 2px;">';
+        if (!col.actions || !Array.isArray(col.actions) || col.actions.length === 0) {
+            return;
+        }
+        
+        let html = '<div style="display: flex; align-items: center; gap: 4px; padding: 2px;">';
+        let renderedCount = 0;
         
         col.actions.forEach(action => {
             // Check if action should be shown
-            if (action.showIf && !action.showIf(task, meta)) return;
+            if (action.showIf && !action.showIf(task, meta)) {
+                return;
+            }
+            
+            renderedCount++;
+            const actionName = action.name || action.id;
+            const actionContent = action.icon || action.label || actionName;
             
             html += `
                 <button 
-                    data-action="${action.name}"
+                    data-action="${actionName}"
                     class="vsg-action-btn"
-                    title="${action.title || action.name}"
+                    title="${action.title || actionName}"
                     style="
-                        padding: 4px;
+                        padding: 4px 6px;
                         border: none;
                         background: transparent;
                         cursor: pointer;
@@ -1263,9 +1275,12 @@ export class VirtualScrollGrid {
                         display: flex;
                         align-items: center;
                         justify-content: center;
+                        min-width: 24px;
+                        min-height: 24px;
+                        line-height: 1;
                     "
                 >
-                    ${action.icon || action.name}
+                    ${actionContent}
                 </button>
             `;
         });

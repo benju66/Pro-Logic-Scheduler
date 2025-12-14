@@ -480,8 +480,30 @@
             accent-color: #6366f1;
         }
         
+        .vsg-action-btn {
+            opacity: 1 !important;
+            visibility: visible !important;
+            display: flex !important;
+        }
+        
         .vsg-action-btn:hover {
             background: #f1f5f9 !important;
+        }
+        
+        .vsg-action-btn[data-action="links"]:hover {
+            color: #4f46e5 !important;
+            background: #eef2ff !important;
+        }
+        
+        .vsg-action-btn[data-action="delete"]:hover {
+            color: #dc2626 !important;
+            background: #fef2f2 !important;
+        }
+        
+        .vsg-actions {
+            display: flex !important;
+            visibility: visible !important;
+            opacity: 1 !important;
         }
         
         .cell-readonly {

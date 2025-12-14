@@ -336,11 +336,34 @@ export class SchedulerService {
                 type: 'actions',
                 width: 80,
                 actions: [
-                    { id: 'collapse', label: '▼', title: 'Collapse/Expand' },
-                    { id: 'indent', label: '→', title: 'Indent' },
-                    { id: 'outdent', label: '←', title: 'Outdent' },
-                    { id: 'links', label: '🔗', title: 'Dependencies' },
-                    { id: 'delete', label: '🗑', title: 'Delete' },
+                    { 
+                        id: 'outdent', 
+                        name: 'outdent',
+                        title: 'Outdent',
+                        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>',
+                        color: '#64748b'
+                    },
+                    { 
+                        id: 'indent', 
+                        name: 'indent',
+                        title: 'Indent',
+                        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>',
+                        color: '#64748b'
+                    },
+                    { 
+                        id: 'links', 
+                        name: 'links',
+                        title: 'Dependencies',
+                        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>',
+                        color: '#64748b'
+                    },
+                    { 
+                        id: 'delete', 
+                        name: 'delete',
+                        title: 'Delete',
+                        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>',
+                        color: '#64748b'
+                    },
                 ],
             },
         ];
@@ -441,7 +464,17 @@ export class SchedulerService {
     }
 
     /**
-     * Handle cell change
+     * Handle cell change with intelligent scheduling triangle logic
+     * 
+     * The scheduling triangle: Start ↔ Duration ↔ Finish
+     * - Duration is the primary input (how many work days)
+     * - Start/Finish are calculated outputs, but users can override them
+     * 
+     * Logic:
+     * - Edit Duration → Keep start, CPM recalculates end
+     * - Edit Start → Apply SNET constraint so CPM respects it
+     * - Edit End → Adjust duration to achieve desired end date
+     * 
      * @private
      * @param {string} taskId - Task ID
      * @param {string} field - Field name
@@ -457,9 +490,51 @@ export class SchedulerService {
         
         const task = this.taskStore.getById(taskId);
         if (!task) return;
+        
+        // Check if this is a parent/summary task (dates are rolled up from children)
+        const isParent = this.taskStore.isParent(taskId);
 
-        // Update task
-        this.taskStore.update(taskId, { [field]: value });
+        // Handle scheduling triangle fields with special logic
+        switch (field) {
+            case 'duration':
+                // Duration edit: validate and update
+                // CPM will recalculate end = start + duration - 1
+                const newDuration = Math.max(1, parseInt(value) || 1);
+                this.taskStore.update(taskId, { duration: newDuration });
+                break;
+                
+            case 'start':
+                // Start edit: User explicitly set a start date
+                // Apply SNET constraint so CPM respects their choice
+                if (value && !isParent) {
+                    this.taskStore.update(taskId, { 
+                        start: value,
+                        constraintType: 'snet',
+                        constraintDate: value 
+                    });
+                    console.log(`[SchedulerService] Start date set to ${value}, applied SNET constraint`);
+                }
+                break;
+                
+            case 'end':
+                // End edit: User wants task to finish on this date
+                // Calculate what duration would achieve this end date
+                // (Keep start fixed, adjust duration)
+                if (value && !isParent && task.start) {
+                    const calendar = this.calendarStore.get();
+                    // calcWorkDays returns inclusive count (start to end)
+                    const newDurationFromEnd = DateUtils.calcWorkDays(task.start, value, calendar);
+                    this.taskStore.update(taskId, { 
+                        duration: Math.max(1, newDurationFromEnd)
+                    });
+                    console.log(`[SchedulerService] End date set to ${value}, adjusted duration to ${newDurationFromEnd}`);
+                }
+                break;
+                
+            default:
+                // All other fields - simple update
+                this.taskStore.update(taskId, { [field]: value });
+        }
 
         // Recalculate if date/duration changed
         if (['start', 'end', 'duration'].includes(field)) {
@@ -479,10 +554,8 @@ export class SchedulerService {
      * @param {Event} e - Click event
      */
     _handleAction(taskId, action, e) {
+        e?.stopPropagation(); // Prevent row click from firing
         switch (action) {
-            case 'collapse':
-                this.toggleCollapse(taskId);
-                break;
             case 'indent':
                 this.indent(taskId);
                 break;
@@ -1054,31 +1127,46 @@ export class SchedulerService {
         this.saveCheckpoint();
         
         const task = this.taskStore.getById(taskId);
-        if (!task || task.parentId) return; // Already has parent
+        if (!task) return;
 
-        const tasks = this.taskStore.getAll();
-        const taskIndex = tasks.findIndex(t => t.id === taskId);
+        // Get flat list of visible tasks (matching POC getFlatList())
+        const list = this.taskStore.getVisibleTasks((id) => {
+            const t = this.taskStore.getById(id);
+            return t?._collapsed || false;
+        });
         
-        // Find previous sibling or parent
-        for (let i = taskIndex - 1; i >= 0; i--) {
-            const potentialParent = tasks[i];
-            const depth = this.taskStore.getDepth(potentialParent.id);
-            const taskDepth = this.taskStore.getDepth(taskId);
-            
-            if (depth < taskDepth) {
-                // Found a parent-level task
-                this.taskStore.update(taskId, { parentId: potentialParent.id });
-                break;
-            } else if (depth === taskDepth && potentialParent.parentId) {
-                // Found a sibling with a parent
-                this.taskStore.update(taskId, { parentId: potentialParent.parentId });
-                break;
+        const idx = list.findIndex(t => t.id === taskId);
+        if (idx <= 0) return; // Can't indent first task
+        
+        const prev = list[idx - 1];
+        const taskDepth = this.taskStore.getDepth(taskId);
+        const prevDepth = this.taskStore.getDepth(prev.id);
+        
+        // Can't indent if previous task is at a shallower level
+        if (prevDepth < taskDepth) return;
+        
+        let newParentId = null;
+        
+        if (prevDepth === taskDepth) {
+            // Previous task is at same level - make it the parent
+            newParentId = prev.id;
+        } else {
+            // Previous task is deeper - walk up its parent chain to find task at taskDepth level
+            let curr = prev;
+            while (curr && this.taskStore.getDepth(curr.id) > taskDepth) {
+                curr = curr.parentId ? this.taskStore.getById(curr.parentId) : null;
+            }
+            if (curr) {
+                newParentId = curr.id;
             }
         }
-
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        
+        if (newParentId !== null) {
+            this.taskStore.update(taskId, { parentId: newParentId });
+            this.recalculateAll();
+            this.saveData();
+            this.render();
+        }
     }
 
     /**
@@ -1091,10 +1179,11 @@ export class SchedulerService {
         const task = this.taskStore.getById(taskId);
         if (!task || !task.parentId) return;
 
+        // Get parent's parent (or null if parent is root)
         const parent = this.taskStore.getById(task.parentId);
-        this.taskStore.update(taskId, {
-            parentId: parent ? parent.parentId : null
-        });
+        const newParentId = parent ? parent.parentId : null;
+        
+        this.taskStore.update(taskId, { parentId: newParentId });
 
         this.recalculateAll();
         this.saveData();
