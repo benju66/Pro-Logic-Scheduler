@@ -89,7 +89,11 @@ export class SchedulerService {
 
         // View state
         this.viewMode = 'Week';
-        this.clipboard = null;
+        
+        // Clipboard state
+        this.clipboard = null;              // Array of cloned tasks
+        this.clipboardIsCut = false;        // True if cut operation
+        this.clipboardOriginalIds = [];     // Original IDs for deletion after cut-paste
 
         // UI components (initialized in init())
         this.grid = null;
@@ -444,6 +448,11 @@ export class SchedulerService {
      * @param {*} value - New value
      */
     _handleCellChange(taskId, field, value) {
+        // Skip checkbox field - it's a visual indicator of selection, not task data
+        if (field === 'checkbox') {
+            return;
+        }
+        
         this.saveCheckpoint();
         
         const task = this.taskStore.getById(taskId);
@@ -645,12 +654,128 @@ export class SchedulerService {
     }
 
     /**
+     * Get all descendant task IDs (recursive)
+     * @private
+     * @param {string} parentId - Parent task ID
+     * @returns {Set<string>} Set of descendant task IDs
+     */
+    _getAllDescendants(parentId) {
+        const descendants = new Set();
+        const addDescendants = (pid) => {
+            this.taskStore.getChildren(pid).forEach(child => {
+                descendants.add(child.id);
+                addDescendants(child.id);
+            });
+        };
+        addDescendants(parentId);
+        return descendants;
+    }
+
+    /**
+     * Get flat list of tasks in display order
+     * @private
+     * @returns {Array<Object>} Flat list of tasks
+     */
+    _getFlatList() {
+        const result = [];
+        const addTask = (parentId) => {
+            this.taskStore.getChildren(parentId).forEach(task => {
+                result.push(task);
+                if (!task._collapsed && this.taskStore.isParent(task.id)) {
+                    addTask(task.id);
+                }
+            });
+        };
+        addTask(null);
+        // Add any orphaned tasks (shouldn't happen, but safety check)
+        const knownIds = new Set(result.map(t => t.id));
+        this.taskStore.getAll().forEach(task => {
+            if (!knownIds.has(task.id)) {
+                result.push(task);
+            }
+        });
+        return result;
+    }
+
+    /**
      * Handle Tab indent
      * @private
      */
     _handleTabIndent() {
         if (this.selectedIds.size === 0) return;
-        this.selectedIds.forEach(id => this.indent(id));
+        
+        this.saveCheckpoint();
+        
+        const list = this._getFlatList();
+        const selectedIds = new Set(this.selectedIds);
+        const allTasks = this.taskStore.getAll();
+        
+        // 1. Find the "top-level" selected tasks 
+        //    (tasks whose parent is NOT also selected)
+        const topLevelSelected = list.filter(task => 
+            selectedIds.has(task.id) && 
+            (!task.parentId || !selectedIds.has(task.parentId))
+        );
+        
+        if (topLevelSelected.length === 0) return;
+        
+        // 2. Find the first top-level selected task to determine the new parent
+        //    New parent = the sibling immediately ABOVE it (not selected)
+        //    If no valid sibling above, skip this task
+        const firstTask = topLevelSelected[0];
+        const firstIdx = list.findIndex(t => t.id === firstTask.id);
+        
+        // Validation: prevent indent on first task
+        if (firstIdx <= 0) return;
+        
+        const prev = list[firstIdx - 1];
+        const taskDepth = this.taskStore.getDepth(firstTask.id);
+        const prevDepth = this.taskStore.getDepth(prev.id);
+        
+        // Can't indent if previous task is at a deeper level
+        if (prevDepth < taskDepth) return;
+        
+        // Determine new parent for the first task
+        let newParentId = null;
+        if (prevDepth === taskDepth) {
+            // Same depth - make previous task the parent
+            newParentId = prev.id;
+        } else {
+            // Previous task is at shallower depth - find ancestor at same depth
+            let curr = prev;
+            while (curr && this.taskStore.getDepth(curr.id) > taskDepth) {
+                curr = allTasks.find(t => t.id === curr.parentId);
+            }
+            if (curr) {
+                newParentId = curr.id;
+            }
+        }
+        
+        // Validation: prevent circular references (new parent shouldn't be a descendant)
+        if (newParentId) {
+            // Check if any selected task is a descendant of newParentId
+            const newParentDescendants = this._getAllDescendants(newParentId);
+            const wouldCreateCircularRef = topLevelSelected.some(task => 
+                newParentDescendants.has(task.id)
+            );
+            if (wouldCreateCircularRef) {
+                return; // Would create circular reference
+            }
+        }
+        
+        if (!newParentId) return;
+        
+        // 3. Apply SAME parent to ALL top-level selected tasks
+        //    Children of selected tasks keep their parentId unchanged
+        //    (they move with their parent automatically)
+        topLevelSelected.forEach(task => {
+            this.taskStore.update(task.id, { parentId: newParentId });
+        });
+        
+        // 4. Update store and render
+        this.recalculateAll();
+        this.saveData();
+        this.render();
     }
 
     /**
@@ -659,7 +784,44 @@ export class SchedulerService {
      */
     _handleTabOutdent() {
         if (this.selectedIds.size === 0) return;
-        this.selectedIds.forEach(id => this.outdent(id));
+        
+        this.saveCheckpoint();
+        
+        const list = this._getFlatList();
+        const selectedIds = new Set(this.selectedIds);
+        const allTasks = this.taskStore.getAll();
+        
+        // 1. Find top-level selected tasks (parent not selected)
+        const topLevelSelected = list.filter(task => 
+            selectedIds.has(task.id) && 
+            (!task.parentId || !selectedIds.has(task.parentId))
+        );
+        
+        if (topLevelSelected.length === 0) return;
+        
+        // 2. For each top-level selected task, move to grandparent
+        //    New parent = current parent's parent (grandparent)
+        //    If already at root (parentId is null), skip
+        const updates = [];
+        topLevelSelected.forEach(task => {
+            // Validation: prevent outdent on root tasks
+            if (!task.parentId) return;
+            
+            const currentParent = allTasks.find(t => t.id === task.parentId);
+            const grandparentId = currentParent ? currentParent.parentId : null;
+            
+            updates.push({ taskId: task.id, newParentId: grandparentId });
+        });
+        
+        // 3. Apply updates
+        updates.forEach(({ taskId, newParentId }) => {
+            this.taskStore.update(taskId, { parentId: newParentId });
+        });
+        
+        // 4. Update store and render
+        this.recalculateAll();
+        this.saveData();
+        this.render();
     }
 
     /**
@@ -667,12 +829,29 @@ export class SchedulerService {
      * @private
      */
     _handleEscape() {
+        // First check if drawer is open
         if (this.drawer && this.drawer.isDrawerOpen()) {
             this.drawer.close();
-        } else {
-            this.selectedIds.clear();
-            this._updateSelection();
+            return;
         }
+        
+        // If cut is pending, cancel it
+        if (this.clipboardIsCut) {
+            // Remove 'row-cut' visual class from original rows (if implemented)
+            // For now, just clear the cut state
+            
+            // Clear clipboard
+            this.clipboard = null;
+            this.clipboardIsCut = false;
+            this.clipboardOriginalIds = [];
+            
+            this.toastService.info('Cut cancelled');
+            return;
+        }
+        
+        // Otherwise, deselect all
+        this.selectedIds.clear();
+        this._updateSelection();
     }
 
     // =========================================================================
@@ -1068,7 +1247,7 @@ export class SchedulerService {
 
         const selected = this.taskStore.getAll().filter(t => this.selectedIds.has(t.id));
         
-        // Include children
+        // Include children - for each selected parent, auto-include ALL descendants (recursively)
         const payload = new Set();
         const getDescendants = (parentId) => {
             this.taskStore.getChildren(parentId).forEach(child => {
@@ -1084,7 +1263,16 @@ export class SchedulerService {
             }
         });
 
-        this.clipboard = Array.from(payload).map(t => ({ ...t }));
+        // Deep clone the collection (JSON parse/stringify)
+        const payloadArray = Array.from(payload);
+        this.clipboard = payloadArray.map(t => JSON.parse(JSON.stringify(t)));
+        
+        // Store original IDs
+        this.clipboardOriginalIds = payloadArray.map(t => t.id);
+        
+        // Set clipboardIsCut = false
+        this.clipboardIsCut = false;
+        
         this.toastService.success(`Copied ${this.clipboard.length} task(s)`);
     }
 
@@ -1092,70 +1280,177 @@ export class SchedulerService {
      * Cut selected tasks
      */
     cutSelected() {
-        this.copySelected();
-        this._deleteSelected();
+        if (this.selectedIds.size === 0) {
+            this.toastService.info('No tasks selected');
+            return;
+        }
+
+        // Perform same logic as copySelection()
+        const selected = this.taskStore.getAll().filter(t => this.selectedIds.has(t.id));
+        
+        // Include children - for each selected parent, auto-include ALL descendants (recursively)
+        const payload = new Set();
+        const getDescendants = (parentId) => {
+            this.taskStore.getChildren(parentId).forEach(child => {
+                payload.add(child);
+                getDescendants(child.id);
+            });
+        };
+
+        selected.forEach(task => {
+            payload.add(task);
+            if (this.taskStore.isParent(task.id)) {
+                getDescendants(task.id);
+            }
+        });
+
+        // Deep clone the collection (JSON parse/stringify)
+        const payloadArray = Array.from(payload);
+        this.clipboard = payloadArray.map(t => JSON.parse(JSON.stringify(t)));
+        
+        // Store original IDs for deletion after cut-paste
+        this.clipboardOriginalIds = payloadArray.map(t => t.id);
+        
+        // Set clipboardIsCut = true
+        this.clipboardIsCut = true;
+        
+        // Do NOT delete tasks yet - wait for paste
+        
+        this.toastService.success(`Cut ${this.clipboard.length} task(s)`);
     }
 
     /**
      * Paste tasks
      */
     paste() {
+        // 1. If clipboard is empty, show toast "Nothing to paste" and return
         if (!this.clipboard || this.clipboard.length === 0) {
             this.toastService.info('Nothing to paste');
             return;
         }
 
+        // 2. saveCheckpoint() for undo
         this.saveCheckpoint();
 
-        const targetId = this.focusedId;
-        const tasks = this.taskStore.getAll();
-        let targetIndex = targetId ? tasks.findIndex(t => t.id === targetId) : tasks.length - 1;
-        if (targetIndex === -1) targetIndex = tasks.length - 1;
+        // 3. Determine insert location (after focusedId, or at end)
+        const flatList = this._getFlatList();
+        let insertIndex = flatList.length;
+        
+        if (this.focusedId) {
+            const focusedIndex = flatList.findIndex(t => t.id === this.focusedId);
+            if (focusedIndex !== -1) {
+                insertIndex = focusedIndex + 1;
+            }
+        }
 
-        const targetTask = tasks[targetIndex];
-        const targetParentId = targetTask ? targetTask.parentId : null;
+        // 4. Determine target parentId (same parent as focused task, or null)
+        let targetParentId = null;
+        if (this.focusedId) {
+            const focusedTask = this.taskStore.getById(this.focusedId);
+            if (focusedTask) {
+                targetParentId = focusedTask.parentId;
+            }
+        }
 
+        // 5. Create ID map: oldId → newId (generate unique IDs)
         const idMap = new Map();
-        const newTasks = [];
-
-        // Create new tasks with new IDs
         this.clipboard.forEach(task => {
             const newId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             idMap.set(task.id, newId);
-            const newTask = { ...task, id: newId };
-            newTasks.push(newTask);
         });
 
-        // Update parent IDs and dependencies
+        // 6. Clone tasks with new IDs
+        const newTasks = this.clipboard.map(task => {
+            const cloned = JSON.parse(JSON.stringify(task));
+            cloned.id = idMap.get(task.id);
+            return cloned;
+        });
+
+        // 7. Remap parentId:
+        //    - If original parentId exists in idMap → use mapped ID (internal)
+        //    - Else → use targetParentId (external parent)
         newTasks.forEach(task => {
             if (task.parentId && idMap.has(task.parentId)) {
+                // Internal parent - use mapped ID
                 task.parentId = idMap.get(task.parentId);
             } else {
+                // Top-level of pasted subtree: attach to target parent
                 task.parentId = targetParentId;
             }
-
-            task.dependencies = task.dependencies.map(dep => {
-                if (idMap.has(dep.id)) {
-                    return { ...dep, id: idMap.get(dep.id) };
-                }
-                return dep;
-            }).filter(dep => idMap.has(dep.id) || this.taskStore.getById(dep.id));
         });
 
-        // Insert tasks
+        // 8. Remap dependencies:
+        //    - KEEP only dependencies where dep.id exists in idMap (internal)
+        //    - DROP dependencies pointing outside the copied set (external)
+        //    - Remap kept dep.id to new ID
         newTasks.forEach(task => {
-            this.taskStore.add(task);
+            task.dependencies = (task.dependencies || [])
+                .filter(dep => idMap.has(dep.id))
+                .map(dep => ({
+                    ...dep,
+                    id: idMap.get(dep.id)
+                }));
         });
 
-        // Select new tasks
+        // 9. Insert newTasks at target location
+        // Get all tasks and insert in correct order
+        const allTasks = this.taskStore.getAll();
+        
+        // Find where to insert in the full task list
+        // We need to insert after the last task that appears before insertIndex in flat list
+        if (insertIndex > 0 && insertIndex <= flatList.length) {
+            const targetTask = flatList[insertIndex - 1];
+            const targetTaskIndex = allTasks.findIndex(t => t.id === targetTask.id);
+            
+            // Insert after target task
+            // But we need to find where the target task's subtree ends
+            // For simplicity, insert all new tasks after target task
+            const insertPos = targetTaskIndex + 1;
+            newTasks.forEach((task, idx) => {
+                allTasks.splice(insertPos + idx, 0, task);
+            });
+        } else {
+            // Insert at end
+            newTasks.forEach(task => {
+                allTasks.push(task);
+            });
+        }
+
+        // Update store with new array
+        this.taskStore.setAll(allTasks);
+
+        // 10. If clipboardIsCut === true:
+        //     - Delete original tasks using clipboardOriginalIds
+        //     - Clear clipboard (cut is one-time)
+        //     - Clear clipboardIsCut flag
+        const wasCut = this.clipboardIsCut;
+        if (this.clipboardIsCut) {
+            // Delete original tasks
+            this.clipboardOriginalIds.forEach(id => {
+                this.taskStore.delete(id);
+            });
+            
+            // Clear clipboard (cut is one-time)
+            this.clipboard = null;
+            this.clipboardIsCut = false;
+            this.clipboardOriginalIds = [];
+        }
+
+        // 11. Select the newly pasted tasks
         this.selectedIds.clear();
         newTasks.forEach(t => this.selectedIds.add(t.id));
+        this.focusedId = newTasks[0]?.id || null;
 
+        // 12. recalculateAll() → saveData() → render()
         this.recalculateAll();
         this.saveData();
         this.render();
-        
-        this.toastService.success(`Pasted ${newTasks.length} task(s)`);
+
+        // 13. Show toast: "Pasted X task(s)" or "Moved X task(s)" for cut
+        const message = wasCut 
+            ? `Moved ${newTasks.length} task(s)` 
+            : `Pasted ${newTasks.length} task(s)`;
+        this.toastService.success(message);
     }
 
     // =========================================================================

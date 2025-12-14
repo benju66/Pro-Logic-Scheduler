@@ -436,10 +436,13 @@ export class VirtualScrollGrid {
             return;
         }
         
-        // Check for checkbox
+        // Check for checkbox - trigger row click for selection
         const checkbox = e.target.closest('.vsg-checkbox');
         if (checkbox) {
-            // Handled by change event
+            // Trigger row click to handle selection (single, Ctrl+click, Shift+click)
+            if (this.options.onRowClick) {
+                this.options.onRowClick(taskId, e);
+            }
             return;
         }
         
@@ -517,7 +520,13 @@ export class VirtualScrollGrid {
         
         const taskId = row.dataset.taskId;
         const field = input.dataset.field;
-        let value = input.type === 'checkbox' ? input.checked : input.value;
+        
+        // Skip checkbox changes - they're handled by row click for selection
+        if (input.type === 'checkbox') {
+            return;
+        }
+        
+        let value = input.value;
         
         if (this.options.onCellChange) {
             this.options.onCellChange(taskId, field, value);
@@ -1019,7 +1028,8 @@ export class VirtualScrollGrid {
         
         // Handle different input types
         if (input.classList.contains('vsg-checkbox')) {
-            input.checked = !!value;
+            // Checkbox reflects selection state, not task data
+            input.checked = this.selectedIds.has(task.id);
         } else if (input.classList.contains('vsg-input') || input.classList.contains('vsg-select')) {
             // Don't update if this cell is being edited
             if (this.editingCell?.taskId === task.id && this.editingCell?.field === col.field) {

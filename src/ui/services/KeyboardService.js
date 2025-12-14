@@ -108,7 +108,8 @@ export class KeyboardService {
         }
 
         // Tab = indent, Shift+Tab = outdent
-        if (e.key === 'Tab' && this.options.onTab) {
+        // Only trigger when tasks are selected AND focus is not inside an input field
+        if (e.key === 'Tab' && this.options.onTab && !isEditing) {
             e.preventDefault();
             if (e.shiftKey) {
                 if (this.options.onShiftTab) this.options.onShiftTab();
