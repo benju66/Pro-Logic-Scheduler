@@ -285,8 +285,26 @@ export class CPM {
                         }
                         break;
                     case 'fnlt': // Finish No Later Than
-                        if (constDate && !finalStart) {
-                            finalStart = DateUtils.addWorkDays(constDate, -(task.duration - 1), calendar);
+                        // FNLT: Task must finish by constraint date (deadline)
+                        // If normal end (from dependencies) exceeds constraint, push start earlier to meet deadline
+                        if (constDate) {
+                            // Ensure we have a start date to work with (from dependencies or task.start)
+                            const dependencyStart = finalStart || task.start || DateUtils.today();
+                            
+                            // Calculate what the normal end would be from dependency-driven start
+                            const normalEnd = DateUtils.addWorkDays(dependencyStart, task.duration - 1, calendar);
+                            
+                            // If normal end exceeds constraint date, we need to start earlier to meet deadline
+                            if (normalEnd > constDate) {
+                                // Calculate required start to meet deadline
+                                const requiredStart = DateUtils.addWorkDays(constDate, -(task.duration - 1), calendar);
+                                
+                                // Use the required start to meet deadline
+                                // If requiredStart < earliestStart (from dependencies), this creates an impossible
+                                // constraint - the backward pass will show negative float
+                                finalStart = requiredStart;
+                            }
+                            // If normalEnd <= constDate, constraint is already satisfied, no change needed
                         }
                         break;
                     case 'mfo': // Must Finish On

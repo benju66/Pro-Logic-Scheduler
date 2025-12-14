@@ -515,16 +515,14 @@ export class SchedulerService {
     }
 
     /**
-     * Handle cell change with intelligent scheduling triangle logic
+     * Handle cell change with proper scheduling triangle logic
      * 
-     * The scheduling triangle: Start ↔ Duration ↔ Finish
-     * - Duration is the primary input (how many work days)
-     * - Start/Finish are calculated outputs, but users can override them
+     * Matches industry-standard CPM behavior (same as MS Project):
+     * - Duration edit → Keep start, CPM recalculates end
+     * - Start edit → Apply SNET constraint (Start No Earlier Than)
+     * - End edit → Apply FNLT constraint (Finish No Later Than)
      * 
-     * Logic:
-     * - Edit Duration → Keep start, CPM recalculates end
-     * - Edit Start → Apply SNET constraint so CPM respects it
-     * - Edit End → Adjust duration to achieve desired end date
+     * Unlike MS Project, we show clear feedback when constraints are applied.
      * 
      * @private
      * @param {string} taskId - Task ID
@@ -542,43 +540,71 @@ export class SchedulerService {
         const task = this.taskStore.getById(taskId);
         if (!task) return;
         
-        // Check if this is a parent/summary task (dates are rolled up from children)
+        // Check if this is a parent/summary task (dates roll up from children)
         const isParent = this.taskStore.isParent(taskId);
 
-        // Handle scheduling triangle fields with special logic
+        // Handle scheduling triangle fields with proper CPM logic
         switch (field) {
             case 'duration':
-                // Duration edit: validate and update
-                // CPM will recalculate end = start + duration - 1
+                // Duration edit: update duration, CPM will recalculate end
+                // This is standard CPM behavior - no constraint needed
                 const newDuration = Math.max(1, parseInt(value) || 1);
                 this.taskStore.update(taskId, { duration: newDuration });
                 break;
                 
             case 'start':
-                // Start edit: User explicitly set a start date
-                // Apply SNET constraint so CPM respects their choice
+                // Start edit: User is setting a start constraint
+                // Apply SNET (Start No Earlier Than) so CPM respects this date
                 if (value && !isParent) {
+                    // Validate date format
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+                        console.warn('[SchedulerService] Invalid date format:', value);
+                        return;
+                    }
+                    
                     this.taskStore.update(taskId, { 
                         start: value,
                         constraintType: 'snet',
                         constraintDate: value 
                     });
-                    console.log(`[SchedulerService] Start date set to ${value}, applied SNET constraint`);
+                    this.toastService.info('Start constraint (SNET) applied');
                 }
                 break;
                 
             case 'end':
-                // End edit: User wants task to finish on this date
-                // Calculate what duration would achieve this end date
-                // (Keep start fixed, adjust duration)
-                if (value && !isParent && task.start) {
-                    const calendar = this.calendarStore.get();
-                    // calcWorkDays returns inclusive count (start to end)
-                    const newDurationFromEnd = DateUtils.calcWorkDays(task.start, value, calendar);
+                // End edit: User is setting a finish deadline
+                // Apply FNLT (Finish No Later Than) so CPM respects this date
+                if (value && !isParent) {
+                    // Validate date format
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+                        console.warn('[SchedulerService] Invalid date format:', value);
+                        return;
+                    }
+                    
+                    // Check if deadline is earlier than current start (impossible constraint)
+                    if (task.start && value < task.start) {
+                        this.toastService.warning('Deadline is earlier than start date - schedule may be impossible');
+                    }
+                    
                     this.taskStore.update(taskId, { 
-                        duration: Math.max(1, newDurationFromEnd)
+                        constraintType: 'fnlt',
+                        constraintDate: value 
                     });
-                    console.log(`[SchedulerService] End date set to ${value}, adjusted duration to ${newDurationFromEnd}`);
+                    this.toastService.info('Finish deadline (FNLT) applied');
+                }
+                break;
+                
+            case 'constraintType':
+                // Constraint type change: if set to ASAP, clear constraint date
+                if (value === 'asap') {
+                    this.taskStore.update(taskId, { 
+                        constraintType: 'asap',
+                        constraintDate: '' 
+                    });
+                    this.toastService.info('Constraint removed - task will schedule based on dependencies');
+                } else {
+                    // For other constraint types, just update
+                    this.taskStore.update(taskId, { [field]: value });
                 }
                 break;
                 
