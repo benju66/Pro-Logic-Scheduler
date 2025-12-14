@@ -436,12 +436,28 @@ export class VirtualScrollGrid {
             return;
         }
         
-        // Check for checkbox - trigger row click for selection
+        // Check for checkbox - toggle selection
         const checkbox = e.target.closest('.vsg-checkbox');
         if (checkbox) {
-            // Trigger row click to handle selection (single, Ctrl+click, Shift+click)
-            if (this.options.onRowClick) {
-                this.options.onRowClick(taskId, e);
+            // If task is already selected, deselect it (toggle off)
+            // Otherwise, select it (single selection)
+            if (this.selectedIds.has(taskId)) {
+                // Deselect this task - simulate Ctrl+click to toggle off
+                if (this.options.onRowClick) {
+                    // Create synthetic event object with ctrlKey set for toggle behavior
+                    const toggleEvent = {
+                        ...e,
+                        ctrlKey: true,
+                        metaKey: false,
+                        shiftKey: false
+                    };
+                    this.options.onRowClick(taskId, toggleEvent);
+                }
+            } else {
+                // Select this task (single selection)
+                if (this.options.onRowClick) {
+                    this.options.onRowClick(taskId, e);
+                }
             }
             return;
         }
@@ -628,7 +644,7 @@ export class VirtualScrollGrid {
             return;
         }
         
-        // Enter key: blur input (or move to next row if in edit mode)
+        // Enter key: blur input and move to next/previous row
         if (e.key === 'Enter' && input.classList.contains('vsg-input')) {
             e.preventDefault();
             
@@ -643,11 +659,20 @@ export class VirtualScrollGrid {
             
             input.blur();
             
-            // Move to same cell in next row
             const taskIndex = this.data.findIndex(t => t.id === taskId);
-            if (taskIndex < this.data.length - 1 && field) {
-                const nextTaskId = this.data[taskIndex + 1].id;
-                setTimeout(() => this.focusCell(nextTaskId, field), 50);
+            
+            if (e.shiftKey) {
+                // Shift+Enter: move to same cell in previous row
+                if (taskIndex > 0 && field) {
+                    const prevTaskId = this.data[taskIndex - 1].id;
+                    setTimeout(() => this.focusCell(prevTaskId, field), 50);
+                }
+            } else {
+                // Enter: move to same cell in next row
+                if (taskIndex < this.data.length - 1 && field) {
+                    const nextTaskId = this.data[taskIndex + 1].id;
+                    setTimeout(() => this.focusCell(nextTaskId, field), 50);
+                }
             }
             return;
         }
