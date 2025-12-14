@@ -81,14 +81,16 @@ if (typeof window !== 'undefined') {
     if (isDev) {
         console.log('💡 Run testButtonSetup() in console to test button setup');
         
+        // NOTE: Auto-run disabled to prevent unwanted task creation during startup
+        // Uncomment the setTimeout below if you want to auto-test button setup
         // Auto-run after a delay in dev mode
-        setTimeout(() => {
-            if (document.readyState === 'complete') {
-                testButtonSetup();
-            } else {
-                window.addEventListener('load', testButtonSetup);
-            }
-        }, 2000);
+        // setTimeout(() => {
+        //     if (document.readyState === 'complete') {
+        //         testButtonSetup();
+        //     } else {
+        //         window.addEventListener('load', testButtonSetup);
+        //     }
+        // }, 2000);
     }
 }
 

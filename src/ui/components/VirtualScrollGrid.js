@@ -411,6 +411,11 @@ export class VirtualScrollGrid {
      * @param {Event} e - Click event
      */
     _onClick(e) {
+        // Ignore clicks from resizers (defensive check)
+        if (e.target.closest('.resizer, .col-resizer')) {
+            return;
+        }
+        
         const row = e.target.closest('.vsg-row');
         if (!row) return;
         

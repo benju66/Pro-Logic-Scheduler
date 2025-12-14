@@ -52,6 +52,9 @@ export class UIEventManager {
         let startWidth = 0;
         
         resizer.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation(); // Prevent event bubbling to grid
+            
             isResizing = true;
             startX = e.clientX;
             startWidth = gridPane.getBoundingClientRect().width;
@@ -138,13 +141,16 @@ export class UIEventManager {
     }
 
     /**
-     * Initialize column resizers
+     * Initialize column resizers with localStorage persistence
      */
     initColumnResizers() {
         const gridPane = document.getElementById('grid-pane');
         const resizers = document.querySelectorAll('.col-resizer');
         
         if (!gridPane || resizers.length === 0) return;
+        
+        // Load saved column widths from localStorage
+        this._loadColumnWidths(gridPane);
         
         const minWidths = {
             rowNum: 30,
@@ -172,8 +178,11 @@ export class UIEventManager {
                 currentField = resizer.dataset.field;
                 startX = e.clientX;
                 
-                const headerCell = resizer.closest('.grid-header-cell');
-                startWidth = headerCell ? headerCell.getBoundingClientRect().width : 100;
+                // Read CSS variable value directly (matching POC approach)
+                const varName = `--w-${currentField}`;
+                const computedStyle = getComputedStyle(gridPane);
+                const currentValue = computedStyle.getPropertyValue(varName);
+                startWidth = currentValue ? parseInt(currentValue) : 100;
                 
                 resizer.classList.add('active');
                 document.body.style.cursor = 'col-resize';
@@ -198,6 +207,12 @@ export class UIEventManager {
             if (currentResizer) {
                 currentResizer.classList.remove('active');
             }
+            
+            // Save column widths to localStorage
+            if (currentField) {
+                this._saveColumnWidths(gridPane);
+            }
+            
             currentResizer = null;
             currentField = null;
             document.body.style.cursor = '';
@@ -208,6 +223,47 @@ export class UIEventManager {
                 scheduler.grid.refresh();
             }
         });
+    }
+
+    /**
+     * Load column widths from localStorage
+     * @private
+     */
+    _loadColumnWidths(gridPane) {
+        try {
+            const saved = localStorage.getItem('pro_scheduler_column_widths');
+            if (saved) {
+                const widths = JSON.parse(saved);
+                Object.entries(widths).forEach(([field, width]) => {
+                    gridPane.style.setProperty(`--w-${field}`, `${width}px`);
+                });
+            }
+        } catch (err) {
+            console.warn('[UIEventManager] Failed to load column widths:', err);
+        }
+    }
+
+    /**
+     * Save column widths to localStorage
+     * @private
+     */
+    _saveColumnWidths(gridPane) {
+        try {
+            const widths = {};
+            const computedStyle = getComputedStyle(gridPane);
+            
+            // Save all column width variables
+            ['drag', 'checkbox', 'rowNum', 'name', 'duration', 'start', 'end', 'constraintType', 'actions'].forEach(field => {
+                const value = computedStyle.getPropertyValue(`--w-${field}`).trim();
+                if (value) {
+                    widths[field] = parseInt(value);
+                }
+            });
+            
+            localStorage.setItem('pro_scheduler_column_widths', JSON.stringify(widths));
+        } catch (err) {
+            console.warn('[UIEventManager] Failed to save column widths:', err);
+        }
     }
 
     /**
@@ -284,6 +340,12 @@ export class UIEventManager {
             if (!scheduler) {
                 console.error('Scheduler not initialized - cannot handle action:', action);
                 this._showToast('Scheduler not ready. Please refresh the page.', 'error');
+                return;
+            }
+            
+            // Verify scheduler is fully initialized
+            if (!scheduler.isInitialized) {
+                console.warn('[UIEventManager] ⚠️ Action blocked - scheduler not initialized:', action);
                 return;
             }
             

@@ -28,6 +28,7 @@ export class KeyboardService {
      * @param {Function} options.onCtrlArrowDown - Ctrl+Arrow Down callback (move down)
      * @param {Function} options.onF2 - F2 callback (edit mode)
      * @param {Function} options.onEscape - Escape callback
+     * @param {Function} options.isAppReady - Function to check if app is ready
      */
     constructor(options = {}) {
         this.options = options;
@@ -72,6 +73,11 @@ export class KeyboardService {
      */
     _handleKeyDown(e) {
         if (!this.isEnabled) return;
+        
+        // Guard: Don't process keyboard shortcuts if app isn't ready
+        if (this.options.isAppReady && !this.options.isAppReady()) {
+            return;
+        }
 
         const isEditing = this._isEditing(e.target);
         const isCtrl = e.ctrlKey || e.metaKey;
@@ -142,6 +148,11 @@ export class KeyboardService {
 
         // Insert key or Ctrl+I / Cmd+I - add task above
         if ((e.key === 'Insert' || (isCtrl && e.key === 'i')) && this.options.onInsert) {
+            console.log('[KeyboardService] 🔍 Insert key pressed', {
+                key: e.key,
+                isAppReady: this.options.isAppReady ? this.options.isAppReady() : 'not checked',
+                stackTrace: new Error().stack
+            });
             e.preventDefault();
             this.options.onInsert();
             return;

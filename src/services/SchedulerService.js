@@ -207,13 +207,18 @@ export class SchedulerService {
             onSave: (calendar) => this._handleCalendarSave(calendar),
         });
 
-        // Initialize keyboard shortcuts
-        this._initKeyboard();
+        // Note: Keyboard shortcuts are initialized after init() completes
+        // See main.js - they're attached after scheduler initialization
 
         // Load persisted data
         try {
+            const taskCountBeforeLoad = this.taskStore.getAll().length;
+            console.log('[SchedulerService] 🔍 Before loadData() - task count:', taskCountBeforeLoad);
+            
             this.loadData();
-            console.log('[SchedulerService] Data loaded');
+            
+            const taskCountAfterLoad = this.taskStore.getAll().length;
+            console.log('[SchedulerService] ✅ Data loaded - task count:', taskCountAfterLoad, '(was', taskCountBeforeLoad + ')');
         } catch (error) {
             console.error('[SchedulerService] Error loading data:', error);
             // Continue anyway - start with empty tasks
@@ -236,15 +241,59 @@ export class SchedulerService {
             // Continue anyway - UI might still work
         }
 
+        // Mark as initialized - keyboard handlers will be attached after this completes
+        const taskCountBeforeInit = this.taskStore.getAll().length;
+        const selectedCountBeforeInit = this.selectedIds.size;
+        const focusedIdBeforeInit = this.focusedId;
+        
+        console.log('[SchedulerService] 🔍 About to mark as initialized', {
+            taskCount: taskCountBeforeInit,
+            selectedCount: selectedCountBeforeInit,
+            focusedId: focusedIdBeforeInit
+        });
+        
+        // Initialize isInitialized flag (keyboard handlers attached separately after init completes)
+        this.isInitialized = true;
+        
+        const taskCountAfterInit = this.taskStore.getAll().length;
+        const selectedCountAfterInit = this.selectedIds.size;
+        const focusedIdAfterInit = this.focusedId;
+        
+        console.log('[SchedulerService] ✅ Marked as initialized', {
+            taskCountBefore: taskCountBeforeInit,
+            taskCountAfter: taskCountAfterInit,
+            taskCountChanged: taskCountAfterInit !== taskCountBeforeInit,
+            selectedCountBefore: selectedCountBeforeInit,
+            selectedCountAfter: selectedCountAfterInit,
+            focusedIdBefore: focusedIdBeforeInit,
+            focusedIdAfter: focusedIdAfterInit,
+            timestamp: new Date().toISOString()
+        });
+
         console.log('[SchedulerService] Initialized - VS Code of Scheduling Tools');
     }
 
     /**
      * Initialize keyboard shortcuts
-     * @private
+     * Called after initialization completes to ensure handlers are only attached when ready
      */
-    _initKeyboard() {
+    initKeyboard() {
+        // Ensure we're initialized before attaching handlers
+        if (!this.isInitialized) {
+            console.warn('[SchedulerService] ⚠️ initKeyboard() called before initialization complete');
+            return;
+        }
+        
+        // Prevent double initialization
+        if (this.keyboardService) {
+            console.warn('[SchedulerService] ⚠️ Keyboard handlers already initialized');
+            return;
+        }
+        
+        console.log('[SchedulerService] 🔧 Initializing keyboard shortcuts...');
+        
         this.keyboardService = new KeyboardService({
+            isAppReady: () => this.isInitialized, // Guard to prevent handlers during initialization
             onUndo: () => this.undo(),
             onRedo: () => this.redo(),
             onDelete: () => this._deleteSelected(),
@@ -263,6 +312,8 @@ export class SchedulerService {
             onF2: () => this.enterEditMode(),
             onEscape: () => this._handleEscape(),
         });
+        
+        console.log('[SchedulerService] ✅ Keyboard shortcuts initialized');
     }
 
     /**
@@ -990,6 +1041,19 @@ export class SchedulerService {
      * @returns {Object} Created task
      */
     addTask(taskData = {}) {
+        // Debug: Log call with stack trace
+        console.log('[SchedulerService] 🔍 addTask() called', {
+            isInitialized: this.isInitialized,
+            taskData,
+            stackTrace: new Error().stack
+        });
+        
+        // Guard: Don't allow task creation during initialization
+        if (!this.isInitialized) {
+            console.log('[SchedulerService] ⚠️ addTask() blocked - not initialized');
+            return;
+        }
+        
         try {
             this.saveCheckpoint();
             
@@ -1194,9 +1258,23 @@ export class SchedulerService {
      * Insert task above focused task
      */
     insertTaskAbove() {
+        // Debug: Log call
+        console.log('[SchedulerService] 🔍 insertTaskAbove() called', {
+            isInitialized: this.isInitialized,
+            focusedId: this.focusedId,
+            stackTrace: new Error().stack
+        });
+        
+        // Guard: Don't allow task creation during initialization
+        if (!this.isInitialized) {
+            console.log('[SchedulerService] ⚠️ insertTaskAbove() blocked - not initialized');
+            return;
+        }
+        
         this.saveCheckpoint();
         
         if (!this.focusedId) {
+            console.log('[SchedulerService] 🔍 insertTaskAbove() calling addTask() - no focusedId');
             this.addTask();
             return;
         }
@@ -1749,21 +1827,35 @@ export class SchedulerService {
      * Load data from localStorage
      */
     loadData() {
+        console.log('[SchedulerService] 🔍 loadData() called', {
+            isInitialized: this.isInitialized,
+            stackTrace: new Error().stack
+        });
+        
         try {
             const saved = localStorage.getItem(SchedulerService.STORAGE_KEY);
             if (saved) {
                 const parsed = JSON.parse(saved);
+                const taskCount = parsed.tasks ? parsed.tasks.length : 0;
+                console.log('[SchedulerService] 🔍 Loading data from localStorage', {
+                    taskCount,
+                    hasCalendar: !!parsed.calendar,
+                    savedAt: parsed.savedAt
+                });
+                
                 if (parsed.tasks) {
                     // Temporarily disable onChange to prevent recursion during load
                     const originalOnChange = this.taskStore.options.onChange;
                     this.taskStore.options.onChange = null;
                     this.taskStore.setAll(parsed.tasks);
                     this.taskStore.options.onChange = originalOnChange;
+                    console.log('[SchedulerService] ✅ Loaded', parsed.tasks.length, 'tasks from localStorage');
                 }
                 if (parsed.calendar) {
                     this.calendarStore.set(parsed.calendar);
                 }
             } else {
+                console.log('[SchedulerService] 🔍 No saved data found - creating sample data');
                 // Create sample data for first-time users
                 this._createSampleData();
             }
@@ -1799,6 +1891,11 @@ export class SchedulerService {
      * @private
      */
     _createSampleData() {
+        console.log('[SchedulerService] 🔍 _createSampleData() called', {
+            isInitialized: this.isInitialized,
+            stackTrace: new Error().stack
+        });
+        
         const today = DateUtils.today();
         const calendar = this.calendarStore.get(); // Get calendar from store
         
@@ -1850,7 +1947,8 @@ export class SchedulerService {
             }
         }, 100);
         
-        console.log('[SchedulerService] Sample data created. Total tasks:', this.taskStore.getAll().length);
+        const finalTaskCount = this.taskStore.getAll().length;
+        console.log('[SchedulerService] ✅ Sample data created. Total tasks:', finalTaskCount);
     }
 
     // =========================================================================

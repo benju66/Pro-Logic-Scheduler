@@ -38,6 +38,9 @@ function initApp() {
     appInitializer.initialize().then(sched => {
         scheduler = sched;
         
+        // Initialize keyboard shortcuts (after scheduler is fully initialized)
+        scheduler.initKeyboard();
+        
         // Initialize UI event manager
         uiEventManager = new UIEventManager({
             getScheduler: () => scheduler,
