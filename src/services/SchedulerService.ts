@@ -175,20 +175,11 @@ export class SchedulerService {
             throw new Error('gridContainer and ganttContainer are required');
         }
 
-        // Check for existing baseline on load
-        this._hasBaseline = this.hasBaseline();
-
-        // Check for existing baseline on load
-        this._hasBaseline = this.hasBaseline();
-
         // Initialize CSS variables for column widths (must be before header build)
         this._initializeColumnCSSVariables();
 
         // Build grid header dynamically from column definitions
         this._buildGridHeader();
-        
-        // Update baseline button visibility
-        this._updateBaselineButtonVisibility();
 
         // Create grid component
         this.grid = new VirtualScrollGrid(gridContainer, {
@@ -237,6 +228,7 @@ export class SchedulerService {
                 onUpdate: (taskId, field, value) => this._handleDrawerUpdate(taskId, field, value),
                 onDelete: (taskId) => this.deleteTask(taskId),
                 onOpenLinks: (taskId) => this.openDependencies(taskId),
+                getScheduler: () => this,
             });
         }
 
@@ -267,6 +259,19 @@ export class SchedulerService {
             
             const taskCountAfterLoad = this.taskStore.getAll().length;
             console.log('[SchedulerService] ✅ Data loaded - task count:', taskCountAfterLoad, '(was', taskCountBeforeLoad + ')');
+            
+            // After loading data, check if baseline exists and rebuild columns if needed
+            const hadBaselineBefore = this._hasBaseline;
+            this._hasBaseline = this.hasBaseline();
+            
+            // If baseline state changed (or was just detected), rebuild columns
+            if (this._hasBaseline && !hadBaselineBefore) {
+                console.log('[SchedulerService] 🔍 Baseline detected after load - rebuilding columns');
+                this._rebuildGridColumns();
+            }
+            
+            // Update baseline button visibility after data load
+            this._updateBaselineButtonVisibility();
         } catch (error) {
             console.error('[SchedulerService] Error loading data:', error);
             // Continue anyway - start with empty tasks
@@ -830,7 +835,8 @@ export class SchedulerService {
      * Saves current start/end/duration as baseline for all tasks
      */
     setBaseline(): void {
-        console.log('[SchedulerService] Setting baseline from current schedule...');
+        const isUpdate = this._hasBaseline;
+        console.log(`[SchedulerService] ${isUpdate ? 'Updating' : 'Saving'} baseline...`);
         
         this.saveCheckpoint();
         
@@ -853,9 +859,10 @@ export class SchedulerService {
         this._updateBaselineButtonVisibility();
         
         this.saveData();
-        this.toastService.success(`Baseline set for ${baselineCount} task${baselineCount !== 1 ? 's' : ''}`);
+        const action = isUpdate ? 'updated' : 'saved';
+        this.toastService.success(`Baseline ${action} for ${baselineCount} task${baselineCount !== 1 ? 's' : ''}`);
         
-        console.log('[SchedulerService] ✅ Baseline set for', baselineCount, 'tasks');
+        console.log(`[SchedulerService] ✅ Baseline ${action} for`, baselineCount, 'tasks');
     }
 
     /**
@@ -891,24 +898,50 @@ export class SchedulerService {
     }
 
     /**
-     * Update baseline button visibility based on baseline state
+     * Update baseline button text and menu item state based on baseline existence
+     * - Button shows "Save Baseline" or "Update Baseline"
+     * - Clear menu item is disabled when no baseline exists
      * @private
      */
     private _updateBaselineButtonVisibility(): void {
-        const setBtn = document.querySelector('[data-action="set-baseline"]') as HTMLElement;
-        const clearBtn = document.getElementById('clear-baseline-btn');
+        // Update toolbar button text
+        const baselineBtn = document.getElementById('baseline-btn');
+        const baselineBtnText = document.getElementById('baseline-btn-text');
         
-        if (this._hasBaseline) {
-            if (setBtn) setBtn.style.display = 'none';
-            if (clearBtn) clearBtn.style.display = 'inline-flex';
-        } else {
-            if (setBtn) setBtn.style.display = 'inline-flex';
-            if (clearBtn) clearBtn.style.display = 'none';
+        if (baselineBtn && baselineBtnText) {
+            if (this._hasBaseline) {
+                baselineBtnText.textContent = 'Update Baseline';
+                baselineBtn.title = 'Update Baseline with Current Schedule';
+            } else {
+                baselineBtnText.textContent = 'Save Baseline';
+                baselineBtn.title = 'Save Current Schedule as Baseline';
+            }
+        }
+        
+        // Update Clear Baseline menu item state
+        const clearMenuItem = document.getElementById('clear-baseline-menu-item');
+        if (clearMenuItem) {
+            if (this._hasBaseline) {
+                clearMenuItem.classList.remove('disabled');
+                clearMenuItem.removeAttribute('disabled');
+            } else {
+                clearMenuItem.classList.add('disabled');
+                clearMenuItem.setAttribute('disabled', 'true');
+            }
         }
     }
 
     /**
      * Calculate variance for a task
+     * @param task - Task to calculate variance for
+     * @returns Variance object with start and finish variances in work days
+     */
+    calculateVariance(task: Task): { start: number | null; finish: number | null } {
+        return this._calculateVariance(task);
+    }
+
+    /**
+     * Calculate variance for a task (internal)
      * @private
      * @param task - Task to calculate variance for
      * @returns Variance object with start and finish variances in work days

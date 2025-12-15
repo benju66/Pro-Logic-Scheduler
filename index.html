@@ -224,6 +224,24 @@
             flex-shrink: 0;
         }
         
+        /* Danger menu item for destructive actions */
+        .dropdown-item-danger {
+            color: #ef4444;
+        }
+        
+        .dropdown-item-danger:hover {
+            background: rgba(239, 68, 68, 0.1);
+            color: #dc2626;
+        }
+        
+        /* Disabled menu item */
+        .dropdown-item:disabled,
+        .dropdown-item.disabled {
+            color: #94a3b8;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+        
         .dropdown-shortcut {
             margin-left: auto;
             font-size: 11px;
@@ -1608,6 +1626,15 @@
                         </svg>
                         Export MS Project XML...
                     </button>
+                    <div class="dropdown-divider"></div>
+                    <button class="dropdown-item dropdown-item-danger" data-action="clear-baseline" id="clear-baseline-menu-item">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+                            <line x1="10" y1="11" x2="10" y2="17"/>
+                            <line x1="14" y1="11" x2="14" y2="17"/>
+                        </svg>
+                        Clear Baseline...
+                    </button>
                 </div>
             </div>
             
@@ -1660,18 +1687,13 @@
                 </svg>
                 Calendar
             </button>
-            <button class="btn btn-outline" data-action="set-baseline" title="Set Baseline from Current Schedule">
+            <button class="btn btn-outline" data-action="save-baseline" id="baseline-btn" title="Save Current Schedule as Baseline">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                    <path d="M2 17l10 5 10-5M2 12l10 5 10-5"/>
+                    <path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z"/>
+                    <polyline points="17 21 17 13 7 13 7 21"/>
+                    <polyline points="7 3 7 8 15 8"/>
                 </svg>
-                Set Baseline
-            </button>
-            <button class="btn btn-outline" data-action="clear-baseline" title="Clear Baseline Data" id="clear-baseline-btn" style="display: none;">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M18 6L6 18M6 6l12 12"/>
-                </svg>
-                Clear Baseline
+                <span id="baseline-btn-text">Save Baseline</span>
             </button>
         </div>
         

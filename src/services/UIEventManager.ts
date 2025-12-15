@@ -604,8 +604,8 @@ export class UIEventManager {
         case 'copy-console':
           this.copyConsoleOutput();
           break;
-        case 'set-baseline':
-          this.handleSetBaseline();
+        case 'save-baseline':
+          this.handleSaveBaseline();
           break;
         case 'clear-baseline':
           this.handleClearBaseline();
@@ -895,19 +895,29 @@ To copy console output:
   }
 
   /**
-   * Handle Set Baseline button click
+   * Handle Save/Update Baseline button click
+   * Context-aware: saves new baseline or updates existing
    */
-  handleSetBaseline(): void {
+  handleSaveBaseline(): void {
     const scheduler = this.getScheduler();
     if (!scheduler) {
       this._showToast('Scheduler not ready', 'error');
       return;
     }
+    
+    // If baseline exists, confirm overwrite
+    if (scheduler.hasBaseline()) {
+      if (!confirm('Update baseline?\n\nThis will overwrite the existing baseline with the current schedule.')) {
+        return;
+      }
+    }
+    
     scheduler.setBaseline();
   }
 
   /**
-   * Handle Clear Baseline button click
+   * Handle Clear Baseline menu item click
+   * Destructive action - requires confirmation
    */
   handleClearBaseline(): void {
     const scheduler = this.getScheduler();
@@ -915,6 +925,18 @@ To copy console output:
       this._showToast('Scheduler not ready', 'error');
       return;
     }
+    
+    // Check if baseline exists
+    if (!scheduler.hasBaseline()) {
+      this._showToast('No baseline to clear', 'info');
+      return;
+    }
+    
+    // Confirm destructive action
+    if (!confirm('Clear baseline?\n\nThis will permanently remove baseline data from all tasks. This action cannot be undone.')) {
+      return;
+    }
+    
     scheduler.clearBaseline();
   }
 }

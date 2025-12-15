@@ -24,6 +24,7 @@ export interface SideDrawerOptions {
   onUpdate?: (taskId: string, field: string, value: unknown) => void;
   onDelete?: (taskId: string) => void;
   onOpenLinks?: (taskId: string) => void;
+  getScheduler?: () => { hasBaseline: () => boolean; calculateVariance: (task: Task) => { start: number | null; finish: number | null } } | null;
 }
 
 /**
@@ -48,6 +49,13 @@ interface SideDrawerDOM {
   cpmSection: HTMLElement;
   healthStatus: HTMLElement;
   healthSection: HTMLElement;
+  progressSection: HTMLElement;
+  baselineStart: HTMLInputElement;
+  baselineFinish: HTMLInputElement;
+  actualStart: HTMLInputElement;
+  actualFinish: HTMLInputElement;
+  startVariance: HTMLInputElement;
+  finishVariance: HTMLInputElement;
   closeBtn: HTMLButtonElement;
   deleteBtn: HTMLButtonElement;
   linksBtn: HTMLButtonElement;
@@ -461,49 +469,33 @@ export class SideDrawer {
             this.dom.healthSection.style.display = 'none';
         }
         
-        // Update progress tracking section (baseline/actuals)
-        if (this.dom.progressSection && this.options.getScheduler) {
-            const scheduler = this.options.getScheduler();
-            const hasBaseline = scheduler?.hasBaseline() || false;
+        // Show/hide Progress Tracking section based on task data availability
+        if (this.dom.progressSection) {
+            const hasBaseline = task.baselineStart || task.baselineFinish;
+            const hasActuals = task.actualStart || task.actualFinish;
             
-            if (hasBaseline) {
-                // Show progress section
+            if (hasBaseline || hasActuals) {
                 this.dom.progressSection.style.display = 'block';
                 
-                // Update baseline fields (readonly)
-                this.dom.baselineStart.value = task.baselineStart || '';
-                this.dom.baselineFinish.value = task.baselineFinish || '';
-                
-                // Update actual fields (editable)
-                this.dom.actualStart.value = task.actualStart || '';
-                this.dom.actualFinish.value = task.actualFinish || '';
-                
-                // Calculate and display variance
-                if (scheduler && task.baselineStart && task.baselineFinish) {
-                    const variance = (scheduler as any)._calculateVariance(task);
-                    
-                    if (variance.start !== null) {
-                        const startVar = variance.start;
-                        const prefix = startVar > 0 ? '+' : '';
-                        this.dom.startVariance.value = `${prefix}${startVar} day${Math.abs(startVar) !== 1 ? 's' : ''}`;
-                        this.dom.startVariance.className = `form-input ${startVar > 0 ? 'variance-ahead' : startVar < 0 ? 'variance-behind' : 'variance-on-time'}`;
-                    } else {
-                        this.dom.startVariance.value = '-';
-                        this.dom.startVariance.className = 'form-input';
-                    }
-                    
-                    if (variance.finish !== null) {
-                        const finishVar = variance.finish;
-                        const prefix = finishVar > 0 ? '+' : '';
-                        this.dom.finishVariance.value = `${prefix}${finishVar} day${Math.abs(finishVar) !== 1 ? 's' : ''}`;
-                        this.dom.finishVariance.className = `form-input ${finishVar > 0 ? 'variance-ahead' : finishVar < 0 ? 'variance-behind' : 'variance-on-time'}`;
-                    } else {
-                        this.dom.finishVariance.value = '-';
-                        this.dom.finishVariance.className = 'form-input';
-                    }
+                // Populate baseline fields (readonly display)
+                if (this.dom.baselineStart) {
+                    this.dom.baselineStart.value = task.baselineStart || '-';
                 }
+                if (this.dom.baselineFinish) {
+                    this.dom.baselineFinish.value = task.baselineFinish || '-';
+                }
+                
+                // Populate actual fields (editable)
+                if (this.dom.actualStart) {
+                    this.dom.actualStart.value = task.actualStart || '';
+                }
+                if (this.dom.actualFinish) {
+                    this.dom.actualFinish.value = task.actualFinish || '';
+                }
+                
+                // Calculate and display variances
+                this._updateVarianceDisplay(task);
             } else {
-                // Hide progress section
                 this.dom.progressSection.style.display = 'none';
             }
         }
@@ -571,6 +563,125 @@ export class SideDrawer {
     }
 
     /**
+     * Update the variance display fields
+     * Calculates the difference between baseline and actual dates
+     * 
+     * @param task - Task to calculate variance for
+     * @private
+     */
+    private _updateVarianceDisplay(task: Task): void {
+        // Try to use scheduler's variance calculation if available (uses work days)
+        if (this.options.getScheduler) {
+            const scheduler = this.options.getScheduler();
+            if (scheduler && scheduler.calculateVariance) {
+                const variance = scheduler.calculateVariance(task);
+                
+                // Start Variance
+                if (this.dom.startVariance) {
+                    if (variance.start !== null) {
+                        const startVar = variance.start;
+                        if (startVar > 0) {
+                            this.dom.startVariance.value = `${startVar}d late`;
+                            this.dom.startVariance.style.color = '#ef4444'; // Red
+                        } else if (startVar < 0) {
+                            this.dom.startVariance.value = `${Math.abs(startVar)}d early`;
+                            this.dom.startVariance.style.color = '#22c55e'; // Green
+                        } else {
+                            this.dom.startVariance.value = 'On time';
+                            this.dom.startVariance.style.color = '#22c55e'; // Green
+                        }
+                    } else if (task.baselineStart && !task.actualStart) {
+                        this.dom.startVariance.value = 'Not started';
+                        this.dom.startVariance.style.color = '#94a3b8'; // Gray
+                    } else {
+                        this.dom.startVariance.value = '-';
+                        this.dom.startVariance.style.color = '#94a3b8';
+                    }
+                }
+                
+                // Finish Variance
+                if (this.dom.finishVariance) {
+                    if (variance.finish !== null) {
+                        const finishVar = variance.finish;
+                        if (finishVar > 0) {
+                            this.dom.finishVariance.value = `${finishVar}d late`;
+                            this.dom.finishVariance.style.color = '#ef4444'; // Red
+                        } else if (finishVar < 0) {
+                            this.dom.finishVariance.value = `${Math.abs(finishVar)}d early`;
+                            this.dom.finishVariance.style.color = '#22c55e'; // Green
+                        } else {
+                            this.dom.finishVariance.value = 'On time';
+                            this.dom.finishVariance.style.color = '#22c55e'; // Green
+                        }
+                    } else if (task.baselineFinish && !task.actualFinish) {
+                        this.dom.finishVariance.value = 'In progress';
+                        this.dom.finishVariance.style.color = '#94a3b8'; // Gray
+                    } else {
+                        this.dom.finishVariance.value = '-';
+                        this.dom.finishVariance.style.color = '#94a3b8';
+                    }
+                }
+                return;
+            }
+        }
+        
+        // Fallback: Simple calendar day calculation if scheduler not available
+        // Start Variance: actualStart vs baselineStart
+        if (this.dom.startVariance) {
+            if (task.actualStart && task.baselineStart) {
+                const actualDate = new Date(task.actualStart);
+                const baselineDate = new Date(task.baselineStart);
+                const diffTime = actualDate.getTime() - baselineDate.getTime();
+                const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+                
+                if (diffDays > 0) {
+                    this.dom.startVariance.value = `${diffDays}d late`;
+                    this.dom.startVariance.style.color = '#ef4444'; // Red
+                } else if (diffDays < 0) {
+                    this.dom.startVariance.value = `${Math.abs(diffDays)}d early`;
+                    this.dom.startVariance.style.color = '#22c55e'; // Green
+                } else {
+                    this.dom.startVariance.value = 'On time';
+                    this.dom.startVariance.style.color = '#22c55e'; // Green
+                }
+            } else if (task.baselineStart && !task.actualStart) {
+                this.dom.startVariance.value = 'Not started';
+                this.dom.startVariance.style.color = '#94a3b8'; // Gray
+            } else {
+                this.dom.startVariance.value = '-';
+                this.dom.startVariance.style.color = '#94a3b8';
+            }
+        }
+        
+        // Finish Variance: actualFinish vs baselineFinish
+        if (this.dom.finishVariance) {
+            if (task.actualFinish && task.baselineFinish) {
+                const actualDate = new Date(task.actualFinish);
+                const baselineDate = new Date(task.baselineFinish);
+                const diffTime = actualDate.getTime() - baselineDate.getTime();
+                const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
+                
+                if (diffDays > 0) {
+                    this.dom.finishVariance.value = `${diffDays}d late`;
+                    this.dom.finishVariance.style.color = '#ef4444'; // Red
+                } else if (diffDays < 0) {
+                    this.dom.finishVariance.value = `${Math.abs(diffDays)}d early`;
+                    this.dom.finishVariance.style.color = '#22c55e'; // Green
+                } else {
+                    this.dom.finishVariance.value = 'On time';
+                    this.dom.finishVariance.style.color = '#22c55e'; // Green
+                }
+            } else if (task.baselineFinish && !task.actualFinish) {
+                this.dom.finishVariance.value = 'In progress';
+                this.dom.finishVariance.style.color = '#94a3b8'; // Gray
+            } else {
+                this.dom.finishVariance.value = '-';
+                this.dom.finishVariance.style.color = '#94a3b8';
+            }
+        }
+    }
+
+    /**
      * Sync drawer with updated task data (without reopening)
      * @param task - Updated task object
      */
@@ -611,49 +722,33 @@ export class SideDrawer {
             this.dom.healthSection.style.display = 'none';
         }
         
-        // Update progress tracking section (baseline/actuals)
-        if (this.dom.progressSection && this.options.getScheduler) {
-            const scheduler = this.options.getScheduler();
-            const hasBaseline = scheduler?.hasBaseline() || false;
+        // Update Progress Tracking section
+        if (this.dom.progressSection) {
+            const hasBaseline = task.baselineStart || task.baselineFinish;
+            const hasActuals = task.actualStart || task.actualFinish;
             
-            if (hasBaseline) {
-                // Show progress section
+            if (hasBaseline || hasActuals) {
                 this.dom.progressSection.style.display = 'block';
                 
-                // Update baseline fields (readonly)
-                this.dom.baselineStart.value = task.baselineStart || '';
-                this.dom.baselineFinish.value = task.baselineFinish || '';
-                
-                // Update actual fields (editable)
-                this.dom.actualStart.value = task.actualStart || '';
-                this.dom.actualFinish.value = task.actualFinish || '';
-                
-                // Calculate and display variance
-                if (scheduler && task.baselineStart && task.baselineFinish) {
-                    const variance = (scheduler as any)._calculateVariance(task);
-                    
-                    if (variance.start !== null) {
-                        const startVar = variance.start;
-                        const prefix = startVar > 0 ? '+' : '';
-                        this.dom.startVariance.value = `${prefix}${startVar} day${Math.abs(startVar) !== 1 ? 's' : ''}`;
-                        this.dom.startVariance.className = `form-input ${startVar > 0 ? 'variance-ahead' : startVar < 0 ? 'variance-behind' : 'variance-on-time'}`;
-                    } else {
-                        this.dom.startVariance.value = '-';
-                        this.dom.startVariance.className = 'form-input';
-                    }
-                    
-                    if (variance.finish !== null) {
-                        const finishVar = variance.finish;
-                        const prefix = finishVar > 0 ? '+' : '';
-                        this.dom.finishVariance.value = `${prefix}${finishVar} day${Math.abs(finishVar) !== 1 ? 's' : ''}`;
-                        this.dom.finishVariance.className = `form-input ${finishVar > 0 ? 'variance-ahead' : finishVar < 0 ? 'variance-behind' : 'variance-on-time'}`;
-                    } else {
-                        this.dom.finishVariance.value = '-';
-                        this.dom.finishVariance.className = 'form-input';
-                    }
+                // Update baseline fields
+                if (this.dom.baselineStart) {
+                    this.dom.baselineStart.value = task.baselineStart || '-';
                 }
+                if (this.dom.baselineFinish) {
+                    this.dom.baselineFinish.value = task.baselineFinish || '-';
+                }
+                
+                // Update actual fields
+                if (this.dom.actualStart) {
+                    this.dom.actualStart.value = task.actualStart || '';
+                }
+                if (this.dom.actualFinish) {
+                    this.dom.actualFinish.value = task.actualFinish || '';
+                }
+                
+                // Update variance display
+                this._updateVarianceDisplay(task);
             } else {
-                // Hide progress section
                 this.dom.progressSection.style.display = 'none';
             }
         }
