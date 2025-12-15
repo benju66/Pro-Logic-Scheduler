@@ -1,7 +1,6 @@
-// @ts-check
 /**
  * ============================================================================
- * SideDrawer.js
+ * SideDrawer.ts
  * ============================================================================
  * 
  * Slide-in panel component for detailed task editing.
@@ -15,12 +14,49 @@
  * @version 2.0.0 - Ferrari Engine
  */
 
+import type { Task, ConstraintType } from '../../types';
+
+/**
+ * Side drawer options
+ */
+export interface SideDrawerOptions {
+  container: HTMLElement;
+  onUpdate?: (taskId: string, field: string, value: unknown) => void;
+  onDelete?: (taskId: string) => void;
+  onOpenLinks?: (taskId: string) => void;
+}
+
+/**
+ * Side drawer DOM references
+ */
+interface SideDrawerDOM {
+  name: HTMLInputElement;
+  duration: HTMLInputElement;
+  progress: HTMLInputElement;
+  start: HTMLInputElement;
+  end: HTMLInputElement;
+  constraintType: HTMLSelectElement;
+  constraintDate: HTMLInputElement;
+  constraintDateGroup: HTMLElement;
+  constraintDesc: HTMLElement;
+  notes: HTMLTextAreaElement;
+  totalFloat: HTMLElement;
+  freeFloat: HTMLElement;
+  lateStart: HTMLElement;
+  lateFinish: HTMLElement;
+  criticalBadge: HTMLElement;
+  cpmSection: HTMLElement;
+  closeBtn: HTMLButtonElement;
+  deleteBtn: HTMLButtonElement;
+  linksBtn: HTMLButtonElement;
+}
+
 export class SideDrawer {
     
     /**
      * Constraint type descriptions for help text
      */
-    static CONSTRAINT_DESCRIPTIONS = {
+    static readonly CONSTRAINT_DESCRIPTIONS: Readonly<Record<ConstraintType, string>> = {
         'asap': 'Task flows naturally based on predecessors.',
         'snet': 'Task cannot start before this date, but can start later if needed.',
         'snlt': 'Task must start by this date. Creates conflict if dependencies push later.',
@@ -29,20 +65,22 @@ export class SideDrawer {
         'mfo': 'Task MUST finish exactly on this date. Hard constraint.',
     };
 
+    private options: SideDrawerOptions;
+    private container: HTMLElement;
+    private element!: HTMLElement; // Initialized in _buildDOM()
+    private dom!: SideDrawerDOM; // Initialized in _buildDOM()
+    private activeTaskId: string | null = null;
+    private isOpen: boolean = false;
+    private _keydownHandler: ((e: KeyboardEvent) => void) | null = null;
+
     /**
      * Create a new SideDrawer instance
      * 
-     * @param {Object} options - Configuration options
-     * @param {HTMLElement} options.container - Parent container element
-     * @param {Function} options.onUpdate - Callback when field is updated (taskId, field, value)
-     * @param {Function} options.onDelete - Callback when delete is clicked (taskId)
-     * @param {Function} options.onOpenLinks - Callback to open dependencies modal (taskId)
+     * @param options - Configuration options
      */
-    constructor(options = {}) {
+    constructor(options: SideDrawerOptions) {
         this.options = options;
         this.container = options.container;
-        this.activeTaskId = null;
-        this.isOpen = false;
         
         this._buildDOM();
         this._bindEvents();
@@ -52,7 +90,7 @@ export class SideDrawer {
      * Build the drawer DOM structure
      * @private
      */
-    _buildDOM() {
+    private _buildDOM(): void {
         this.element = document.createElement('div');
         this.element.className = 'side-drawer';
         this.element.innerHTML = `
@@ -84,15 +122,17 @@ export class SideDrawer {
                     </div>
                 </div>
                 
-                <!-- Dates (Read-only) -->
+                <!-- Dates (Editable - applies constraints like grid) -->
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">Start Date</label>
-                        <input type="date" id="drawer-start" class="form-input" readonly>
+                        <input type="date" id="drawer-start" class="form-input">
+                        <p class="form-hint">Editing applies SNET constraint</p>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Finish Date</label>
-                        <input type="date" id="drawer-end" class="form-input" readonly>
+                        <input type="date" id="drawer-end" class="form-input">
+                        <p class="form-hint">Editing applies FNLT deadline</p>
                     </div>
                 </div>
                 
@@ -163,7 +203,7 @@ export class SideDrawer {
                     </div>
                 </div>
                 
-                <!-- Notes Section (optional future feature) -->
+                <!-- Notes Section -->
                 <div class="form-section">
                     <h4 class="form-section-title">Notes</h4>
                     <div class="form-group">
@@ -184,27 +224,33 @@ export class SideDrawer {
         
         this.container.appendChild(this.element);
         
-        // Cache DOM references
+        // Cache DOM references with type assertions
+        const getElement = <T extends HTMLElement>(id: string): T => {
+            const el = this.element.querySelector(`#${id}`) as T;
+            if (!el) throw new Error(`Element #${id} not found`);
+            return el;
+        };
+
         this.dom = {
-            name: this.element.querySelector('#drawer-name'),
-            duration: this.element.querySelector('#drawer-duration'),
-            progress: this.element.querySelector('#drawer-progress'),
-            start: this.element.querySelector('#drawer-start'),
-            end: this.element.querySelector('#drawer-end'),
-            constraintType: this.element.querySelector('#drawer-constraintType'),
-            constraintDate: this.element.querySelector('#drawer-constraintDate'),
-            constraintDateGroup: this.element.querySelector('#drawer-constraint-date-group'),
-            constraintDesc: this.element.querySelector('#drawer-constraint-desc'),
-            notes: this.element.querySelector('#drawer-notes'),
-            totalFloat: this.element.querySelector('#drawer-total-float'),
-            freeFloat: this.element.querySelector('#drawer-free-float'),
-            lateStart: this.element.querySelector('#drawer-late-start'),
-            lateFinish: this.element.querySelector('#drawer-late-finish'),
-            criticalBadge: this.element.querySelector('#drawer-critical-badge'),
-            cpmSection: this.element.querySelector('#drawer-cpm-section'),
-            closeBtn: this.element.querySelector('.drawer-close'),
-            deleteBtn: this.element.querySelector('#drawer-delete-btn'),
-            linksBtn: this.element.querySelector('#drawer-links-btn'),
+            name: getElement<HTMLInputElement>('drawer-name'),
+            duration: getElement<HTMLInputElement>('drawer-duration'),
+            progress: getElement<HTMLInputElement>('drawer-progress'),
+            start: getElement<HTMLInputElement>('drawer-start'),
+            end: getElement<HTMLInputElement>('drawer-end'),
+            constraintType: getElement<HTMLSelectElement>('drawer-constraintType'),
+            constraintDate: getElement<HTMLInputElement>('drawer-constraintDate'),
+            constraintDateGroup: getElement<HTMLElement>('drawer-constraint-date-group'),
+            constraintDesc: getElement<HTMLElement>('drawer-constraint-desc'),
+            notes: getElement<HTMLTextAreaElement>('drawer-notes'),
+            totalFloat: getElement<HTMLElement>('drawer-total-float'),
+            freeFloat: getElement<HTMLElement>('drawer-free-float'),
+            lateStart: getElement<HTMLElement>('drawer-late-start'),
+            lateFinish: getElement<HTMLElement>('drawer-late-finish'),
+            criticalBadge: getElement<HTMLElement>('drawer-critical-badge'),
+            cpmSection: getElement<HTMLElement>('drawer-cpm-section'),
+            closeBtn: this.element.querySelector('.drawer-close') as HTMLButtonElement,
+            deleteBtn: getElement<HTMLButtonElement>('drawer-delete-btn'),
+            linksBtn: getElement<HTMLButtonElement>('drawer-links-btn'),
         };
     }
 
@@ -212,7 +258,7 @@ export class SideDrawer {
      * Bind event listeners
      * @private
      */
-    _bindEvents() {
+    private _bindEvents(): void {
         // Close button
         this.dom.closeBtn.addEventListener('click', () => this.close());
         
@@ -222,9 +268,13 @@ export class SideDrawer {
         this.dom.progress.addEventListener('change', () => this._handleChange('progress', this.dom.progress.value));
         this.dom.notes.addEventListener('change', () => this._handleChange('notes', this.dom.notes.value));
         
+        // Start/End changes (these will apply constraints via the handler)
+        this.dom.start.addEventListener('change', () => this._handleChange('start', this.dom.start.value));
+        this.dom.end.addEventListener('change', () => this._handleChange('end', this.dom.end.value));
+        
         // Constraint type change
         this.dom.constraintType.addEventListener('change', () => {
-            const type = this.dom.constraintType.value;
+            const type = this.dom.constraintType.value as ConstraintType;
             this._updateConstraintDesc(type);
             this._handleChange('constraintType', type);
         });
@@ -249,18 +299,19 @@ export class SideDrawer {
         });
         
         // Keyboard shortcuts
-        document.addEventListener('keydown', (e) => {
+        this._keydownHandler = (e: KeyboardEvent) => {
             if (e.key === 'Escape' && this.isOpen) {
                 this.close();
             }
-        });
+        };
+        document.addEventListener('keydown', this._keydownHandler);
     }
 
     /**
      * Handle field change
      * @private
      */
-    _handleChange(field, value) {
+    private _handleChange(field: string, value: unknown): void {
         if (!this.activeTaskId) return;
         
         if (this.options.onUpdate) {
@@ -272,7 +323,7 @@ export class SideDrawer {
      * Update constraint description text
      * @private
      */
-    _updateConstraintDesc(type) {
+    private _updateConstraintDesc(type: ConstraintType): void {
         this.dom.constraintDesc.textContent = SideDrawer.CONSTRAINT_DESCRIPTIONS[type] || '';
         
         // Show/hide constraint date based on type
@@ -286,11 +337,10 @@ export class SideDrawer {
     /**
      * Open the drawer with a task
      * 
-     * @param {Object} task - The task object to edit
-     * @param {Object} options - Additional options
-     * @param {boolean} options.isParent - Whether the task is a parent/summary task
+     * @param task - The task object to edit
+     * @param options - Additional options
      */
-    open(task, options = {}) {
+    open(task: Task, options: { isParent?: boolean } = {}): void {
         if (!task) return;
         
         // Toggle if same task
@@ -303,8 +353,8 @@ export class SideDrawer {
         
         // Populate fields
         this.dom.name.value = task.name || '';
-        this.dom.duration.value = task.duration || 1;
-        this.dom.progress.value = task.progress || 0;
+        this.dom.duration.value = String(task.duration || 1);
+        this.dom.progress.value = String(task.progress || 0);
         this.dom.start.value = task.start || '';
         this.dom.end.value = task.end || '';
         this.dom.constraintType.value = task.constraintType || 'asap';
@@ -317,17 +367,24 @@ export class SideDrawer {
         // Update CPM data
         this._updateCPMData(task);
         
-        // Handle parent tasks (read-only duration)
+        // Handle parent tasks (dates roll up from children, not directly editable)
         const isParent = options.isParent || false;
         this.dom.duration.disabled = isParent;
+        this.dom.start.disabled = isParent;
+        this.dom.end.disabled = isParent;
         this.dom.constraintType.disabled = isParent;
         this.dom.constraintDate.disabled = isParent;
         this.dom.linksBtn.style.display = isParent ? 'none' : 'flex';
         
+        // Add visual styling for disabled state
         if (isParent) {
             this.dom.duration.classList.add('form-input-readonly');
+            this.dom.start.classList.add('form-input-readonly');
+            this.dom.end.classList.add('form-input-readonly');
         } else {
             this.dom.duration.classList.remove('form-input-readonly');
+            this.dom.start.classList.remove('form-input-readonly');
+            this.dom.end.classList.remove('form-input-readonly');
         }
         
         // Show drawer
@@ -342,7 +399,7 @@ export class SideDrawer {
      * Update CPM analysis data display
      * @private
      */
-    _updateCPMData(task) {
+    private _updateCPMData(task: Task): void {
         // Total Float
         if (task.totalFloat !== undefined && task.totalFloat !== null) {
             this.dom.totalFloat.textContent = `${task.totalFloat} days`;
@@ -374,21 +431,29 @@ export class SideDrawer {
 
     /**
      * Sync drawer with updated task data (without reopening)
-     * @param {Object} task - Updated task object
+     * @param task - Updated task object
      */
-    sync(task) {
+    sync(task: Task): void {
         if (!task || task.id !== this.activeTaskId) return;
         
+        // Update date fields (these may have changed from CPM recalculation)
         this.dom.start.value = task.start || '';
         this.dom.end.value = task.end || '';
-        this.dom.duration.value = task.duration || 1;
+        this.dom.duration.value = String(task.duration || 1);
+        
+        // Update constraint fields
+        this.dom.constraintType.value = task.constraintType || 'asap';
+        this.dom.constraintDate.value = task.constraintDate || '';
+        this._updateConstraintDesc(task.constraintType || 'asap');
+        
+        // Update CPM data display
         this._updateCPMData(task);
     }
 
     /**
      * Close the drawer
      */
-    close() {
+    close(): void {
         this.element.classList.remove('open');
         this.isOpen = false;
         this.activeTaskId = null;
@@ -396,29 +461,27 @@ export class SideDrawer {
 
     /**
      * Get the currently active task ID
-     * @returns {string|null}
+     * @returns Active task ID or null
      */
-    getActiveTaskId() {
+    getActiveTaskId(): string | null {
         return this.activeTaskId;
     }
 
     /**
      * Check if drawer is currently open
-     * @returns {boolean}
+     * @returns True if open
      */
-    isDrawerOpen() {
+    isDrawerOpen(): boolean {
         return this.isOpen;
     }
 
     /**
      * Destroy the drawer
      */
-    destroy() {
+    destroy(): void {
+        if (this._keydownHandler) {
+            document.removeEventListener('keydown', this._keydownHandler);
+        }
         this.element.remove();
     }
-}
-
-// Export for module systems
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = SideDrawer;
 }

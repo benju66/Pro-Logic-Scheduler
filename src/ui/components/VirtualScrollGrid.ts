@@ -1,4 +1,3 @@
-// @ts-check
 /**
  * @fileoverview High-performance virtualized grid component
  * @module ui/components/VirtualScrollGrid
@@ -33,21 +32,52 @@
  * 4. RAF Throttling - Batch scroll updates to animation frames
  * 5. Event Delegation - Single listener on container, not per-row
  * 
- * USAGE:
- * ```javascript
- * const grid = new VirtualScrollGrid(containerElement, {
- *     rowHeight: 38,
- *     columns: [...],
- *     onRowClick: (task, event) => {},
- *     onCellChange: (taskId, field, value) => {},
- * });
- * grid.setData(tasks);
- * grid.setSelection(selectedIds);
- * ```
- * 
  * @author Pro Logic Scheduler
  * @version 2.0.0 - Ferrari Engine
  */
+
+import type { Task, GridColumn, VirtualScrollGridOptions } from '../../types';
+import { getTaskFieldValue } from '../../types';
+
+/**
+ * Editing cell state
+ */
+interface EditingCell {
+  taskId: string;
+  field: string;
+}
+
+/**
+ * Drag state
+ */
+interface DragState {
+  taskId: string;
+  taskIds: string[];
+  targetTaskId?: string;
+  dropPosition?: 'before' | 'after' | 'child';
+}
+
+/**
+ * Cell metadata
+ */
+interface CellMeta {
+  isParent: boolean;
+  depth: number;
+  isCollapsed: boolean;
+  index: number;
+}
+
+/**
+ * DOM element references
+ */
+interface VirtualScrollGridDOM {
+  viewport: HTMLElement;
+  scrollContent: HTMLElement;
+  topSpacer: HTMLElement;
+  bottomSpacer: HTMLElement;
+  rowContainer: HTMLElement;
+  rows: HTMLElement[];
+}
 
 export class VirtualScrollGrid {
     
@@ -56,7 +86,7 @@ export class VirtualScrollGrid {
     // =========================================================================
     
     /** Default configuration values */
-    static DEFAULTS = {
+    static readonly DEFAULTS = {
         rowHeight: 38,
         headerHeight: 50,
         bufferRows: 10,           // Extra rows above/below viewport
@@ -65,7 +95,7 @@ export class VirtualScrollGrid {
     };
 
     /** Column type renderers */
-    static COLUMN_TYPES = {
+    static readonly COLUMN_TYPES = {
         TEXT: 'text',
         NUMBER: 'number',
         DATE: 'date',
@@ -74,7 +104,39 @@ export class VirtualScrollGrid {
         READONLY: 'readonly',
         ACTIONS: 'actions',
         DRAG: 'drag',             // Drag handle for row reordering
-    };
+    } as const;
+
+    // =========================================================================
+    // INSTANCE PROPERTIES
+    // =========================================================================
+    
+    private options: Required<Pick<VirtualScrollGridOptions, 'rowHeight' | 'headerHeight' | 'bufferRows' | 'scrollThrottle' | 'editDebounce'>> & VirtualScrollGridOptions;
+    private container: HTMLElement;
+    private data: Task[] = [];                      // Flat array of visible tasks
+    private allData: Task[] = [];                   // All tasks (for filtering)
+    private selectedIds: Set<string> = new Set();        // Currently selected task IDs
+    private focusedId: string | null = null;               // Currently focused task ID
+    private editingCell: EditingCell | null = null;             // Currently editing cell
+    private editingRows: Set<string> = new Set();        // Set of task IDs being edited (preserved during scroll)
+    
+    // Scroll state
+    private scrollTop: number = 0;
+    private viewportHeight: number = 0;
+    private totalHeight: number = 0;
+    private firstVisibleIndex: number = 0;
+    private lastVisibleIndex: number = 0;
+    
+    // DOM element cache
+    private dom!: VirtualScrollGridDOM; // Initialized in _buildDOM()
+    
+    // Performance tracking
+    private _scrollRAF: number | null = null;              // requestAnimationFrame ID
+    private _renderCount: number = 0;               // Debug: track render calls
+    private _resizeObserver: ResizeObserver | null = null;
+    
+    // Drag state
+    private _dragState: DragState | null = null;
+    private _dragGhost: HTMLElement | null = null;
 
     // =========================================================================
     // CONSTRUCTOR
@@ -83,56 +145,17 @@ export class VirtualScrollGrid {
     /**
      * Create a new VirtualScrollGrid instance
      * 
-     * @param {HTMLElement} container - The container element for the grid
-     * @param {Object} [options={}] - Configuration options
-     * @param {number} [options.rowHeight=38] - Height of each row in pixels
-     * @param {Array} options.columns - Column definitions
-     * @param {Function} [options.onRowClick] - Callback for row click
-     * @param {Function} [options.onRowDoubleClick] - Callback for row double-click
-     * @param {Function} [options.onCellChange] - Callback for cell value change
-     * @param {Function} [options.onSelectionChange] - Callback for selection change
-     * @param {Function} [options.onAction] - Callback for action button clicks
-     * @param {Function} [options.onToggleCollapse] - Callback for collapse/expand toggle
-     * @param {Function} [options.onScroll] - Callback for scroll events
-     * @param {Function} [options.onRowMove] - Callback for row drag-and-drop reordering
-     * @param {Function} [options.getRowClass] - Function to get additional row classes
-     * @param {Function} [options.isParent] - Function to check if task is a parent
-     * @param {Function} [options.getDepth] - Function to get task hierarchy depth
+     * @param container - The container element for the grid
+     * @param options - Configuration options
      */
-    constructor(container, options = {}) {
+    constructor(container: HTMLElement, options: VirtualScrollGridOptions = {} as VirtualScrollGridOptions) {
         // Merge options with defaults
-        this.options = { ...VirtualScrollGrid.DEFAULTS, ...options };
+        this.options = { 
+            ...VirtualScrollGrid.DEFAULTS, 
+            ...options 
+        } as Required<Pick<VirtualScrollGridOptions, 'rowHeight' | 'headerHeight' | 'bufferRows' | 'scrollThrottle' | 'editDebounce'>> & VirtualScrollGridOptions;
         
-        // Core state
         this.container = container;
-        this.data = [];                      // Flat array of visible tasks
-        this.allData = [];                   // All tasks (for filtering)
-        this.selectedIds = new Set();        // Currently selected task IDs
-        this.focusedId = null;               // Currently focused task ID
-        this.editingCell = null;             // Currently editing cell {taskId, field}
-        this.editingRows = new Set();        // Set of task IDs being edited (preserved during scroll)
-        
-        // Scroll state
-        this.scrollTop = 0;
-        this.viewportHeight = 0;
-        this.totalHeight = 0;
-        this.firstVisibleIndex = 0;
-        this.lastVisibleIndex = 0;
-        
-        // DOM element cache
-        this.dom = {
-            viewport: null,
-            scrollContent: null,
-            topSpacer: null,
-            bottomSpacer: null,
-            rowContainer: null,
-            rows: [],                        // Pool of reusable row elements
-        };
-        
-        // Performance tracking
-        this._scrollRAF = null;              // requestAnimationFrame ID
-        this._lastScrollTime = 0;
-        this._renderCount = 0;               // Debug: track render calls
         
         // Initialize the grid
         this._init();
@@ -146,7 +169,7 @@ export class VirtualScrollGrid {
      * Initialize the grid DOM structure and event listeners
      * @private
      */
-    _init() {
+    private _init(): void {
         // Build DOM structure
         this._buildDOM();
         
@@ -168,15 +191,15 @@ export class VirtualScrollGrid {
      * Build the grid DOM structure
      * @private
      */
-    _buildDOM() {
+    private _buildDOM(): void {
         // Clear container
         this.container.innerHTML = '';
         this.container.classList.add('vsg-container');
         
         // Create viewport (the visible scrolling area)
-        this.dom.viewport = document.createElement('div');
-        this.dom.viewport.className = 'vsg-viewport';
-        this.dom.viewport.style.cssText = `
+        const viewport = document.createElement('div');
+        viewport.className = 'vsg-viewport';
+        viewport.style.cssText = `
             height: 100%;
             overflow-y: auto;
             overflow-x: auto;
@@ -184,42 +207,52 @@ export class VirtualScrollGrid {
         `;
         
         // Create scroll content wrapper (holds spacers + rows)
-        this.dom.scrollContent = document.createElement('div');
-        this.dom.scrollContent.className = 'vsg-scroll-content';
-        this.dom.scrollContent.style.cssText = `
+        const scrollContent = document.createElement('div');
+        scrollContent.className = 'vsg-scroll-content';
+        scrollContent.style.cssText = `
             position: relative;
             min-width: fit-content;
         `;
         
         // Create top phantom spacer
-        this.dom.topSpacer = document.createElement('div');
-        this.dom.topSpacer.className = 'vsg-spacer-top';
-        this.dom.topSpacer.style.cssText = `
+        const topSpacer = document.createElement('div');
+        topSpacer.className = 'vsg-spacer-top';
+        topSpacer.style.cssText = `
             height: 0px;
             pointer-events: none;
         `;
         
         // Create row container (holds the recycled rows)
-        this.dom.rowContainer = document.createElement('div');
-        this.dom.rowContainer.className = 'vsg-row-container';
-        this.dom.rowContainer.style.cssText = `
+        const rowContainer = document.createElement('div');
+        rowContainer.className = 'vsg-row-container';
+        rowContainer.style.cssText = `
             position: relative;
         `;
         
         // Create bottom phantom spacer
-        this.dom.bottomSpacer = document.createElement('div');
-        this.dom.bottomSpacer.className = 'vsg-spacer-bottom';
-        this.dom.bottomSpacer.style.cssText = `
+        const bottomSpacer = document.createElement('div');
+        bottomSpacer.className = 'vsg-spacer-bottom';
+        bottomSpacer.style.cssText = `
             height: 0px;
             pointer-events: none;
         `;
         
         // Assemble structure
-        this.dom.scrollContent.appendChild(this.dom.topSpacer);
-        this.dom.scrollContent.appendChild(this.dom.rowContainer);
-        this.dom.scrollContent.appendChild(this.dom.bottomSpacer);
-        this.dom.viewport.appendChild(this.dom.scrollContent);
-        this.container.appendChild(this.dom.viewport);
+        scrollContent.appendChild(topSpacer);
+        scrollContent.appendChild(rowContainer);
+        scrollContent.appendChild(bottomSpacer);
+        viewport.appendChild(scrollContent);
+        this.container.appendChild(viewport);
+        
+        // Store DOM references
+        this.dom = {
+            viewport,
+            scrollContent,
+            topSpacer,
+            bottomSpacer,
+            rowContainer,
+            rows: [],
+        };
         
         // Pre-create row pool
         this._createRowPool();
@@ -229,7 +262,7 @@ export class VirtualScrollGrid {
      * Create the pool of reusable row elements
      * @private
      */
-    _createRowPool() {
+    private _createRowPool(): void {
         const poolSize = this._getVisibleRowCount() + (this.options.bufferRows * 2) + 5;
         
         for (let i = 0; i < poolSize; i++) {
@@ -245,9 +278,9 @@ export class VirtualScrollGrid {
     /**
      * Create a single row element with all column cells
      * @private
-     * @returns {HTMLElement} The row element
+     * @returns The row element
      */
-    _createRowElement() {
+    private _createRowElement(): HTMLElement {
         const row = document.createElement('div');
         row.className = 'vsg-row grid-row';
         row.style.cssText = `
@@ -273,13 +306,13 @@ export class VirtualScrollGrid {
     /**
      * Create a cell element for a column
      * @private
-     * @param {Object} col - Column definition
-     * @returns {HTMLElement} The cell element
+     * @param col - Column definition
+     * @returns The cell element
      */
-    _createCellElement(col) {
+    private _createCellElement(col: GridColumn): HTMLElement {
         const cell = document.createElement('div');
         cell.className = `vsg-cell col-cell`;
-        cell.dataset.field = col.field;
+        cell.setAttribute('data-field', col.field);
         cell.style.cssText = `
             width: var(--w-${col.field}, ${col.width || 100}px);
             flex-shrink: 0;
@@ -302,10 +335,10 @@ export class VirtualScrollGrid {
     /**
      * Get the HTML template for a cell based on column type
      * @private
-     * @param {Object} col - Column definition
-     * @returns {string} HTML template
+     * @param col - Column definition
+     * @returns HTML template
      */
-    _getCellTemplate(col) {
+    private _getCellTemplate(col: GridColumn): string {
         switch (col.type) {
             case VirtualScrollGrid.COLUMN_TYPES.CHECKBOX:
                 return `<input type="checkbox" class="vsg-checkbox select-checkbox" data-field="${col.field}">`;
@@ -320,9 +353,12 @@ export class VirtualScrollGrid {
                 return `<input type="date" class="vsg-input cell-input" data-field="${col.field}">`;
                 
             case VirtualScrollGrid.COLUMN_TYPES.SELECT:
-                const options = (col.options || []).map(o => 
-                    `<option value="${o.value}">${o.label}</option>`
-                ).join('');
+                const options = (col.options || []).map((o: string | { value: string; label: string }) => {
+                    if (typeof o === 'string') {
+                        return `<option value="${o}">${o}</option>`;
+                    }
+                    return `<option value="${o.value}">${o.label}</option>`;
+                }).join('');
                 return `<select class="vsg-select cell-input" data-field="${col.field}">${options}</select>`;
                 
             case VirtualScrollGrid.COLUMN_TYPES.READONLY:
@@ -352,7 +388,7 @@ export class VirtualScrollGrid {
      * Bind all event listeners
      * @private
      */
-    _bindEvents() {
+    private _bindEvents(): void {
         // Scroll handling with RAF throttling
         this.dom.viewport.addEventListener('scroll', this._onScroll.bind(this), { passive: true });
         
@@ -371,7 +407,7 @@ export class VirtualScrollGrid {
         this.dom.rowContainer.addEventListener('drop', this._onDrop.bind(this));
         
         // Resize observer for viewport changes
-        this._resizeObserver = new ResizeObserver(entries => {
+        this._resizeObserver = new ResizeObserver(() => {
             this._measure();
             this._updateVisibleRows();
         });
@@ -385,11 +421,10 @@ export class VirtualScrollGrid {
     /**
      * Handle scroll events with RAF throttling
      * @private
-     * @param {Event} e - Scroll event
      */
-    _onScroll(e) {
+    private _onScroll(_e: Event): void {
         // Cancel any pending RAF
-        if (this._scrollRAF) {
+        if (this._scrollRAF !== null) {
             cancelAnimationFrame(this._scrollRAF);
         }
         
@@ -408,32 +443,33 @@ export class VirtualScrollGrid {
     /**
      * Handle click events via delegation
      * @private
-     * @param {Event} e - Click event
      */
-    _onClick(e) {
+    private _onClick(e: MouseEvent): void {
+        const target = e.target as HTMLElement;
+        
         // Ignore clicks from resizers (defensive check)
-        if (e.target.closest('.resizer, .col-resizer')) {
+        if (target.closest('.resizer, .col-resizer')) {
             return;
         }
         
-        const row = e.target.closest('.vsg-row');
+        const row = target.closest('.vsg-row') as HTMLElement | null;
         if (!row) return;
         
-        const taskId = row.dataset.taskId;
+        const taskId = row.getAttribute('data-task-id');
         if (!taskId) return;
         
         // Check for action button clicks
-        const actionBtn = e.target.closest('[data-action]');
+        const actionBtn = target.closest('[data-action]') as HTMLElement | null;
         if (actionBtn) {
-            const action = actionBtn.dataset.action;
-            if (this.options.onAction) {
+            const action = actionBtn.getAttribute('data-action');
+            if (action && this.options.onAction) {
                 this.options.onAction(taskId, action, e);
             }
             return;
         }
         
         // Check for collapse toggle
-        const collapseBtn = e.target.closest('.vsg-collapse-btn');
+        const collapseBtn = target.closest('.vsg-collapse-btn') as HTMLElement | null;
         if (collapseBtn) {
             if (this.options.onToggleCollapse) {
                 this.options.onToggleCollapse(taskId);
@@ -442,7 +478,7 @@ export class VirtualScrollGrid {
         }
         
         // Check for checkbox - toggle selection
-        const checkbox = e.target.closest('.vsg-checkbox');
+        const checkbox = target.closest('.vsg-checkbox') as HTMLInputElement | null;
         if (checkbox) {
             // If task is already selected, deselect it (toggle off)
             // Otherwise, select it (single selection)
@@ -455,7 +491,7 @@ export class VirtualScrollGrid {
                         ctrlKey: true,
                         metaKey: false,
                         shiftKey: false
-                    };
+                    } as MouseEvent;
                     this.options.onRowClick(taskId, toggleEvent);
                 }
             } else {
@@ -468,13 +504,13 @@ export class VirtualScrollGrid {
         }
         
         // If clicking directly on an input, focus it immediately
-        if (e.target.classList.contains('vsg-input') || 
-            e.target.classList.contains('vsg-select')) {
-            const field = e.target.dataset.field;
+        if (target.classList.contains('vsg-input') || 
+            target.classList.contains('vsg-select')) {
+            const field = target.getAttribute('data-field');
             if (field) {
-                e.target.focus();
-                if (e.target.type === 'text' || e.target.type === 'number') {
-                    e.target.select();
+                (target as HTMLInputElement | HTMLSelectElement).focus();
+                if ((target as HTMLInputElement).type === 'text' || (target as HTMLInputElement).type === 'number') {
+                    (target as HTMLInputElement).select();
                 }
                 this.editingCell = { taskId, field };
                 this.editingRows.add(taskId);
@@ -483,14 +519,14 @@ export class VirtualScrollGrid {
         }
         
         // If clicking on a cell (but not the input), focus the input
-        const cell = e.target.closest('[data-field]');
+        const cell = target.closest('[data-field]') as HTMLElement | null;
         if (cell) {
-            const field = cell.dataset.field;
-            const input = cell.querySelector('.vsg-input, .vsg-select');
-            if (input && !input.disabled) {
+            const field = cell.getAttribute('data-field');
+            const input = cell.querySelector('.vsg-input, .vsg-select') as HTMLInputElement | HTMLSelectElement | null;
+            if (input && !input.disabled && field) {
                 input.focus();
-                if (input.type === 'text' || input.type === 'number') {
-                    input.select();
+                if ((input as HTMLInputElement).type === 'text' || (input as HTMLInputElement).type === 'number') {
+                    (input as HTMLInputElement).select();
                 }
                 this.editingCell = { taskId, field };
                 this.editingRows.add(taskId);
@@ -507,18 +543,18 @@ export class VirtualScrollGrid {
     /**
      * Handle double-click events
      * @private
-     * @param {Event} e - Double-click event
      */
-    _onDoubleClick(e) {
-        const row = e.target.closest('.vsg-row');
+    private _onDoubleClick(e: MouseEvent): void {
+        const target = e.target as HTMLElement;
+        const row = target.closest('.vsg-row') as HTMLElement | null;
         if (!row) return;
         
-        const taskId = row.dataset.taskId;
+        const taskId = row.getAttribute('data-task-id');
         if (!taskId) return;
         
         // Don't trigger if double-clicking on input
-        if (e.target.classList.contains('vsg-input') || 
-            e.target.classList.contains('vsg-select')) {
+        if (target.classList.contains('vsg-input') || 
+            target.classList.contains('vsg-select')) {
             return;
         }
         
@@ -530,24 +566,24 @@ export class VirtualScrollGrid {
     /**
      * Handle input/select change events
      * @private
-     * @param {Event} e - Change event
      */
-    _onChange(e) {
-        const input = e.target;
-        if (!input.dataset.field) return;
+    private _onChange(e: Event): void {
+        const input = e.target as HTMLInputElement | HTMLSelectElement;
+        const field = input.getAttribute('data-field');
+        if (!field) return;
         
-        const row = input.closest('.vsg-row');
+        const row = input.closest('.vsg-row') as HTMLElement | null;
         if (!row) return;
         
-        const taskId = row.dataset.taskId;
-        const field = input.dataset.field;
+        const taskId = row.getAttribute('data-task-id');
+        if (!taskId) return;
         
         // Skip checkbox changes - they're handled by row click for selection
-        if (input.type === 'checkbox') {
+        if ((input as HTMLInputElement).type === 'checkbox') {
             return;
         }
         
-        let value = input.value;
+        const value = input.value;
         
         if (this.options.onCellChange) {
             this.options.onCellChange(taskId, field, value);
@@ -557,21 +593,21 @@ export class VirtualScrollGrid {
     /**
      * Handle blur events for text inputs
      * @private
-     * @param {Event} e - Blur event
      */
-    _onBlur(e) {
-        const input = e.target;
+    private _onBlur(e: FocusEvent): void {
+        const input = e.target as HTMLInputElement | HTMLSelectElement;
         if (!input.classList.contains('vsg-input') && !input.classList.contains('vsg-select')) return;
-        if (!input.dataset.field) return;
+        const field = input.getAttribute('data-field');
+        if (!field) return;
         
-        const row = input.closest('.vsg-row');
+        const row = input.closest('.vsg-row') as HTMLElement | null;
         if (!row) return;
         
-        const taskId = row.dataset.taskId;
-        const field = input.dataset.field;
+        const taskId = row.getAttribute('data-task-id');
+        if (!taskId) return;
         
         // For text/number inputs, fire change on blur
-        if (input.type === 'text' || input.type === 'number') {
+        if ((input as HTMLInputElement).type === 'text' || (input as HTMLInputElement).type === 'number') {
             if (this.options.onCellChange) {
                 this.options.onCellChange(taskId, field, input.value);
             }
@@ -595,20 +631,22 @@ export class VirtualScrollGrid {
     /**
      * Handle keydown events
      * @private
-     * @param {Event} e - Keydown event
      */
-    _onKeyDown(e) {
-        const input = e.target;
+    private _onKeyDown(e: KeyboardEvent): void {
+        const input = e.target as HTMLInputElement | HTMLSelectElement;
         
         // Tab navigation between cells
         if (e.key === 'Tab' && (input.classList.contains('vsg-input') || input.classList.contains('vsg-select'))) {
             e.preventDefault();
             
-            const row = input.closest('.vsg-row');
+            const row = input.closest('.vsg-row') as HTMLElement | null;
             if (!row) return;
             
-            const taskId = row.dataset.taskId;
-            const currentField = input.dataset.field;
+            const taskId = row.getAttribute('data-task-id');
+            if (!taskId) return;
+            
+            const currentField = input.getAttribute('data-field');
+            if (!currentField) return;
             
             // Get all editable columns
             const editableColumns = this.options.columns?.filter(col => 
@@ -654,16 +692,17 @@ export class VirtualScrollGrid {
             e.preventDefault();
             
             // Save current edit
-            const row = input.closest('.vsg-row');
-            const taskId = row?.dataset.taskId;
-            const field = input.dataset.field;
+            const row = input.closest('.vsg-row') as HTMLElement | null;
+            const taskId = row?.getAttribute('data-task-id');
+            const field = input.getAttribute('data-field');
             
-            if (this.options.onCellChange && field) {
+            if (this.options.onCellChange && field && taskId) {
                 this.options.onCellChange(taskId, field, input.value);
             }
             
             input.blur();
             
+            if (!taskId) return;
             const taskIndex = this.data.findIndex(t => t.id === taskId);
             
             if (e.shiftKey) {
@@ -685,12 +724,13 @@ export class VirtualScrollGrid {
         // Escape key cancels edit
         if (e.key === 'Escape' && input.classList.contains('vsg-input')) {
             // Restore original value
-            const row = input.closest('.vsg-row');
-            const taskId = row?.dataset.taskId;
-            const field = input.dataset.field;
+            const row = input.closest('.vsg-row') as HTMLElement | null;
+            const taskId = row?.getAttribute('data-task-id');
+            const field = input.getAttribute('data-field');
             const task = this.data.find(t => t.id === taskId);
             if (task && field) {
-                input.value = task[field] ?? '';
+                const value = getTaskFieldValue(task, field as GridColumn['field']);
+                (input as HTMLInputElement).value = value ? String(value) : '';
             }
             input.blur();
             return;
@@ -705,17 +745,20 @@ export class VirtualScrollGrid {
      * Handle drag start
      * @private
      */
-    _onDragStart(e) {
-        const handle = e.target.closest('.vsg-drag-handle');
+    private _onDragStart(e: DragEvent): void {
+        const target = e.target as HTMLElement;
+        const handle = target.closest('.vsg-drag-handle') as HTMLElement | null;
         if (!handle) {
             e.preventDefault();
             return;
         }
         
-        const row = handle.closest('.vsg-row');
+        const row = handle.closest('.vsg-row') as HTMLElement | null;
         if (!row) return;
         
-        const taskId = row.dataset.taskId;
+        const taskId = row.getAttribute('data-task-id');
+        if (!taskId) return;
+        
         const task = this.data.find(t => t.id === taskId);
         if (!task) return;
         
@@ -732,12 +775,14 @@ export class VirtualScrollGrid {
         this._createDragGhost(task, this._dragState.taskIds.length);
         
         // Set drag data
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', taskId);
-        
-        // Use custom ghost
-        if (this._dragGhost) {
-            e.dataTransfer.setDragImage(this._dragGhost, 10, 10);
+        if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', taskId);
+            
+            // Use custom ghost
+            if (this._dragGhost) {
+                e.dataTransfer.setDragImage(this._dragGhost, 10, 10);
+            }
         }
     }
     
@@ -745,7 +790,7 @@ export class VirtualScrollGrid {
      * Create a custom drag ghost element
      * @private
      */
-    _createDragGhost(task, count) {
+    private _createDragGhost(task: Task, count: number): void {
         this._removeDragGhost();
         
         this._dragGhost = document.createElement('div');
@@ -767,7 +812,7 @@ export class VirtualScrollGrid {
      * Remove the drag ghost element
      * @private
      */
-    _removeDragGhost() {
+    private _removeDragGhost(): void {
         if (this._dragGhost && this._dragGhost.parentNode) {
             this._dragGhost.parentNode.removeChild(this._dragGhost);
         }
@@ -778,7 +823,7 @@ export class VirtualScrollGrid {
      * Handle drag end
      * @private
      */
-    _onDragEnd(e) {
+    private _onDragEnd(_e: DragEvent): void {
         // Remove dragging class from all rows
         this.dom.rows.forEach(row => {
             row.classList.remove('dragging', 'drag-over-before', 'drag-over-after', 'drag-over-child');
@@ -795,16 +840,20 @@ export class VirtualScrollGrid {
      * Handle drag over
      * @private
      */
-    _onDragOver(e) {
+    private _onDragOver(e: DragEvent): void {
         if (!this._dragState) return;
         
         e.preventDefault();
-        e.dataTransfer.dropEffect = 'move';
+        if (e.dataTransfer) {
+            e.dataTransfer.dropEffect = 'move';
+        }
         
-        const row = e.target.closest('.vsg-row');
+        const target = e.target as HTMLElement;
+        const row = target.closest('.vsg-row') as HTMLElement | null;
         if (!row) return;
         
-        const targetTaskId = row.dataset.taskId;
+        const targetTaskId = row.getAttribute('data-task-id');
+        if (!targetTaskId) return;
         
         // Don't allow drop on self
         if (this._dragState.taskIds.includes(targetTaskId)) return;
@@ -840,13 +889,15 @@ export class VirtualScrollGrid {
      * Handle drag leave
      * @private
      */
-    _onDragLeave(e) {
-        const row = e.target.closest('.vsg-row');
+    private _onDragLeave(e: DragEvent): void {
+        const target = e.target as HTMLElement;
+        const row = target.closest('.vsg-row') as HTMLElement | null;
         if (!row) return;
         
         // Only remove if actually leaving the row
-        const relatedTarget = e.relatedTarget?.closest('.vsg-row');
-        if (relatedTarget !== row) {
+        const relatedTarget = e.relatedTarget as HTMLElement | null;
+        const relatedRow = relatedTarget?.closest('.vsg-row') as HTMLElement | null;
+        if (relatedRow !== row) {
             row.classList.remove('drag-over-before', 'drag-over-after', 'drag-over-child');
         }
     }
@@ -855,12 +906,14 @@ export class VirtualScrollGrid {
      * Handle drop
      * @private
      */
-    _onDrop(e) {
+    private _onDrop(e: DragEvent): void {
         e.preventDefault();
         
         if (!this._dragState || !this._dragState.targetTaskId) return;
         
         const { taskIds, targetTaskId, dropPosition } = this._dragState;
+        
+        if (!dropPosition) return;
         
         // Clear drop indicators
         this.dom.rows.forEach(row => {
@@ -885,7 +938,7 @@ export class VirtualScrollGrid {
      * Measure the viewport dimensions
      * @private
      */
-    _measure() {
+    private _measure(): void {
         this.viewportHeight = this.dom.viewport.clientHeight;
         this.totalHeight = this.data.length * this.options.rowHeight;
         
@@ -896,9 +949,9 @@ export class VirtualScrollGrid {
     /**
      * Calculate how many rows fit in the viewport
      * @private
-     * @returns {number} Number of visible rows
+     * @returns Number of visible rows
      */
-    _getVisibleRowCount() {
+    private _getVisibleRowCount(): number {
         return Math.ceil(this.viewportHeight / this.options.rowHeight) || 20;
     }
 
@@ -906,7 +959,7 @@ export class VirtualScrollGrid {
      * Update which rows are visible based on scroll position
      * @private
      */
-    _updateVisibleRows() {
+    private _updateVisibleRows(): void {
         const rowHeight = this.options.rowHeight;
         const buffer = this.options.bufferRows;
         const dataLength = this.data.length;
@@ -941,7 +994,7 @@ export class VirtualScrollGrid {
      * Hide all row elements
      * @private
      */
-    _hideAllRows() {
+    private _hideAllRows(): void {
         this.dom.rows.forEach(row => {
             row.style.display = 'none';
         });
@@ -953,13 +1006,13 @@ export class VirtualScrollGrid {
      * Recycle row elements for the visible range
      * @private
      */
-    _recycleRows() {
+    private _recycleRows(): void {
         const visibleCount = this.lastVisibleIndex - this.firstVisibleIndex + 1;
         
         // Find rows that are being edited and should be preserved
-        const editingRowElements = new Set();
+        const editingRowElements = new Set<HTMLElement>();
         this.editingRows.forEach(taskId => {
-            const row = this.dom.rowContainer.querySelector(`[data-task-id="${taskId}"]`);
+            const row = this.dom.rowContainer.querySelector(`[data-task-id="${taskId}"]`) as HTMLElement | null;
             if (row) {
                 editingRowElements.add(row);
             }
@@ -989,7 +1042,7 @@ export class VirtualScrollGrid {
         // Ensure editing rows outside visible range are still rendered
         // (they're already in the DOM, just need to be positioned correctly)
         this.editingRows.forEach(taskId => {
-            const row = this.dom.rowContainer.querySelector(`[data-task-id="${taskId}"]`);
+            const row = this.dom.rowContainer.querySelector(`[data-task-id="${taskId}"]`) as HTMLElement | null;
             if (row && row.style.display === 'none') {
                 // Find where this task should be in the data array
                 const taskIndex = this.data.findIndex(t => t.id === taskId);
@@ -1005,14 +1058,14 @@ export class VirtualScrollGrid {
     /**
      * Bind task data to a row element
      * @private
-     * @param {HTMLElement} row - The row element
-     * @param {Object} task - The task data
-     * @param {number} index - The data index
+     * @param row - The row element
+     * @param task - The task data
+     * @param index - The data index
      */
-    _bindRowData(row, task, index) {
+    private _bindRowData(row: HTMLElement, task: Task, index: number): void {
         // Update row attributes
-        row.dataset.taskId = task.id;
-        row.dataset.index = index;
+        row.setAttribute('data-task-id', task.id);
+        row.setAttribute('data-index', String(index));
         
         // Update selection state
         const isSelected = this.selectedIds.has(task.id);
@@ -1031,7 +1084,7 @@ export class VirtualScrollGrid {
         
         // Update each cell
         this.options.columns?.forEach(col => {
-            const cell = row.querySelector(`[data-field="${col.field}"]`);
+            const cell = row.querySelector(`[data-field="${col.field}"]`) as HTMLElement | null;
             if (!cell) return;
             
             this._bindCellData(cell, col, task, { isParent, depth, isCollapsed, index });
@@ -1041,49 +1094,49 @@ export class VirtualScrollGrid {
     /**
      * Bind data to a specific cell
      * @private
-     * @param {HTMLElement} cell - The cell element (or input inside)
-     * @param {Object} col - Column definition
-     * @param {Object} task - Task data
-     * @param {Object} meta - Metadata (isParent, depth, etc.)
+     * @param cell - The cell element (or input inside)
+     * @param col - Column definition
+     * @param task - Task data
+     * @param meta - Metadata (isParent, depth, etc.)
      */
-    _bindCellData(cell, col, task, meta) {
+    private _bindCellData(cell: HTMLElement, col: GridColumn, task: Task, meta: CellMeta): void {
         // Handle special column: actions FIRST (before early return)
         if (col.type === VirtualScrollGrid.COLUMN_TYPES.ACTIONS && col.actions) {
             this._bindActionsCell(cell, col, task, meta);
             return; // Actions column doesn't need input handling
         }
         
-        const value = task[col.field];
+        const value = getTaskFieldValue(task, col.field);
         const input = cell.classList.contains('vsg-input') || 
                      cell.classList.contains('vsg-select') ||
                      cell.classList.contains('vsg-checkbox')
-                     ? cell 
-                     : cell.querySelector('.vsg-input, .vsg-select, .vsg-checkbox, .vsg-readonly, .vsg-text');
+                     ? cell as HTMLInputElement | HTMLSelectElement
+                     : cell.querySelector('.vsg-input, .vsg-select, .vsg-checkbox, .vsg-readonly, .vsg-text') as HTMLInputElement | HTMLSelectElement | HTMLElement | null;
         
         if (!input) return;
         
         // Handle different input types
         if (input.classList.contains('vsg-checkbox')) {
             // Checkbox reflects selection state, not task data
-            input.checked = this.selectedIds.has(task.id);
+            (input as HTMLInputElement).checked = this.selectedIds.has(task.id);
         } else if (input.classList.contains('vsg-input') || input.classList.contains('vsg-select')) {
             // Don't update if this cell is being edited
             if (this.editingCell?.taskId === task.id && this.editingCell?.field === col.field) {
                 return;
             }
-            input.value = value ?? '';
+            (input as HTMLInputElement | HTMLSelectElement).value = value ? String(value) : '';
             
             // Handle readonly state for parent tasks
             if (col.readonlyForParent && meta.isParent) {
                 input.classList.add('cell-readonly');
-                input.disabled = true;
+                (input as HTMLInputElement | HTMLSelectElement).disabled = true;
             } else {
                 input.classList.remove('cell-readonly');
-                input.disabled = false;
+                (input as HTMLInputElement | HTMLSelectElement).disabled = false;
             }
         } else {
             // Text/readonly display
-            input.textContent = value ?? '';
+            input.textContent = value ? String(value) : '';
         }
         
         // Handle special column: name with indent and collapse
@@ -1097,9 +1150,9 @@ export class VirtualScrollGrid {
         }
         
         // Handle custom renderer
-        if (col.render) {
+        if (col.renderer) {
             const container = cell.querySelector('.vsg-text, .vsg-readonly') || cell;
-            const rendered = col.render(task, meta);
+            const rendered = col.renderer(task, meta);
             if (typeof rendered === 'string') {
                 container.innerHTML = rendered;
             }
@@ -1110,8 +1163,8 @@ export class VirtualScrollGrid {
      * Bind the name cell with indent and collapse button
      * @private
      */
-    _bindNameCell(cell, task, meta) {
-        const input = cell.querySelector('.vsg-input');
+    private _bindNameCell(cell: HTMLElement, _task: Task, meta: CellMeta): void {
+        const input = cell.querySelector('.vsg-input') as HTMLInputElement | null;
         if (!input) return;
         
         // Calculate indent padding
@@ -1119,7 +1172,7 @@ export class VirtualScrollGrid {
         const collapseWidth = 24;
         
         // Find or create prefix container
-        let prefix = cell.querySelector('.vsg-name-prefix');
+        let prefix = cell.querySelector('.vsg-name-prefix') as HTMLElement | null;
         if (!prefix) {
             prefix = document.createElement('div');
             prefix.className = 'vsg-name-prefix';
@@ -1167,7 +1220,7 @@ export class VirtualScrollGrid {
      * Bind constraint icon to a date cell
      * @private
      */
-    _bindConstraintIcon(cell, col, task, meta) {
+    private _bindConstraintIcon(cell: HTMLElement, col: GridColumn, task: Task, meta: CellMeta): void {
         // Remove existing icon if any
         const existingIcon = cell.querySelector('.vsg-constraint-icon');
         if (existingIcon) {
@@ -1181,7 +1234,7 @@ export class VirtualScrollGrid {
         const constraintDate = task.constraintDate || '';
         
         // Determine which icon to show based on field and constraint type
-        let icon = null;
+        let icon: string | null = null;
         let color = '';
         let title = '';
         
@@ -1234,7 +1287,7 @@ export class VirtualScrollGrid {
         cell.appendChild(iconEl);
         
         // Add padding to input to avoid overlap with icon
-        const input = cell.querySelector('.vsg-input');
+        const input = cell.querySelector('.vsg-input') as HTMLInputElement | null;
         if (input) {
             input.style.paddingRight = '22px';
         }
@@ -1244,8 +1297,8 @@ export class VirtualScrollGrid {
      * Bind action buttons to a cell
      * @private
      */
-    _bindActionsCell(cell, col, task, meta) {
-        const container = cell.querySelector('.vsg-actions');
+    private _bindActionsCell(cell: HTMLElement, col: GridColumn, task: Task, meta: CellMeta): void {
+        const container = cell.querySelector('.vsg-actions') as HTMLElement | null;
         if (!container) return;
         
         if (!col.actions || !Array.isArray(col.actions) || col.actions.length === 0) {
@@ -1300,9 +1353,9 @@ export class VirtualScrollGrid {
     
     /**
      * Set the grid data
-     * @param {Array} tasks - Array of task objects
+     * @param tasks - Array of task objects
      */
-    setData(tasks) {
+    setData(tasks: Task[]): void {
         this.allData = tasks;
         this.data = tasks;
         this._measure();
@@ -1311,9 +1364,9 @@ export class VirtualScrollGrid {
 
     /**
      * Set filtered/visible data (after applying visibility rules)
-     * @param {Array} tasks - Array of visible task objects
+     * @param tasks - Array of visible task objects
      */
-    setVisibleData(tasks) {
+    setVisibleData(tasks: Task[]): void {
         this.data = tasks;
         this._measure();
         this._updateVisibleRows();
@@ -1321,10 +1374,10 @@ export class VirtualScrollGrid {
 
     /**
      * Update selection state
-     * @param {Set} selectedIds - Set of selected task IDs
-     * @param {string} focusedId - Currently focused task ID
+     * @param selectedIds - Set of selected task IDs
+     * @param focusedId - Currently focused task ID
      */
-    setSelection(selectedIds, focusedId = null) {
+    setSelection(selectedIds: Set<string>, focusedId: string | null = null): void {
         this.selectedIds = selectedIds;
         this.focusedId = focusedId;
         this._updateVisibleRows(); // Re-render to show selection
@@ -1332,9 +1385,9 @@ export class VirtualScrollGrid {
 
     /**
      * Scroll to a specific task
-     * @param {string} taskId - The task ID to scroll to
+     * @param taskId - The task ID to scroll to
      */
-    scrollToTask(taskId) {
+    scrollToTask(taskId: string): void {
         const index = this.data.findIndex(t => t.id === taskId);
         if (index === -1) return;
         
@@ -1346,20 +1399,20 @@ export class VirtualScrollGrid {
 
     /**
      * Focus a specific cell for editing
-     * @param {string} taskId - The task ID
-     * @param {string} field - The field/column name to focus
+     * @param taskId - The task ID
+     * @param field - The field/column name to focus
      */
-    focusCell(taskId, field) {
+    focusCell(taskId: string, field: string): void {
         // Check if already visible - immediate focus
-        const existingRow = this.dom.rowContainer.querySelector(`[data-task-id="${taskId}"]`);
+        const existingRow = this.dom.rowContainer.querySelector(`[data-task-id="${taskId}"]`) as HTMLElement | null;
         if (existingRow && existingRow.style.display !== 'none') {
-            const cell = existingRow.querySelector(`[data-field="${field}"]`);
-            const input = cell?.querySelector('.vsg-input, .vsg-select');
+            const cell = existingRow.querySelector(`[data-field="${field}"]`) as HTMLElement | null;
+            const input = cell?.querySelector('.vsg-input, .vsg-select') as HTMLInputElement | HTMLSelectElement | null;
             
             if (input && !input.disabled) {
                 input.focus();
-                if (input.type === 'text' || input.type === 'number') {
-                    input.select();
+                if ((input as HTMLInputElement).type === 'text' || (input as HTMLInputElement).type === 'number') {
+                    (input as HTMLInputElement).select();
                 }
                 this.editingCell = { taskId, field };
                 this.editingRows.add(taskId);
@@ -1372,17 +1425,17 @@ export class VirtualScrollGrid {
         
         // Wait for scroll and render to complete
         requestAnimationFrame(() => {
-            const row = this.dom.rowContainer.querySelector(`[data-task-id="${taskId}"]`);
+            const row = this.dom.rowContainer.querySelector(`[data-task-id="${taskId}"]`) as HTMLElement | null;
             if (!row) return;
             
-            const cell = row.querySelector(`[data-field="${field}"]`);
+            const cell = row.querySelector(`[data-field="${field}"]`) as HTMLElement | null;
             if (!cell) return;
             
-            const input = cell.querySelector('.vsg-input, .vsg-select');
+            const input = cell.querySelector('.vsg-input, .vsg-select') as HTMLInputElement | HTMLSelectElement | null;
             if (input && !input.disabled) {
                 input.focus();
-                if (input.type === 'text' || input.type === 'number') {
-                    input.select();
+                if ((input as HTMLInputElement).type === 'text' || (input as HTMLInputElement).type === 'number') {
+                    (input as HTMLInputElement).select();
                 }
                 this.editingCell = { taskId, field };
                 this.editingRows.add(taskId);
@@ -1393,16 +1446,16 @@ export class VirtualScrollGrid {
     /**
      * Force a full re-render
      */
-    refresh() {
+    refresh(): void {
         this._measure();
         this._updateVisibleRows();
     }
 
     /**
      * Update a single row without full re-render
-     * @param {string} taskId - The task ID to update
+     * @param taskId - The task ID to update
      */
-    updateRow(taskId) {
+    updateRow(taskId: string): void {
         const task = this.data.find(t => t.id === taskId);
         const dataIndex = this.data.findIndex(t => t.id === taskId);
         
@@ -1420,9 +1473,9 @@ export class VirtualScrollGrid {
 
     /**
      * Set scroll position (for sync with Gantt)
-     * @param {number} scrollTop - The scroll position
+     * @param scrollTop - The scroll position
      */
-    setScrollTop(scrollTop) {
+    setScrollTop(scrollTop: number): void {
         if (Math.abs(this.dom.viewport.scrollTop - scrollTop) > 1) {
             this.dom.viewport.scrollTop = scrollTop;
         }
@@ -1430,17 +1483,23 @@ export class VirtualScrollGrid {
 
     /**
      * Get current scroll position
-     * @returns {number} Current scrollTop
+     * @returns Current scrollTop
      */
-    getScrollTop() {
+    getScrollTop(): number {
         return this.scrollTop;
     }
 
     /**
      * Get render statistics (for debugging)
-     * @returns {Object} Stats object
+     * @returns Stats object
      */
-    getStats() {
+    getStats(): {
+        totalTasks: number;
+        visibleRange: string;
+        renderedRows: number;
+        poolSize: number;
+        renderCount: number;
+    } {
         return {
             totalTasks: this.data.length,
             visibleRange: `${this.firstVisibleIndex}-${this.lastVisibleIndex}`,
@@ -1453,15 +1512,13 @@ export class VirtualScrollGrid {
     /**
      * Clean up resources
      */
-    destroy() {
+    destroy(): void {
         if (this._resizeObserver) {
             this._resizeObserver.disconnect();
         }
-        if (this._scrollRAF) {
+        if (this._scrollRAF !== null) {
             cancelAnimationFrame(this._scrollRAF);
         }
         this.container.innerHTML = '';
     }
 }
-
-// Export for module systems

@@ -1,4 +1,3 @@
-// @ts-check
 /**
  * @fileoverview Scheduler Service - Main application orchestrator
  * @module services/SchedulerService
@@ -20,92 +19,113 @@
  * - Maintains view synchronization
  */
 
-import { CPM } from '../core/CPM.js';
-import { DateUtils } from '../core/DateUtils.js';
-import { LINK_TYPES, CONSTRAINT_TYPES } from '../core/Constants.js';
-import { TaskStore } from '../data/TaskStore.js';
-import { CalendarStore } from '../data/CalendarStore.js';
-import { HistoryManager } from '../data/HistoryManager.js';
-import { ToastService } from '../ui/services/ToastService.js';
-import { FileService } from '../ui/services/FileService.js';
-import { KeyboardService } from '../ui/services/KeyboardService.js';
-import { SyncService } from './SyncService.js';
-import { VirtualScrollGrid } from '../ui/components/VirtualScrollGrid.js';
-import { CanvasGantt } from '../ui/components/CanvasGantt.js';
-import { SideDrawer } from '../ui/components/SideDrawer.js';
-import { DependenciesModal } from '../ui/components/DependenciesModal.js';
-import { CalendarModal } from '../ui/components/CalendarModal.js';
+import { CPM } from '../core/CPM';
+import { DateUtils } from '../core/DateUtils';
+import { LINK_TYPES, CONSTRAINT_TYPES } from '../core/Constants';
+import { TaskStore } from '../data/TaskStore';
+import { CalendarStore } from '../data/CalendarStore';
+import { HistoryManager } from '../data/HistoryManager';
+import { ToastService } from '../ui/services/ToastService';
+import { FileService } from '../ui/services/FileService';
+import { KeyboardService } from '../ui/services/KeyboardService';
+import { SyncService } from './SyncService';
+import { VirtualScrollGrid } from '../ui/components/VirtualScrollGrid';
+import { CanvasGantt } from '../ui/components/CanvasGantt';
+import { SideDrawer } from '../ui/components/SideDrawer';
+import { DependenciesModal } from '../ui/components/DependenciesModal';
+import { CalendarModal } from '../ui/components/CalendarModal';
+import type { 
+    Task, 
+    Calendar, 
+    GridColumn, 
+    SchedulerServiceOptions,
+    ViewMode,
+    LinkType,
+    ConstraintType
+} from '../types';
 
 /**
  * Main scheduler service - orchestrates the entire application
- * @class
  */
 export class SchedulerService {
     /**
      * Storage key for localStorage persistence
-     * @type {string}
      */
-    static STORAGE_KEY = 'pro_scheduler_v10';
+    static readonly STORAGE_KEY = 'pro_scheduler_v10';
 
     /**
      * Link types supported
-     * @type {readonly string[]}
-     * @deprecated Use LINK_TYPES from core/Constants.js instead
+     * @deprecated Use LINK_TYPES from core/Constants instead
      */
-    static get LINK_TYPES() {
+    static get LINK_TYPES(): readonly string[] {
         return LINK_TYPES;
     }
 
     /**
      * Constraint types supported
-     * @type {readonly string[]}
-     * @deprecated Use CONSTRAINT_TYPES from core/Constants.js instead
+     * @deprecated Use CONSTRAINT_TYPES from core/Constants instead
      */
-    static get CONSTRAINT_TYPES() {
+    static get CONSTRAINT_TYPES(): readonly string[] {
         return CONSTRAINT_TYPES;
     }
+
+    // =========================================================================
+    // INSTANCE PROPERTIES
+    // =========================================================================
+
+    private options: SchedulerServiceOptions;
+    private isTauri: boolean;
+
+    // Data stores
+    private taskStore!: TaskStore;
+    private calendarStore!: CalendarStore;
+    private historyManager!: HistoryManager;
+
+    // UI services
+    public toastService!: ToastService;  // Public for access from main.ts
+    private fileService!: FileService;
+    private keyboardService: KeyboardService | null = null;
+    private syncService: SyncService | null = null;
+
+    // UI components (initialized in init())
+    public grid: VirtualScrollGrid | null = null;  // Public for access from AppInitializer and UIEventManager
+    public gantt: CanvasGantt | null = null;  // Public for access from AppInitializer and UIEventManager
+    private drawer: SideDrawer | null = null;
+    private dependenciesModal: DependenciesModal | null = null;
+    private calendarModal: CalendarModal | null = null;
+
+    // Selection state (managed here, not in store - UI concern)
+    public selectedIds: Set<string> = new Set();  // Public for access from UIEventManager
+    private focusedId: string | null = null;
+    private anchorId: string | null = null;
+
+    // View state
+    public viewMode: ViewMode = 'Week';  // Public for access from StatsService
+    
+    // Clipboard state
+    private clipboard: Task[] | null = null;              // Array of cloned tasks
+    private clipboardIsCut: boolean = false;              // True if cut operation
+    private clipboardOriginalIds: string[] = [];          // Original IDs for deletion after cut-paste
+
+    // Performance tracking
+    private _lastCalcTime: number = 0;
+    private _renderScheduled: boolean = false;
+    private _isRecalculating: boolean = false;            // Prevent infinite recursion
+
+    // Initialization flag
+    public isInitialized: boolean = false;  // Public for access from UIEventManager
 
     /**
      * Create a new SchedulerService instance
      * 
-     * @param {Object} [options={}] - Configuration options
-     * @param {HTMLElement} [options.gridContainer] - Container for the grid
-     * @param {HTMLElement} [options.ganttContainer] - Container for the Gantt
-     * @param {HTMLElement} [options.drawerContainer] - Container for side drawer
-     * @param {HTMLElement} [options.modalContainer] - Container for modals
-     * @param {boolean} [options.isTauri] - Whether running in Tauri environment
+     * @param options - Configuration options
      */
-    constructor(options = {}) {
+    constructor(options: SchedulerServiceOptions = {} as SchedulerServiceOptions) {
         this.options = options;
         this.isTauri = options.isTauri || false;
 
         // Initialize services
         this._initServices();
-
-        // Selection state (managed here, not in store - UI concern)
-        this.selectedIds = new Set();
-        this.focusedId = null;
-        this.anchorId = null;
-
-        // View state
-        this.viewMode = 'Week';
-        
-        // Clipboard state
-        this.clipboard = null;              // Array of cloned tasks
-        this.clipboardIsCut = false;        // True if cut operation
-        this.clipboardOriginalIds = [];     // Original IDs for deletion after cut-paste
-
-        // UI components (initialized in init())
-        this.grid = null;
-        this.gantt = null;
-        this.drawer = null;
-        this.dependenciesModal = null;
-        this.calendarModal = null;
-
-        // Performance tracking
-        this._lastCalcTime = 0;
-        this._renderScheduled = false;
-        this._isRecalculating = false; // Prevent infinite recursion
 
         // Initialize if containers provided
         if (options.gridContainer && options.ganttContainer) {
@@ -117,7 +137,7 @@ export class SchedulerService {
      * Initialize all services
      * @private
      */
-    _initServices() {
+    private _initServices(): void {
         // Data stores
         this.taskStore = new TaskStore({
             onChange: () => this._onTasksChanged()
@@ -148,8 +168,12 @@ export class SchedulerService {
     /**
      * Initialize the scheduler with UI components
      */
-    init() {
+    init(): void {
         const { gridContainer, ganttContainer, drawerContainer, modalContainer } = this.options;
+
+        if (!gridContainer || !ganttContainer) {
+            throw new Error('gridContainer and ganttContainer are required');
+        }
 
         // Create grid component
         this.grid = new VirtualScrollGrid(gridContainer, {
@@ -168,6 +192,7 @@ export class SchedulerService {
 
         // Create Gantt component
         this.gantt = new CanvasGantt(ganttContainer, {
+            container: ganttContainer,
             rowHeight: 38,
             isParent: (id) => this.taskStore.isParent(id),
             onBarClick: (taskId, e) => this._handleRowClick(taskId, e),
@@ -178,8 +203,16 @@ export class SchedulerService {
 
         // Create sync service
         this.syncService = new SyncService({
-            grid: this.grid,
-            gantt: this.gantt
+            grid: this.grid ? {
+                setScrollTop: (scrollTop: number) => {
+                    this.grid!.setScrollTop(scrollTop);
+                }
+            } : undefined,
+            gantt: this.gantt ? {
+                setScrollTop: (scrollTop: number) => {
+                    this.gantt!.setScrollTop(scrollTop);
+                }
+            } : undefined
         });
 
         // Create side drawer
@@ -208,7 +241,7 @@ export class SchedulerService {
         });
 
         // Note: Keyboard shortcuts are initialized after init() completes
-        // See main.js - they're attached after scheduler initialization
+        // See main.ts - they're attached after scheduler initialization
 
         // Load persisted data
         try {
@@ -277,7 +310,7 @@ export class SchedulerService {
      * Initialize keyboard shortcuts
      * Called after initialization completes to ensure handlers are only attached when ready
      */
-    initKeyboard() {
+    initKeyboard(): void {
         // Ensure we're initialized before attaching handlers
         if (!this.isInitialized) {
             console.warn('[SchedulerService] ⚠️ initKeyboard() called before initialization complete');
@@ -319,73 +352,93 @@ export class SchedulerService {
     /**
      * Get column definitions for the grid
      * @private
-     * @returns {Array<Object>} Column definitions
+     * @returns Column definitions
      */
-    _getColumnDefinitions() {
+    private _getColumnDefinitions(): GridColumn[] {
         return [
             {
-                field: 'drag',
+                id: 'drag',
+                label: '',
+                field: 'drag', // Fixed: must match HTML header data-field
                 type: 'drag',
                 width: 28,
                 align: 'center',
+                editable: false,
             },
             {
+                id: 'checkbox',
+                label: '',
                 field: 'checkbox',
                 type: 'checkbox',
                 width: 30,
                 align: 'center',
+                editable: false,
             },
             {
-                field: 'rowNum',
+                id: 'rowNum',
+                label: '#',
+                field: 'rowNum', // Fixed: must match HTML header data-field
                 type: 'readonly',
                 width: 35,
                 align: 'center',
-                render: (task, meta) => `<span style="color: #94a3b8; font-size: 11px;">${meta.index + 1}</span>`,
+                editable: false,
+                renderer: (_task, meta) => `<span style="color: #94a3b8; font-size: 11px;">${meta.index + 1}</span>`,
             },
             {
+                id: 'name',
+                label: 'Task Name',
                 field: 'name',
                 type: 'text',
                 width: 220,
+                editable: true,
             },
             {
+                id: 'duration',
+                label: 'Duration',
                 field: 'duration',
                 type: 'number',
                 width: 50,
                 align: 'center',
+                editable: true,
                 readonlyForParent: true,
             },
             {
+                id: 'start',
+                label: 'Start',
                 field: 'start',
                 type: 'date',
                 width: 100,
+                editable: true,
                 showConstraintIcon: true,
                 readonlyForParent: true,
             },
             {
+                id: 'end',
+                label: 'End',
                 field: 'end',
                 type: 'date',
                 width: 100,
+                editable: true,
                 showConstraintIcon: true,
                 readonlyForParent: true,
             },
             {
+                id: 'constraintType',
+                label: 'Constraint',
                 field: 'constraintType',
                 type: 'select',
                 width: 80,
-                options: [
-                    { value: 'asap', label: 'ASAP' },
-                    { value: 'snet', label: 'SNET' },
-                    { value: 'snlt', label: 'SNLT' },
-                    { value: 'fnet', label: 'FNET' },
-                    { value: 'fnlt', label: 'FNLT' },
-                    { value: 'mfo', label: 'MFO' },
-                ],
+                editable: true,
+                options: ['asap', 'snet', 'snlt', 'fnet', 'fnlt', 'mfo'],
                 readonlyForParent: true,
             },
             {
-                field: 'actions',
+                id: 'actions',
+                label: 'Actions',
+                field: 'actions', // Fixed: must match HTML header data-field
                 type: 'actions',
                 width: 80,
+                editable: false,
                 actions: [
                     { 
                         id: 'outdent', 
@@ -426,33 +479,33 @@ export class SchedulerService {
 
     /**
      * Get all tasks
-     * @returns {Array<Object>} All tasks
+     * @returns All tasks
      */
-    get tasks() {
+    get tasks(): Task[] {
         return this.taskStore.getAll();
     }
 
     /**
      * Set all tasks
-     * @param {Array<Object>} tasks - Tasks array
+     * @param tasks - Tasks array
      */
-    set tasks(tasks) {
+    set tasks(tasks: Task[]) {
         this.taskStore.setAll(tasks);
     }
 
     /**
      * Get calendar configuration
-     * @returns {Object} Calendar object
+     * @returns Calendar object
      */
-    get calendar() {
+    get calendar(): Calendar {
         return this.calendarStore.get();
     }
 
     /**
      * Set calendar configuration
-     * @param {Object} calendar - Calendar object
+     * @param calendar - Calendar object
      */
-    set calendar(calendar) {
+    set calendar(calendar: Calendar) {
         this.calendarStore.set(calendar);
     }
 
@@ -463,10 +516,10 @@ export class SchedulerService {
     /**
      * Handle row click
      * @private
-     * @param {string} taskId - Task ID
-     * @param {MouseEvent} e - Click event
+     * @param taskId - Task ID
+     * @param e - Click event
      */
-    _handleRowClick(taskId, e) {
+    private _handleRowClick(taskId: string, e: MouseEvent): void {
         // Selection logic here
         if (e.shiftKey && this.anchorId) {
             // Range selection
@@ -507,10 +560,10 @@ export class SchedulerService {
     /**
      * Handle row double-click
      * @private
-     * @param {string} taskId - Task ID
-     * @param {Event} e - Double-click event
+     * @param taskId - Task ID
+     * @param e - Double-click event
      */
-    _handleRowDoubleClick(taskId, e) {
+    private _handleRowDoubleClick(taskId: string, e: MouseEvent): void {
         this.openDrawer(taskId);
     }
 
@@ -525,11 +578,11 @@ export class SchedulerService {
      * Unlike MS Project, we show clear feedback when constraints are applied.
      * 
      * @private
-     * @param {string} taskId - Task ID
-     * @param {string} field - Field name
-     * @param {*} value - New value
+     * @param taskId - Task ID
+     * @param field - Field name
+     * @param value - New value
      */
-    _handleCellChange(taskId, field, value) {
+    private _handleCellChange(taskId: string, field: string, value: unknown): void {
         // Skip checkbox field - it's a visual indicator of selection, not task data
         if (field === 'checkbox') {
             return;
@@ -548,7 +601,7 @@ export class SchedulerService {
             case 'duration':
                 // Duration edit: update duration, CPM will recalculate end
                 // This is standard CPM behavior - no constraint needed
-                const newDuration = Math.max(1, parseInt(value) || 1);
+                const newDuration = Math.max(1, parseInt(String(value)) || 1);
                 this.taskStore.update(taskId, { duration: newDuration });
                 break;
                 
@@ -556,16 +609,17 @@ export class SchedulerService {
                 // Start edit: User is setting a start constraint
                 // Apply SNET (Start No Earlier Than) so CPM respects this date
                 if (value && !isParent) {
+                    const startValue = String(value);
                     // Validate date format
-                    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-                        console.warn('[SchedulerService] Invalid date format:', value);
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(startValue)) {
+                        console.warn('[SchedulerService] Invalid date format:', startValue);
                         return;
                     }
                     
                     this.taskStore.update(taskId, { 
-                        start: value,
+                        start: startValue,
                         constraintType: 'snet',
-                        constraintDate: value 
+                        constraintDate: startValue 
                     });
                     this.toastService.info('Start constraint (SNET) applied');
                 }
@@ -575,20 +629,21 @@ export class SchedulerService {
                 // End edit: User is setting a finish deadline
                 // Apply FNLT (Finish No Later Than) so CPM respects this date
                 if (value && !isParent) {
+                    const endValue = String(value);
                     // Validate date format
-                    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-                        console.warn('[SchedulerService] Invalid date format:', value);
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(endValue)) {
+                        console.warn('[SchedulerService] Invalid date format:', endValue);
                         return;
                     }
                     
                     // Check if deadline is earlier than current start (impossible constraint)
-                    if (task.start && value < task.start) {
+                    if (task.start && endValue < task.start) {
                         this.toastService.warning('Deadline is earlier than start date - schedule may be impossible');
                     }
                     
                     this.taskStore.update(taskId, { 
                         constraintType: 'fnlt',
-                        constraintDate: value 
+                        constraintDate: endValue 
                     });
                     this.toastService.info('Finish deadline (FNLT) applied');
                 }
@@ -596,15 +651,16 @@ export class SchedulerService {
                 
             case 'constraintType':
                 // Constraint type change: if set to ASAP, clear constraint date
-                if (value === 'asap') {
+                const constraintValue = String(value);
+                if (constraintValue === 'asap') {
                     this.taskStore.update(taskId, { 
                         constraintType: 'asap',
-                        constraintDate: '' 
+                        constraintDate: null 
                     });
                     this.toastService.info('Constraint removed - task will schedule based on dependencies');
                 } else {
                     // For other constraint types, just update
-                    this.taskStore.update(taskId, { [field]: value });
+                    this.taskStore.update(taskId, { constraintType: constraintValue as ConstraintType });
                 }
                 break;
                 
@@ -626,11 +682,11 @@ export class SchedulerService {
     /**
      * Handle action button click
      * @private
-     * @param {string} taskId - Task ID
-     * @param {string} action - Action ID
-     * @param {Event} e - Click event
+     * @param taskId - Task ID
+     * @param action - Action ID
+     * @param e - Click event
      */
-    _handleAction(taskId, action, e) {
+    private _handleAction(taskId: string, action: string, e?: MouseEvent): void {
         e?.stopPropagation(); // Prevent row click from firing
         switch (action) {
             case 'indent':
@@ -649,32 +705,117 @@ export class SchedulerService {
     }
 
     /**
-     * Handle drawer update
+     * Handle drawer update with scheduling triangle logic
+     * 
+     * Applies the same constraint logic as grid edits:
+     * - Start edit → SNET constraint
+     * - End edit → FNLT constraint
+     * - Duration edit → Standard CPM
+     * 
      * @private
-     * @param {string} taskId - Task ID
-     * @param {string} field - Field name
-     * @param {*} value - New value
+     * @param taskId - Task ID
+     * @param field - Field name
+     * @param value - New value
      */
-    _handleDrawerUpdate(taskId, field, value) {
+    private _handleDrawerUpdate(taskId: string, field: string, value: unknown): void {
         this.saveCheckpoint();
-        this.taskStore.update(taskId, { [field]: value });
         
-        if (['start', 'end', 'duration'].includes(field)) {
+        const task = this.taskStore.getById(taskId);
+        if (!task) return;
+        
+        const isParent = this.taskStore.isParent(taskId);
+
+        // Handle scheduling triangle fields with proper CPM logic
+        switch (field) {
+            case 'duration':
+                // Duration edit: update duration, CPM will recalculate end
+                const newDuration = Math.max(1, parseInt(String(value)) || 1);
+                this.taskStore.update(taskId, { duration: newDuration });
+                break;
+                
+            case 'start':
+                // Start edit: Apply SNET constraint
+                if (value && !isParent) {
+                    const startValue = String(value);
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(startValue)) {
+                        console.warn('[SchedulerService] Invalid date format:', startValue);
+                        return;
+                    }
+                    
+                    this.taskStore.update(taskId, { 
+                        start: startValue,
+                        constraintType: 'snet',
+                        constraintDate: startValue 
+                    });
+                    this.toastService.info('Start constraint (SNET) applied');
+                }
+                break;
+                
+            case 'end':
+                // End edit: Apply FNLT constraint (deadline)
+                if (value && !isParent) {
+                    const endValue = String(value);
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(endValue)) {
+                        console.warn('[SchedulerService] Invalid date format:', endValue);
+                        return;
+                    }
+                    
+                    if (task.start && endValue < task.start) {
+                        this.toastService.warning('Deadline is earlier than start date - schedule may be impossible');
+                    }
+                    
+                    this.taskStore.update(taskId, { 
+                        constraintType: 'fnlt',
+                        constraintDate: endValue 
+                    });
+                    this.toastService.info('Finish deadline (FNLT) applied');
+                }
+                break;
+                
+            case 'constraintType':
+                // Constraint type change
+                const constraintValue = String(value);
+                if (constraintValue === 'asap') {
+                    this.taskStore.update(taskId, { 
+                        constraintType: 'asap',
+                        constraintDate: null 
+                    });
+                    this.toastService.info('Constraint removed - task will schedule based on dependencies');
+                } else {
+                    this.taskStore.update(taskId, { constraintType: constraintValue as ConstraintType });
+                }
+                break;
+                
+            default:
+                // All other fields - simple update
+                this.taskStore.update(taskId, { [field]: value } as Partial<Task>);
+        }
+
+        // Recalculate if date/duration/constraint changed
+        if (['start', 'end', 'duration', 'constraintType', 'constraintDate'].includes(field)) {
             this.recalculateAll();
         } else {
             this.render();
         }
         
+        // Sync drawer with updated values (dates may have changed from CPM)
+        if (this.drawer && this.drawer.isDrawerOpen() && this.drawer.getActiveTaskId() === taskId) {
+            const updatedTask = this.taskStore.getById(taskId);
+            if (updatedTask) {
+                this.drawer.sync(updatedTask);
+            }
+        }
+
         this.saveData();
     }
 
     /**
      * Handle dependencies save
      * @private
-     * @param {string} taskId - Task ID
-     * @param {Array<Object>} dependencies - Dependencies array
+     * @param taskId - Task ID
+     * @param dependencies - Dependencies array
      */
-    _handleDependenciesSave(taskId, dependencies) {
+    private _handleDependenciesSave(taskId: string, dependencies: Array<{ id: string; type: LinkType; lag: number }>): void {
         this.saveCheckpoint();
         this.taskStore.update(taskId, { dependencies });
         this.recalculateAll();
@@ -685,9 +826,9 @@ export class SchedulerService {
     /**
      * Handle calendar save
      * @private
-     * @param {Object} calendar - Calendar configuration
+     * @param calendar - Calendar configuration
      */
-    _handleCalendarSave(calendar) {
+    private _handleCalendarSave(calendar: Calendar): void {
         this.saveCheckpoint();
         this.calendarStore.set(calendar);
         this.recalculateAll();
@@ -699,11 +840,11 @@ export class SchedulerService {
     /**
      * Handle row move (drag and drop)
      * @private
-     * @param {Array<string>} taskIds - Task IDs being moved
-     * @param {string} targetId - Target task ID
-     * @param {string} position - 'above' or 'below'
+     * @param taskIds - Task IDs being moved
+     * @param targetId - Target task ID
+     * @param position - 'before', 'after', or 'child'
      */
-    _handleRowMove(taskIds, targetId, position) {
+    private _handleRowMove(taskIds: string[], targetId: string, position: 'before' | 'after' | 'child'): void {
         // TODO: Implement drag and drop reordering
         this.toastService.info('Drag and drop reordering coming soon');
     }
@@ -711,11 +852,11 @@ export class SchedulerService {
     /**
      * Handle bar drag in Gantt
      * @private
-     * @param {Object} task - Task object
-     * @param {string} start - New start date
-     * @param {string} end - New end date
+     * @param task - Task object
+     * @param start - New start date
+     * @param end - New end date
      */
-    _handleBarDrag(task, start, end) {
+    private _handleBarDrag(task: Task, start: string, end: string): void {
         this.saveCheckpoint();
         const calendar = this.calendarStore.get();
         const duration = DateUtils.calcWorkDays(start, end, calendar);
@@ -733,11 +874,11 @@ export class SchedulerService {
     /**
      * Handle arrow navigation
      * @private
-     * @param {string} key - 'ArrowUp' or 'ArrowDown'
-     * @param {boolean} shiftKey - Shift key pressed
-     * @param {boolean} ctrlKey - Ctrl key pressed
+     * @param key - 'ArrowUp' or 'ArrowDown'
+     * @param shiftKey - Shift key pressed
+     * @param ctrlKey - Ctrl key pressed
      */
-    _handleArrowNavigation(key, shiftKey, ctrlKey) {
+    private _handleArrowNavigation(key: 'ArrowUp' | 'ArrowDown', shiftKey: boolean, _ctrlKey: boolean): void {
         const visibleTasks = this.taskStore.getVisibleTasks((id) => {
             const task = this.taskStore.getById(id);
             return task?._collapsed || false;
@@ -750,7 +891,7 @@ export class SchedulerService {
             currentIndex = visibleTasks.findIndex(t => t.id === this.focusedId);
         }
 
-        let newIndex;
+        let newIndex: number;
         if (key === 'ArrowUp') {
             newIndex = currentIndex > 0 ? currentIndex - 1 : 0;
         } else {
@@ -788,9 +929,9 @@ export class SchedulerService {
     /**
      * Handle arrow collapse/expand
      * @private
-     * @param {string} key - 'ArrowLeft' or 'ArrowRight'
+     * @param key - 'ArrowLeft' or 'ArrowRight'
      */
-    _handleArrowCollapse(key) {
+    private _handleArrowCollapse(key: 'ArrowLeft' | 'ArrowRight'): void {
         if (!this.focusedId) return;
         
         const task = this.taskStore.getById(this.focusedId);
@@ -806,12 +947,12 @@ export class SchedulerService {
     /**
      * Get all descendant task IDs (recursive)
      * @private
-     * @param {string} parentId - Parent task ID
-     * @returns {Set<string>} Set of descendant task IDs
+     * @param parentId - Parent task ID
+     * @returns Set of descendant task IDs
      */
-    _getAllDescendants(parentId) {
-        const descendants = new Set();
-        const addDescendants = (pid) => {
+    private _getAllDescendants(parentId: string): Set<string> {
+        const descendants = new Set<string>();
+        const addDescendants = (pid: string): void => {
             this.taskStore.getChildren(pid).forEach(child => {
                 descendants.add(child.id);
                 addDescendants(child.id);
@@ -824,11 +965,11 @@ export class SchedulerService {
     /**
      * Get flat list of tasks in display order
      * @private
-     * @returns {Array<Object>} Flat list of tasks
+     * @returns Flat list of tasks
      */
-    _getFlatList() {
-        const result = [];
-        const addTask = (parentId) => {
+    private _getFlatList(): Task[] {
+        const result: Task[] = [];
+        const addTask = (parentId: string | null): void => {
             this.taskStore.getChildren(parentId).forEach(task => {
                 result.push(task);
                 if (!task._collapsed && this.taskStore.isParent(task.id)) {
@@ -851,7 +992,7 @@ export class SchedulerService {
      * Handle Tab indent
      * @private
      */
-    _handleTabIndent() {
+    private _handleTabIndent(): void {
         if (this.selectedIds.size === 0) return;
         
         this.saveCheckpoint();
@@ -886,15 +1027,15 @@ export class SchedulerService {
         if (prevDepth < taskDepth) return;
         
         // Determine new parent for the first task
-        let newParentId = null;
+        let newParentId: string | null = null;
         if (prevDepth === taskDepth) {
             // Same depth - make previous task the parent
             newParentId = prev.id;
         } else {
             // Previous task is at shallower depth - find ancestor at same depth
-            let curr = prev;
+            let curr: Task | undefined = prev;
             while (curr && this.taskStore.getDepth(curr.id) > taskDepth) {
-                curr = allTasks.find(t => t.id === curr.parentId);
+                curr = allTasks.find(t => t.id === curr!.parentId);
             }
             if (curr) {
                 newParentId = curr.id;
@@ -932,7 +1073,7 @@ export class SchedulerService {
      * Handle Shift+Tab outdent
      * @private
      */
-    _handleTabOutdent() {
+    private _handleTabOutdent(): void {
         if (this.selectedIds.size === 0) return;
         
         this.saveCheckpoint();
@@ -952,7 +1093,7 @@ export class SchedulerService {
         // 2. For each top-level selected task, move to grandparent
         //    New parent = current parent's parent (grandparent)
         //    If already at root (parentId is null), skip
-        const updates = [];
+        const updates: Array<{ taskId: string; newParentId: string | null }> = [];
         topLevelSelected.forEach(task => {
             // Validation: prevent outdent on root tasks
             if (!task.parentId) return;
@@ -978,7 +1119,7 @@ export class SchedulerService {
      * Handle Escape key
      * @private
      */
-    _handleEscape() {
+    private _handleEscape(): void {
         // First check if drawer is open
         if (this.drawer && this.drawer.isDrawerOpen()) {
             this.drawer.close();
@@ -1011,9 +1152,9 @@ export class SchedulerService {
     /**
      * Sync scroll from grid to Gantt
      * @private
-     * @param {number} scrollTop - Scroll position
+     * @param scrollTop - Scroll position
      */
-    _syncScrollToGantt(scrollTop) {
+    private _syncScrollToGantt(scrollTop: number): void {
         if (this.syncService) {
             this.syncService.syncGridToGantt(scrollTop);
         }
@@ -1022,9 +1163,9 @@ export class SchedulerService {
     /**
      * Sync scroll from Gantt to grid
      * @private
-     * @param {number} scrollTop - Scroll position
+     * @param scrollTop - Scroll position
      */
-    _syncScrollToGrid(scrollTop) {
+    private _syncScrollToGrid(scrollTop: number): void {
         if (this.syncService) {
             this.syncService.syncGanttToGrid(scrollTop);
         }
@@ -1036,37 +1177,37 @@ export class SchedulerService {
 
     /**
      * Get a task by ID
-     * @param {string} id - Task ID
-     * @returns {Object|undefined} Task or undefined
+     * @param id - Task ID
+     * @returns Task or undefined
      */
-    getTask(id) {
+    getTask(id: string): Task | undefined {
         return this.taskStore.getById(id);
     }
 
     /**
      * Check if task is a parent
-     * @param {string} id - Task ID
-     * @returns {boolean} True if parent
+     * @param id - Task ID
+     * @returns True if parent
      */
-    isParent(id) {
+    isParent(id: string): boolean {
         return this.taskStore.isParent(id);
     }
 
     /**
      * Get task depth
-     * @param {string} id - Task ID
-     * @returns {number} Depth level
+     * @param id - Task ID
+     * @returns Depth level
      */
-    getDepth(id) {
+    getDepth(id: string): number {
         return this.taskStore.getDepth(id);
     }
 
     /**
      * Add a new task
-     * @param {Object} taskData - Task data
-     * @returns {Object} Created task
+     * @param taskData - Task data
+     * @returns Created task
      */
-    addTask(taskData = {}) {
+    addTask(taskData: Partial<Task> = {}): Task | undefined {
         // Debug: Log call with stack trace
         console.log('[SchedulerService] 🔍 addTask() called', {
             isInitialized: this.isInitialized,
@@ -1084,7 +1225,7 @@ export class SchedulerService {
             this.saveCheckpoint();
             
             const today = DateUtils.today();
-            const task = {
+            const task: Task = {
                 id: `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                 name: taskData.name || 'New Task',
                 start: taskData.start || today,
@@ -1094,11 +1235,12 @@ export class SchedulerService {
                 dependencies: taskData.dependencies || [],
                 progress: taskData.progress || 0,
                 constraintType: taskData.constraintType || 'asap',
-                constraintDate: taskData.constraintDate || '',
+                constraintDate: taskData.constraintDate || null,
                 notes: taskData.notes || '',
+                level: taskData.level || 0,
                 _collapsed: false,
                 ...taskData
-            };
+            } as Task;
 
             console.log('[SchedulerService] Adding task:', task);
             this.taskStore.add(task);
@@ -1122,7 +1264,7 @@ export class SchedulerService {
                     this.grid.scrollToTask(task.id);
                     // Focus the name cell for immediate editing
                     setTimeout(() => {
-                        this.grid.focusCell(task.id, 'name');
+                        this.grid!.focusCell(task.id, 'name');
                     }, 100);
                 }
             });
@@ -1131,21 +1273,22 @@ export class SchedulerService {
             
             return task;
         } catch (error) {
-            console.error('[SchedulerService] Error adding task:', error);
-            this.toastService.error('Failed to add task: ' + error.message);
+            const err = error as Error;
+            console.error('[SchedulerService] Error adding task:', err);
+            this.toastService.error('Failed to add task: ' + err.message);
             throw error;
         }
     }
 
     /**
      * Delete a task
-     * @param {string} taskId - Task ID
+     * @param taskId - Task ID
      */
-    deleteTask(taskId) {
+    deleteTask(taskId: string): void {
         this.saveCheckpoint();
         
         // Delete children recursively
-        const deleteRecursive = (id) => {
+        const deleteRecursive = (id: string): void => {
             const children = this.taskStore.getChildren(id);
             children.forEach(child => deleteRecursive(child.id));
             this.taskStore.delete(id);
@@ -1169,14 +1312,14 @@ export class SchedulerService {
      * Delete selected tasks
      * @private
      */
-    _deleteSelected() {
+    private _deleteSelected(): void {
         if (this.selectedIds.size === 0) return;
         
         this.saveCheckpoint();
         const idsToDelete = Array.from(this.selectedIds);
         
         idsToDelete.forEach(id => {
-            const deleteRecursive = (taskId) => {
+            const deleteRecursive = (taskId: string): void => {
                 const children = this.taskStore.getChildren(taskId);
                 children.forEach(child => deleteRecursive(child.id));
                 this.taskStore.delete(taskId);
@@ -1196,9 +1339,9 @@ export class SchedulerService {
 
     /**
      * Toggle collapse state
-     * @param {string} taskId - Task ID
+     * @param taskId - Task ID
      */
-    toggleCollapse(taskId) {
+    toggleCollapse(taskId: string): void {
         const task = this.taskStore.getById(taskId);
         if (!task) return;
 
@@ -1211,9 +1354,9 @@ export class SchedulerService {
 
     /**
      * Indent a task (make it a child)
-     * @param {string} taskId - Task ID
+     * @param taskId - Task ID
      */
-    indent(taskId) {
+    indent(taskId: string): void {
         this.saveCheckpoint();
         
         const task = this.taskStore.getById(taskId);
@@ -1235,16 +1378,16 @@ export class SchedulerService {
         // Can't indent if previous task is at a shallower level
         if (prevDepth < taskDepth) return;
         
-        let newParentId = null;
+        let newParentId: string | null = null;
         
         if (prevDepth === taskDepth) {
             // Previous task is at same level - make it the parent
             newParentId = prev.id;
         } else {
             // Previous task is deeper - walk up its parent chain to find task at taskDepth level
-            let curr = prev;
+            let curr: Task | undefined = prev;
             while (curr && this.taskStore.getDepth(curr.id) > taskDepth) {
-                curr = curr.parentId ? this.taskStore.getById(curr.parentId) : null;
+                curr = curr.parentId ? this.taskStore.getById(curr.parentId) : undefined;
             }
             if (curr) {
                 newParentId = curr.id;
@@ -1261,9 +1404,9 @@ export class SchedulerService {
 
     /**
      * Outdent a task (remove from parent)
-     * @param {string} taskId - Task ID
+     * @param taskId - Task ID
      */
-    outdent(taskId) {
+    outdent(taskId: string): void {
         this.saveCheckpoint();
         
         const task = this.taskStore.getById(taskId);
@@ -1283,7 +1426,7 @@ export class SchedulerService {
     /**
      * Insert task above focused task
      */
-    insertTaskAbove() {
+    insertTaskAbove(): void {
         // Debug: Log call
         console.log('[SchedulerService] 🔍 insertTaskAbove() called', {
             isInitialized: this.isInitialized,
@@ -1313,7 +1456,7 @@ export class SchedulerService {
         const today = DateUtils.today();
         
         // Create new task object
-        const newTask = {
+        const newTask: Task = {
             id: `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             name: 'New Task',
             start: today,
@@ -1323,8 +1466,9 @@ export class SchedulerService {
             dependencies: [],
             progress: 0,
             constraintType: 'asap',
-            constraintDate: '',
+            constraintDate: null,
             notes: '',
+            level: focusedTask.level || 0,
             _collapsed: false
         };
         
@@ -1347,10 +1491,10 @@ export class SchedulerService {
         
         if (this.grid) {
             requestAnimationFrame(() => {
-                this.grid.scrollToTask(newTask.id);
+                this.grid!.scrollToTask(newTask.id);
                 // Focus the name cell for immediate editing
                 setTimeout(() => {
-                    this.grid.focusCell(newTask.id, 'name');
+                    this.grid!.focusCell(newTask.id, 'name');
                 }, 100);
             });
         }
@@ -1358,9 +1502,9 @@ export class SchedulerService {
 
     /**
      * Move selected tasks vertically (reorder within siblings)
-     * @param {number} direction - -1 for up, 1 for down
+     * @param direction - -1 for up, 1 for down
      */
-    moveSelectedTasks(direction) {
+    moveSelectedTasks(direction: number): void {
         if (!this.focusedId) return;
         
         this.saveCheckpoint();
@@ -1397,7 +1541,7 @@ export class SchedulerService {
             // Scroll to focused task
             if (this.grid) {
                 requestAnimationFrame(() => {
-                    this.grid.scrollToTask(this.focusedId);
+                    this.grid!.scrollToTask(this.focusedId!);
                 });
             }
         }
@@ -1406,7 +1550,7 @@ export class SchedulerService {
     /**
      * Enter edit mode for focused task
      */
-    enterEditMode() {
+    enterEditMode(): void {
         if (this.focusedId && this.grid) {
             this.grid.focusCell(this.focusedId, 'name');
         }
@@ -1420,7 +1564,7 @@ export class SchedulerService {
      * Update selection in UI components
      * @private
      */
-    _updateSelection() {
+    private _updateSelection(): void {
         if (this.grid) {
             this.grid.setSelection(this.selectedIds, this.focusedId);
         }
@@ -1432,7 +1576,7 @@ export class SchedulerService {
     /**
      * Copy selected tasks
      */
-    copySelected() {
+    copySelected(): void {
         if (this.selectedIds.size === 0) {
             this.toastService.info('No tasks selected');
             return;
@@ -1441,8 +1585,8 @@ export class SchedulerService {
         const selected = this.taskStore.getAll().filter(t => this.selectedIds.has(t.id));
         
         // Include children - for each selected parent, auto-include ALL descendants (recursively)
-        const payload = new Set();
-        const getDescendants = (parentId) => {
+        const payload = new Set<Task>();
+        const getDescendants = (parentId: string): void => {
             this.taskStore.getChildren(parentId).forEach(child => {
                 payload.add(child);
                 getDescendants(child.id);
@@ -1472,7 +1616,7 @@ export class SchedulerService {
     /**
      * Cut selected tasks
      */
-    cutSelected() {
+    cutSelected(): void {
         if (this.selectedIds.size === 0) {
             this.toastService.info('No tasks selected');
             return;
@@ -1482,8 +1626,8 @@ export class SchedulerService {
         const selected = this.taskStore.getAll().filter(t => this.selectedIds.has(t.id));
         
         // Include children - for each selected parent, auto-include ALL descendants (recursively)
-        const payload = new Set();
-        const getDescendants = (parentId) => {
+        const payload = new Set<Task>();
+        const getDescendants = (parentId: string): void => {
             this.taskStore.getChildren(parentId).forEach(child => {
                 payload.add(child);
                 getDescendants(child.id);
@@ -1515,7 +1659,7 @@ export class SchedulerService {
     /**
      * Paste tasks
      */
-    paste() {
+    paste(): void {
         // 1. If clipboard is empty, show toast "Nothing to paste" and return
         if (!this.clipboard || this.clipboard.length === 0) {
             this.toastService.info('Nothing to paste');
@@ -1537,7 +1681,7 @@ export class SchedulerService {
         }
 
         // 4. Determine target parentId (same parent as focused task, or null)
-        let targetParentId = null;
+        let targetParentId: string | null = null;
         if (this.focusedId) {
             const focusedTask = this.taskStore.getById(this.focusedId);
             if (focusedTask) {
@@ -1546,7 +1690,7 @@ export class SchedulerService {
         }
 
         // 5. Create ID map: oldId → newId (generate unique IDs)
-        const idMap = new Map();
+        const idMap = new Map<string, string>();
         this.clipboard.forEach(task => {
             const newId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             idMap.set(task.id, newId);
@@ -1554,8 +1698,8 @@ export class SchedulerService {
 
         // 6. Clone tasks with new IDs
         const newTasks = this.clipboard.map(task => {
-            const cloned = JSON.parse(JSON.stringify(task));
-            cloned.id = idMap.get(task.id);
+            const cloned = JSON.parse(JSON.stringify(task)) as Task;
+            cloned.id = idMap.get(task.id)!;
             return cloned;
         });
 
@@ -1565,7 +1709,7 @@ export class SchedulerService {
         newTasks.forEach(task => {
             if (task.parentId && idMap.has(task.parentId)) {
                 // Internal parent - use mapped ID
-                task.parentId = idMap.get(task.parentId);
+                task.parentId = idMap.get(task.parentId)!;
             } else {
                 // Top-level of pasted subtree: attach to target parent
                 task.parentId = targetParentId;
@@ -1581,7 +1725,7 @@ export class SchedulerService {
                 .filter(dep => idMap.has(dep.id))
                 .map(dep => ({
                     ...dep,
-                    id: idMap.get(dep.id)
+                    id: idMap.get(dep.id)!
                 }));
         });
 
@@ -1652,9 +1796,9 @@ export class SchedulerService {
 
     /**
      * Open drawer for a task
-     * @param {string} taskId - Task ID
+     * @param taskId - Task ID
      */
-    openDrawer(taskId) {
+    openDrawer(taskId: string): void {
         const task = this.taskStore.getById(taskId);
         if (!task || !this.drawer) return;
         this.drawer.open(task);
@@ -1663,7 +1807,7 @@ export class SchedulerService {
     /**
      * Close drawer
      */
-    closeDrawer() {
+    closeDrawer(): void {
         if (this.drawer) {
             this.drawer.close();
         }
@@ -1671,9 +1815,9 @@ export class SchedulerService {
 
     /**
      * Open dependencies modal
-     * @param {string} taskId - Task ID
+     * @param taskId - Task ID
      */
-    openDependencies(taskId) {
+    openDependencies(taskId: string): void {
         const task = this.taskStore.getById(taskId);
         if (!task || !this.dependenciesModal) return;
         this.dependenciesModal.open(task);
@@ -1682,7 +1826,7 @@ export class SchedulerService {
     /**
      * Open calendar modal
      */
-    openCalendar() {
+    openCalendar(): void {
         if (!this.calendarModal) return;
         this.calendarModal.open(this.calendarStore.get());
     }
@@ -1694,7 +1838,7 @@ export class SchedulerService {
     /**
      * Recalculate all tasks using CPM
      */
-    recalculateAll() {
+    recalculateAll(): void {
         // Prevent infinite recursion
         if (this._isRecalculating) {
             console.warn('[SchedulerService] Recursion detected - skipping recalculateAll()');
@@ -1719,8 +1863,7 @@ export class SchedulerService {
             });
 
             // Temporarily disable onChange to prevent recursion
-            const originalOnChange = this.taskStore.options.onChange;
-            this.taskStore.options.onChange = null;
+            const restoreNotifications = this.taskStore.disableNotifications();
 
             // Update tasks with calculated values
             result.tasks.forEach(calculatedTask => {
@@ -1739,7 +1882,7 @@ export class SchedulerService {
             });
 
             // Restore onChange
-            this.taskStore.options.onChange = originalOnChange;
+            restoreNotifications();
 
             // Roll up parent dates
             this._rollupParentDates();
@@ -1757,7 +1900,7 @@ export class SchedulerService {
      * Roll up parent task dates from children
      * @private
      */
-    _rollupParentDates() {
+    private _rollupParentDates(): void {
         const tasks = this.taskStore.getAll();
         const parents = tasks.filter(t => this.taskStore.isParent(t.id));
 
@@ -1785,7 +1928,7 @@ export class SchedulerService {
      * Handle tasks changed event from TaskStore
      * @private
      */
-    _onTasksChanged() {
+    private _onTasksChanged(): void {
         // Prevent recursion - if we're already recalculating, skip
         if (this._isRecalculating) {
             return;
@@ -1800,7 +1943,7 @@ export class SchedulerService {
      * Handle calendar changed event from CalendarStore
      * @private
      */
-    _onCalendarChanged() {
+    private _onCalendarChanged(): void {
         // Calendar changed - trigger recalculation
         this.recalculateAll();
         this.render();
@@ -1813,17 +1956,13 @@ export class SchedulerService {
     /**
      * Render all views
      */
-    render() {
+    render(): void {
         // Batch renders for performance
         if (this._renderScheduled) return;
         
         this._renderScheduled = true;
         requestAnimationFrame(() => {
             this._renderScheduled = false;
-            
-            // Get all tasks (not just visible) for the grid
-            // The grid handles its own visibility filtering
-            const allTasks = this.taskStore.getAll();
             
             // Get visible tasks for hierarchy-aware display
             const tasks = this.taskStore.getVisibleTasks((id) => {
@@ -1852,7 +1991,7 @@ export class SchedulerService {
     /**
      * Load data from localStorage
      */
-    loadData() {
+    loadData(): void {
         console.log('[SchedulerService] 🔍 loadData() called', {
             isInitialized: this.isInitialized,
             stackTrace: new Error().stack
@@ -1861,7 +2000,7 @@ export class SchedulerService {
         try {
             const saved = localStorage.getItem(SchedulerService.STORAGE_KEY);
             if (saved) {
-                const parsed = JSON.parse(saved);
+                const parsed = JSON.parse(saved) as { tasks?: Task[]; calendar?: Calendar; savedAt?: string };
                 const taskCount = parsed.tasks ? parsed.tasks.length : 0;
                 console.log('[SchedulerService] 🔍 Loading data from localStorage', {
                     taskCount,
@@ -1871,10 +2010,9 @@ export class SchedulerService {
                 
                 if (parsed.tasks) {
                     // Temporarily disable onChange to prevent recursion during load
-                    const originalOnChange = this.taskStore.options.onChange;
-                    this.taskStore.options.onChange = null;
+                    const restoreNotifications = this.taskStore.disableNotifications();
                     this.taskStore.setAll(parsed.tasks);
-                    this.taskStore.options.onChange = originalOnChange;
+                    restoreNotifications();
                     console.log('[SchedulerService] ✅ Loaded', parsed.tasks.length, 'tasks from localStorage');
                 }
                 if (parsed.calendar) {
@@ -1889,9 +2027,12 @@ export class SchedulerService {
             console.error('[SchedulerService] Load data failed:', err);
             // Don't create sample data if load failed - might cause more errors
             // Just start with empty tasks
+            // @ts-expect-error - Accessing private property for recursion prevention
             const originalOnChange = this.taskStore.options.onChange;
-            this.taskStore.options.onChange = null;
+            // @ts-expect-error - Accessing private property for recursion prevention
+            this.taskStore.options.onChange = undefined;
             this.taskStore.setAll([]);
+            // @ts-expect-error - Accessing private property for recursion prevention
             this.taskStore.options.onChange = originalOnChange;
         }
     }
@@ -1899,7 +2040,7 @@ export class SchedulerService {
     /**
      * Save data to localStorage
      */
-    saveData() {
+    saveData(): void {
         try {
             const data = {
                 tasks: this.taskStore.getAll(),
@@ -1916,7 +2057,7 @@ export class SchedulerService {
      * Create sample data for first-time users
      * @private
      */
-    _createSampleData() {
+    private _createSampleData(): void {
         console.log('[SchedulerService] 🔍 _createSampleData() called', {
             isInitialized: this.isInitialized,
             stackTrace: new Error().stack
@@ -1925,7 +2066,7 @@ export class SchedulerService {
         const today = DateUtils.today();
         const calendar = this.calendarStore.get(); // Get calendar from store
         
-        const tasks = [
+        const tasks: Task[] = [
             {
                 id: 'sample_1',
                 name: 'Project Setup',
@@ -1936,8 +2077,9 @@ export class SchedulerService {
                 dependencies: [],
                 progress: 0,
                 constraintType: 'asap',
-                constraintDate: '',
+                constraintDate: null,
                 notes: 'Initial project setup and planning',
+                level: 0,
                 _collapsed: false,
             },
             {
@@ -1950,8 +2092,9 @@ export class SchedulerService {
                 dependencies: [{ id: 'sample_1', type: 'FS', lag: 0 }],
                 progress: 0,
                 constraintType: 'asap',
-                constraintDate: '',
+                constraintDate: null,
                 notes: '',
+                level: 0,
                 _collapsed: false,
             },
         ];
@@ -1959,10 +2102,9 @@ export class SchedulerService {
         console.log('[SchedulerService] Creating sample data:', tasks.length, 'tasks');
         
         // Temporarily disable onChange to prevent recursion
-        const originalOnChange = this.taskStore.options.onChange;
-        this.taskStore.options.onChange = null;
+        const restoreNotifications = this.taskStore.disableNotifications();
         this.taskStore.setAll(tasks);
-        this.taskStore.options.onChange = originalOnChange;
+        restoreNotifications();
         
         // Recalculate after a brief delay to ensure everything is set up
         setTimeout(() => {
@@ -1984,7 +2126,7 @@ export class SchedulerService {
     /**
      * Save checkpoint for undo/redo
      */
-    saveCheckpoint() {
+    saveCheckpoint(): void {
         const snapshot = JSON.stringify({
             tasks: this.taskStore.getAll(),
             calendar: this.calendarStore.get(),
@@ -1995,7 +2137,7 @@ export class SchedulerService {
     /**
      * Undo last action
      */
-    undo() {
+    undo(): void {
         const currentSnapshot = JSON.stringify({
             tasks: this.taskStore.getAll(),
             calendar: this.calendarStore.get(),
@@ -2007,7 +2149,7 @@ export class SchedulerService {
             return;
         }
 
-        const previous = JSON.parse(previousSnapshot);
+        const previous = JSON.parse(previousSnapshot) as { tasks: Task[]; calendar?: Calendar };
         this.taskStore.setAll(previous.tasks);
         if (previous.calendar) {
             this.calendarStore.set(previous.calendar);
@@ -2022,7 +2164,7 @@ export class SchedulerService {
     /**
      * Redo last undone action
      */
-    redo() {
+    redo(): void {
         const currentSnapshot = JSON.stringify({
             tasks: this.taskStore.getAll(),
             calendar: this.calendarStore.get(),
@@ -2034,7 +2176,7 @@ export class SchedulerService {
             return;
         }
 
-        const next = JSON.parse(nextSnapshot);
+        const next = JSON.parse(nextSnapshot) as { tasks: Task[]; calendar?: Calendar };
         this.taskStore.setAll(next.tasks);
         if (next.calendar) {
             this.calendarStore.set(next.calendar);
@@ -2052,9 +2194,9 @@ export class SchedulerService {
 
     /**
      * Save to file
-     * @returns {Promise<void>}
+     * @returns Promise that resolves when saved
      */
-    async saveToFile() {
+    async saveToFile(): Promise<void> {
         try {
             await this.fileService.saveToFile({
                 tasks: this.taskStore.getAll(),
@@ -2067,9 +2209,9 @@ export class SchedulerService {
 
     /**
      * Open from file
-     * @returns {Promise<void>}
+     * @returns Promise that resolves when loaded
      */
-    async openFromFile() {
+    async openFromFile(): Promise<void> {
         try {
             const data = await this.fileService.openFromFile();
             if (data) {
@@ -2091,7 +2233,7 @@ export class SchedulerService {
     /**
      * Export as download
      */
-    exportAsDownload() {
+    exportAsDownload(): void {
         this.fileService.exportAsDownload({
             tasks: this.taskStore.getAll(),
             calendar: this.calendarStore.get(),
@@ -2100,10 +2242,10 @@ export class SchedulerService {
 
     /**
      * Import from file
-     * @param {File} file - File object
-     * @returns {Promise<void>}
+     * @param file - File object
+     * @returns Promise that resolves when imported
      */
-    async importFromFile(file) {
+    async importFromFile(file: File): Promise<void> {
         try {
             const data = await this.fileService.importFromFile(file);
             this.saveCheckpoint();
@@ -2122,10 +2264,10 @@ export class SchedulerService {
 
     /**
      * Import from MS Project XML
-     * @param {File} file - XML file
-     * @returns {Promise<void>}
+     * @param file - XML file
+     * @returns Promise that resolves when imported
      */
-    async importFromMSProjectXML(file) {
+    async importFromMSProjectXML(file: File): Promise<void> {
         try {
             const data = await this.fileService.importFromMSProjectXML(file);
             this.saveCheckpoint();
@@ -2141,7 +2283,7 @@ export class SchedulerService {
     /**
      * Export to MS Project XML
      */
-    exportToMSProjectXML() {
+    exportToMSProjectXML(): void {
         this.fileService.exportToMSProjectXML({
             tasks: this.taskStore.getAll(),
             calendar: this.calendarStore.get(),
@@ -2155,8 +2297,8 @@ export class SchedulerService {
     /**
      * Zoom in (change to more detailed view)
      */
-    zoomIn() {
-        const modes = ['Month', 'Week', 'Day'];
+    zoomIn(): void {
+        const modes: ViewMode[] = ['Month', 'Week', 'Day'];
         const currentIndex = modes.indexOf(this.viewMode);
         if (currentIndex < modes.length - 1) {
             this.viewMode = modes[currentIndex + 1];
@@ -2170,8 +2312,8 @@ export class SchedulerService {
     /**
      * Zoom out (change to less detailed view)
      */
-    zoomOut() {
-        const modes = ['Month', 'Week', 'Day'];
+    zoomOut(): void {
+        const modes: ViewMode[] = ['Month', 'Week', 'Day'];
         const currentIndex = modes.indexOf(this.viewMode);
         if (currentIndex > 0) {
             this.viewMode = modes[currentIndex - 1];
@@ -2184,9 +2326,9 @@ export class SchedulerService {
 
     /**
      * Set view mode
-     * @param {string} mode - View mode: 'Day', 'Week', or 'Month'
+     * @param mode - View mode: 'Day', 'Week', or 'Month'
      */
-    setViewMode(mode) {
+    setViewMode(mode: ViewMode): void {
         if (['Day', 'Week', 'Month'].includes(mode)) {
             this.viewMode = mode;
             if (this.gantt) {
@@ -2198,9 +2340,15 @@ export class SchedulerService {
 
     /**
      * Get performance statistics
-     * @returns {Object} Stats object
+     * @returns Stats object
      */
-    getStats() {
+    getStats(): {
+        taskCount: number;
+        visibleCount: number;
+        lastCalcTime: string;
+        gridStats?: unknown;
+        ganttStats?: unknown;
+    } {
         return {
             taskCount: this.taskStore.getAll().length,
             visibleCount: this.taskStore.getVisibleTasks((id) => {
@@ -2215,14 +2363,13 @@ export class SchedulerService {
 
     /**
      * Generate mock tasks for testing
-     * @param {number} count - Number of tasks to generate
+     * @param count - Number of tasks to generate
      */
-    generateMockTasks(count) {
+    generateMockTasks(count: number): void {
         this.saveCheckpoint();
         
-        const today = new Date();
         const calendar = this.calendarStore.get();
-        const tasks = [];
+        const tasks: Task[] = [];
         
         for (let i = 0; i < count; i++) {
             const duration = Math.floor(Math.random() * 10) + 1;
@@ -2230,7 +2377,7 @@ export class SchedulerService {
             const startDate = DateUtils.addWorkDays(DateUtils.today(), startOffset, calendar);
             const endDate = DateUtils.addWorkDays(startDate, duration - 1, calendar);
             
-            const task = {
+            const task: Task = {
                 id: `mock_${i}_${Date.now()}`,
                 name: `Task ${i + 1} - ${this._randomTaskName()}`,
                 start: startDate,
@@ -2240,8 +2387,9 @@ export class SchedulerService {
                 dependencies: [],
                 progress: Math.floor(Math.random() * 100),
                 constraintType: 'asap',
-                constraintDate: '',
+                constraintDate: null,
                 notes: '',
+                level: 0,
                 _collapsed: false,
             };
             
@@ -2273,9 +2421,9 @@ export class SchedulerService {
     /**
      * Generate random task name for mock data
      * @private
-     * @returns {string} Random task name
+     * @returns Random task name
      */
-    _randomTaskName() {
+    private _randomTaskName(): string {
         const prefixes = ['Install', 'Frame', 'Pour', 'Paint', 'Finish', 'Inspect', 'Test', 'Review'];
         const suffixes = ['Foundation', 'Walls', 'Roof', 'Windows', 'Doors', 'Electrical', 'Plumbing', 'HVAC'];
         return `${prefixes[Math.floor(Math.random() * prefixes.length)]} ${suffixes[Math.floor(Math.random() * suffixes.length)]}`;
@@ -2284,7 +2432,7 @@ export class SchedulerService {
     /**
      * Clean up resources
      */
-    destroy() {
+    destroy(): void {
         if (this.keyboardService) {
             this.keyboardService.detach();
         }
@@ -2295,4 +2443,3 @@ export class SchedulerService {
         if (this.calendarModal) this.calendarModal.destroy();
     }
 }
-

@@ -1,0 +1,230 @@
+/**
+ * @fileoverview Keyboard shortcut service - handles keyboard navigation and shortcuts
+ * @module ui/services/KeyboardService
+ */
+
+/**
+ * Keyboard service options
+ */
+export interface KeyboardServiceOptions {
+  onUndo?: () => void;
+  onRedo?: () => void;
+  onDelete?: () => void;
+  onCopy?: () => void;
+  onCut?: () => void;
+  onPaste?: () => void;
+  onInsert?: () => void;
+  onArrowUp?: (shiftKey: boolean, ctrlKey: boolean) => void;
+  onArrowDown?: (shiftKey: boolean, ctrlKey: boolean) => void;
+  onArrowLeft?: () => void;
+  onArrowRight?: () => void;
+  onTab?: () => void;
+  onShiftTab?: () => void;
+  onCtrlArrowUp?: () => void;
+  onCtrlArrowDown?: () => void;
+  onF2?: () => void;
+  onEscape?: () => void;
+  isAppReady?: () => boolean;
+}
+
+/**
+ * Keyboard service for handling keyboard shortcuts and navigation
+ */
+export class KeyboardService {
+  private options: KeyboardServiceOptions;
+  private isEnabled: boolean;
+  private _boundHandler: (e: KeyboardEvent) => void;
+
+  /**
+   * @param options - Configuration
+   */
+  constructor(options: KeyboardServiceOptions = {}) {
+    this.options = options;
+    this.isEnabled = true;
+    this._boundHandler = this._handleKeyDown.bind(this);
+    this._attach();
+  }
+
+  /**
+   * Attach keyboard event listener
+   * @private
+   */
+  private _attach(): void {
+    document.addEventListener('keydown', this._boundHandler);
+  }
+
+  /**
+   * Detach keyboard event listener
+   */
+  detach(): void {
+    document.removeEventListener('keydown', this._boundHandler);
+  }
+
+  /**
+   * Enable keyboard shortcuts
+   */
+  enable(): void {
+    this.isEnabled = true;
+  }
+
+  /**
+   * Disable keyboard shortcuts
+   */
+  disable(): void {
+    this.isEnabled = false;
+  }
+
+  /**
+   * Handle keydown events
+   * @private
+   * @param e - Keyboard event
+   */
+  private _handleKeyDown(e: KeyboardEvent): void {
+    if (!this.isEnabled) return;
+    
+    // Guard: Don't process keyboard shortcuts if app isn't ready
+    if (this.options.isAppReady && !this.options.isAppReady()) {
+      return;
+    }
+
+    const isEditing = this._isEditing(e.target as HTMLElement);
+    const isCtrl = e.ctrlKey || e.metaKey;
+
+    // Undo/Redo (always active)
+    if (isCtrl && e.key === 'z' && !e.shiftKey) {
+      e.preventDefault();
+      if (this.options.onUndo) this.options.onUndo();
+      return;
+    }
+
+    if ((isCtrl && e.key === 'y') || (isCtrl && e.shiftKey && e.key === 'z')) {
+      e.preventDefault();
+      if (this.options.onRedo) this.options.onRedo();
+      return;
+    }
+
+    // Skip other shortcuts when editing (except undo/redo)
+    if (isEditing) return;
+
+    // Escape
+    if (e.key === 'Escape') {
+      if (this.options.onEscape) {
+        this.options.onEscape();
+      }
+      return;
+    }
+
+    // Delete selected
+    if ((e.key === 'Delete' || e.key === 'Backspace') && this.options.onDelete) {
+      e.preventDefault();
+      this.options.onDelete();
+      return;
+    }
+
+    // Tab = indent, Shift+Tab = outdent
+    // Only trigger when tasks are selected AND focus is not inside an input field
+    if (e.key === 'Tab' && this.options.onTab && !isEditing) {
+      e.preventDefault();
+      if (e.shiftKey) {
+        if (this.options.onShiftTab) this.options.onShiftTab();
+      } else {
+        this.options.onTab();
+      }
+      return;
+    }
+
+    // Copy (Ctrl+C)
+    if (isCtrl && e.key === 'c' && this.options.onCopy) {
+      e.preventDefault();
+      this.options.onCopy();
+      return;
+    }
+
+    // Cut (Ctrl+X)
+    if (isCtrl && e.key === 'x' && this.options.onCut) {
+      e.preventDefault();
+      this.options.onCut();
+      return;
+    }
+
+    // Paste (Ctrl+V)
+    if (isCtrl && e.key === 'v' && this.options.onPaste) {
+      e.preventDefault();
+      this.options.onPaste();
+      return;
+    }
+
+    // Insert key or Ctrl+I / Cmd+I - add task above
+    if ((e.key === 'Insert' || (isCtrl && e.key === 'i')) && this.options.onInsert) {
+      console.log('[KeyboardService] 🔍 Insert key pressed', {
+        key: e.key,
+        isAppReady: this.options.isAppReady ? this.options.isAppReady() : 'not checked',
+        stackTrace: new Error().stack
+      });
+      e.preventDefault();
+      this.options.onInsert();
+      return;
+    }
+
+    // Ctrl+Arrow Up/Down - move task
+    if (isCtrl && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      if (e.key === 'ArrowUp' && this.options.onCtrlArrowUp) {
+        e.preventDefault();
+        this.options.onCtrlArrowUp();
+        return;
+      }
+      if (e.key === 'ArrowDown' && this.options.onCtrlArrowDown) {
+        e.preventDefault();
+        this.options.onCtrlArrowDown();
+        return;
+      }
+    }
+
+    // Arrow key navigation (up/down)
+    if (e.key === 'ArrowUp' && this.options.onArrowUp) {
+      e.preventDefault();
+      this.options.onArrowUp(e.shiftKey, isCtrl);
+      return;
+    }
+
+    if (e.key === 'ArrowDown' && this.options.onArrowDown) {
+      e.preventDefault();
+      this.options.onArrowDown(e.shiftKey, isCtrl);
+      return;
+    }
+
+    // Arrow Left/Right - collapse/expand
+    if (e.key === 'ArrowLeft' && this.options.onArrowLeft) {
+      e.preventDefault();
+      this.options.onArrowLeft();
+      return;
+    }
+
+    if (e.key === 'ArrowRight' && this.options.onArrowRight) {
+      e.preventDefault();
+      this.options.onArrowRight();
+      return;
+    }
+
+    // F2 - enter edit mode
+    if (e.key === 'F2' && this.options.onF2) {
+      e.preventDefault();
+      this.options.onF2();
+      return;
+    }
+  }
+
+  /**
+   * Check if user is currently editing (typing in input)
+   * @private
+   * @param target - Event target element
+   * @returns True if editing
+   */
+  private _isEditing(target: HTMLElement): boolean {
+    return target.classList.contains('vsg-input') ||
+           target.classList.contains('form-input') ||
+           target.tagName === 'INPUT' ||
+           target.tagName === 'TEXTAREA' ||
+           target.tagName === 'SELECT';
+  }
+}

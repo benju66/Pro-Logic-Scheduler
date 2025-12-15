@@ -1,7 +1,6 @@
-// @ts-check
 /**
  * ============================================================================
- * CalendarModal.js
+ * CalendarModal.ts
  * ============================================================================
  * 
  * Modal dialog for configuring the project calendar.
@@ -14,33 +13,68 @@
  * @version 2.0.0 - Ferrari Engine
  */
 
+import type { Calendar } from '../../types';
+
+/**
+ * Calendar modal options
+ */
+export interface CalendarModalOptions {
+  container?: HTMLElement;
+  onSave?: (calendar: Calendar) => void;
+}
+
+/**
+ * Temporary calendar state (exceptions stored as strings for simplicity)
+ */
+interface TempCalendar {
+  workingDays: number[];
+  exceptions: Record<string, string>; // date -> description string
+}
+
+/**
+ * Calendar modal DOM references
+ */
+interface CalendarModalDOM {
+  weekdayGrid: HTMLElement;
+  workWeekSummary: HTMLElement;
+  exceptionDate: HTMLInputElement;
+  exceptionDesc: HTMLInputElement;
+  addExceptionBtn: HTMLButtonElement;
+  exceptionsBody: HTMLElement;
+  closeBtn: HTMLElement;
+  cancelBtn: HTMLButtonElement;
+  saveBtn: HTMLButtonElement;
+}
+
 export class CalendarModal {
     
     /**
      * Day names for display
      */
-    static DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    static readonly DAY_NAMES: readonly string[] = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     
     /**
      * Day abbreviations for buttons
      */
-    static DAY_ABBREVS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+    static readonly DAY_ABBREVS: readonly string[] = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+
+    private options: CalendarModalOptions;
+    private container: HTMLElement;
+    private element!: HTMLDialogElement; // Initialized in _buildDOM()
+    private dom!: CalendarModalDOM; // Initialized in _buildDOM()
+    private tempCalendar: TempCalendar = {
+        workingDays: [1, 2, 3, 4, 5],
+        exceptions: {},
+    };
 
     /**
      * Create a new CalendarModal instance
      * 
-     * @param {Object} options - Configuration options
-     * @param {HTMLElement} options.container - Parent container for the modal
-     * @param {Function} options.onSave - Callback when calendar is saved (calendar)
+     * @param options - Configuration options
      */
-    constructor(options = {}) {
+    constructor(options: CalendarModalOptions = {}) {
         this.options = options;
         this.container = options.container || document.body;
-        
-        this.tempCalendar = {
-            workingDays: [1, 2, 3, 4, 5],
-            exceptions: {},
-        };
         
         this._buildDOM();
         this._bindEvents();
@@ -50,7 +84,7 @@ export class CalendarModal {
      * Build the modal DOM structure
      * @private
      */
-    _buildDOM() {
+    private _buildDOM(): void {
         this.element = document.createElement('dialog');
         this.element.className = 'modal-dialog calendar-modal';
         this.element.innerHTML = `
@@ -155,16 +189,22 @@ export class CalendarModal {
         this.container.appendChild(this.element);
         
         // Cache DOM references
+        const getElement = <T extends HTMLElement>(id: string): T => {
+            const el = this.element.querySelector(`#${id}`) as T;
+            if (!el) throw new Error(`Element #${id} not found`);
+            return el;
+        };
+
         this.dom = {
-            weekdayGrid: this.element.querySelector('#weekday-grid'),
-            workWeekSummary: this.element.querySelector('#work-week-summary'),
-            exceptionDate: this.element.querySelector('#exception-date'),
-            exceptionDesc: this.element.querySelector('#exception-desc'),
-            addExceptionBtn: this.element.querySelector('#add-exception-btn'),
-            exceptionsBody: this.element.querySelector('#exceptions-body'),
-            closeBtn: this.element.querySelector('.modal-close'),
-            cancelBtn: this.element.querySelector('#cancel-btn'),
-            saveBtn: this.element.querySelector('#save-btn'),
+            weekdayGrid: getElement<HTMLElement>('weekday-grid'),
+            workWeekSummary: getElement<HTMLElement>('work-week-summary'),
+            exceptionDate: getElement<HTMLInputElement>('exception-date'),
+            exceptionDesc: getElement<HTMLInputElement>('exception-desc'),
+            addExceptionBtn: getElement<HTMLButtonElement>('add-exception-btn'),
+            exceptionsBody: getElement<HTMLElement>('exceptions-body'),
+            closeBtn: this.element.querySelector('.modal-close') as HTMLElement,
+            cancelBtn: getElement<HTMLButtonElement>('cancel-btn'),
+            saveBtn: getElement<HTMLButtonElement>('save-btn'),
         };
     }
 
@@ -172,7 +212,7 @@ export class CalendarModal {
      * Bind event listeners
      * @private
      */
-    _bindEvents() {
+    private _bindEvents(): void {
         // Close buttons
         this.dom.closeBtn.addEventListener('click', () => this.close());
         this.dom.cancelBtn.addEventListener('click', () => this.close());
@@ -184,21 +224,21 @@ export class CalendarModal {
         this.dom.addExceptionBtn.addEventListener('click', () => this._addException());
         
         // Enter key in description field
-        this.dom.exceptionDesc.addEventListener('keydown', (e) => {
+        this.dom.exceptionDesc.addEventListener('keydown', (e: KeyboardEvent) => {
             if (e.key === 'Enter') {
                 this._addException();
             }
         });
         
         // Close on backdrop click
-        this.element.addEventListener('click', (e) => {
+        this.element.addEventListener('click', (e: MouseEvent) => {
             if (e.target === this.element) {
                 this.close();
             }
         });
         
         // Close on Escape
-        this.element.addEventListener('keydown', (e) => {
+        this.element.addEventListener('keydown', (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
                 this.close();
             }
@@ -209,7 +249,7 @@ export class CalendarModal {
      * Render the modal content
      * @private
      */
-    _render() {
+    private _render(): void {
         this._renderWeekdays();
         this._renderExceptions();
         this._updateWorkWeekSummary();
@@ -219,7 +259,7 @@ export class CalendarModal {
      * Render weekday toggle buttons
      * @private
      */
-    _renderWeekdays() {
+    private _renderWeekdays(): void {
         const grid = this.dom.weekdayGrid;
         
         grid.innerHTML = CalendarModal.DAY_NAMES.map((day, index) => {
@@ -240,7 +280,7 @@ export class CalendarModal {
         // Bind click events
         grid.querySelectorAll('.weekday-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                const dayIndex = parseInt(btn.dataset.day);
+                const dayIndex = parseInt(btn.getAttribute('data-day') || '0');
                 this._toggleWeekday(dayIndex);
             });
         });
@@ -250,7 +290,7 @@ export class CalendarModal {
      * Toggle a weekday working status
      * @private
      */
-    _toggleWeekday(dayIndex) {
+    private _toggleWeekday(dayIndex: number): void {
         const index = this.tempCalendar.workingDays.indexOf(dayIndex);
         
         if (index === -1) {
@@ -272,7 +312,7 @@ export class CalendarModal {
      * Update work week summary text
      * @private
      */
-    _updateWorkWeekSummary() {
+    private _updateWorkWeekSummary(): void {
         const workDays = this.tempCalendar.workingDays
             .map(i => CalendarModal.DAY_NAMES[i])
             .join(', ');
@@ -292,7 +332,7 @@ export class CalendarModal {
      * Render exceptions list
      * @private
      */
-    _renderExceptions() {
+    private _renderExceptions(): void {
         const tbody = this.dom.exceptionsBody;
         const dates = Object.keys(this.tempCalendar.exceptions).sort();
         
@@ -334,8 +374,10 @@ export class CalendarModal {
         // Bind remove buttons
         tbody.querySelectorAll('.remove-exception-btn').forEach(btn => {
             btn.addEventListener('click', () => {
-                const date = btn.dataset.date;
-                this._removeException(date);
+                const date = btn.getAttribute('data-date');
+                if (date) {
+                    this._removeException(date);
+                }
             });
         });
     }
@@ -344,7 +386,7 @@ export class CalendarModal {
      * Add a new exception
      * @private
      */
-    _addException() {
+    private _addException(): void {
         const date = this.dom.exceptionDate.value;
         const desc = this.dom.exceptionDesc.value.trim();
         
@@ -360,7 +402,7 @@ export class CalendarModal {
             return;
         }
         
-        // Add exception
+        // Add exception (stored as string for simplicity)
         this.tempCalendar.exceptions[date] = desc;
         
         // Clear inputs
@@ -376,7 +418,7 @@ export class CalendarModal {
      * Remove an exception
      * @private
      */
-    _removeException(date) {
+    private _removeException(date: string): void {
         delete this.tempCalendar.exceptions[date];
         this._renderExceptions();
     }
@@ -385,7 +427,7 @@ export class CalendarModal {
      * Show error message (toast-style)
      * @private
      */
-    _showError(message) {
+    private _showError(message: string): void {
         // Simple alert for now - could be replaced with toast
         console.warn(message);
     }
@@ -394,7 +436,7 @@ export class CalendarModal {
      * Format date for display
      * @private
      */
-    _formatDate(dateStr) {
+    private _formatDate(dateStr: string): string {
         const date = new Date(dateStr + 'T12:00:00');
         return date.toLocaleDateString('en-US', { 
             month: 'short', 
@@ -407,7 +449,7 @@ export class CalendarModal {
      * Escape HTML special characters
      * @private
      */
-    _escapeHtml(str) {
+    private _escapeHtml(str: string): string {
         if (!str) return '';
         return str.replace(/&/g, '&amp;')
                   .replace(/</g, '&lt;')
@@ -419,11 +461,21 @@ export class CalendarModal {
      * Save calendar and close
      * @private
      */
-    _save() {
+    private _save(): void {
         if (this.options.onSave) {
+            // Convert exceptions from string map to CalendarException objects
+            const exceptions: Record<string, { date: string; working: boolean; description: string }> = {};
+            for (const [date, desc] of Object.entries(this.tempCalendar.exceptions)) {
+                exceptions[date] = {
+                    date,
+                    working: false,
+                    description: desc,
+                };
+            }
+            
             this.options.onSave({
                 workingDays: [...this.tempCalendar.workingDays],
-                exceptions: { ...this.tempCalendar.exceptions },
+                exceptions,
             });
         }
         this.close();
@@ -432,16 +484,25 @@ export class CalendarModal {
     /**
      * Open the modal with a calendar configuration
      * 
-     * @param {Object} calendar - Current calendar configuration
-     * @param {number[]} calendar.workingDays - Array of working day indices (0-6)
-     * @param {Object} calendar.exceptions - Map of date strings to descriptions
+     * @param calendar - Current calendar configuration
      */
-    open(calendar) {
-        // Clone calendar to temp
+    open(calendar?: Calendar): void {
+        // Clone calendar to temp, converting exceptions from CalendarException objects to strings
         this.tempCalendar = {
             workingDays: [...(calendar?.workingDays || [1, 2, 3, 4, 5])],
-            exceptions: { ...(calendar?.exceptions || {}) },
+            exceptions: {},
         };
+        
+        // Convert CalendarException objects to string descriptions
+        if (calendar?.exceptions) {
+            for (const [date, exception] of Object.entries(calendar.exceptions)) {
+                if (typeof exception === 'string') {
+                    this.tempCalendar.exceptions[date] = exception;
+                } else {
+                    this.tempCalendar.exceptions[date] = exception.description || 'Holiday';
+                }
+            }
+        }
         
         // Set default date to today
         this.dom.exceptionDate.value = new Date().toISOString().split('T')[0];
@@ -457,19 +518,14 @@ export class CalendarModal {
     /**
      * Close the modal
      */
-    close() {
+    close(): void {
         this.element.close();
     }
 
     /**
      * Destroy the modal
      */
-    destroy() {
+    destroy(): void {
         this.element.remove();
     }
-}
-
-// Export for module systems
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = CalendarModal;
 }

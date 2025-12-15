@@ -351,6 +351,9 @@
             text-transform: uppercase;
             flex-shrink: 0;
             min-width: fit-content;
+            overflow: visible; /* Ensure resizers are not clipped */
+            position: relative; /* Create stacking context */
+            z-index: 10; /* Ensure header is above grid content */
         }
         
         .grid-header-cell {
@@ -361,6 +364,8 @@
             border-right: 1px solid #e2e8f0;
             padding: 0 8px;
             flex-shrink: 0;
+            position: relative; /* Required for absolute positioning of resizer */
+            overflow: visible; /* Ensure resizer is not clipped */
         }
         
         .grid-container {
@@ -517,35 +522,69 @@
            ============================================================ */
         .col-resizer {
             position: absolute;
-            right: -3px;
+            right: -4px; /* Position on the border line, extending into next column */
             top: 0;
-            width: 6px;
+            width: 10px; /* Wider hit area for easier grabbing (industry standard: 8-12px) */
             height: 100%;
             cursor: col-resize;
-            z-index: 10;
+            z-index: 30; /* Higher z-index to ensure it's above other elements */
             background: transparent;
+            user-select: none;
+            -webkit-user-select: none;
+            pointer-events: auto; /* Ensure it receives mouse events */
+            touch-action: none; /* Prevent touch scrolling during resize */
         }
         
-        .col-resizer:hover,
+        .col-resizer:hover {
+            background: rgba(99, 102, 241, 0.15);
+        }
+        
         .col-resizer.active {
-            background: #6366f1;
+            background: rgba(99, 102, 241, 0.25);
         }
         
-        .col-resizer::after {
+        /* Visual indicator line - always visible on hover for better UX */
+        .col-resizer::before {
             content: '';
             position: absolute;
-            right: 2px;
-            top: 25%;
-            height: 50%;
-            width: 2px;
+            right: 3px;
+            top: 15%;
+            height: 70%;
+            width: 1px;
             background: #cbd5e1;
-            border-radius: 1px;
+            border-radius: 0.5px;
             opacity: 0;
-            transition: opacity 0.15s;
+            transition: opacity 0.15s ease, background 0.15s ease;
         }
         
-        .grid-header-cell:hover .col-resizer::after {
+        /* Show indicator when hovering over header cell */
+        .grid-header-cell:hover .col-resizer::before {
+            opacity: 0.6;
+        }
+        
+        /* More prominent indicator when hovering directly on resizer */
+        .col-resizer:hover::before,
+        .col-resizer.active::before {
             opacity: 1;
+            background: #6366f1;
+            width: 2px;
+            right: 2px; /* Slight adjustment for better visibility */
+        }
+        
+        /* Ensure resizer is always interactive */
+        .col-resizer:hover {
+            background: rgba(99, 102, 241, 0.15);
+        }
+        
+        /* Prevent text selection during resize */
+        body.resizing {
+            user-select: none;
+            -webkit-user-select: none;
+            cursor: col-resize !important;
+        }
+        
+        body.resizing * {
+            cursor: col-resize !important;
         }
         
         /* ============================================================
@@ -1542,7 +1581,7 @@
                 <div class="grid-header-cell" data-field="start" style="width: var(--w-start); justify-content: flex-start;">Start<div class="col-resizer" data-field="start"></div></div>
                 <div class="grid-header-cell" data-field="end" style="width: var(--w-end); justify-content: flex-start;">Finish<div class="col-resizer" data-field="end"></div></div>
                 <div class="grid-header-cell" data-field="constraintType" style="width: var(--w-constraintType);">Constr<div class="col-resizer" data-field="constraintType"></div></div>
-                <div class="grid-header-cell" data-field="actions" style="width: var(--w-actions);">Actions</div>
+                <div class="grid-header-cell" data-field="actions" style="width: var(--w-actions);">Actions<div class="col-resizer" data-field="actions"></div></div>
             </div>
             <div class="grid-container" id="grid-container"></div>
         </div>
@@ -1617,7 +1656,7 @@
     
     
     <!-- Scripts (ES Modules) -->
-    <script type="module" src="/src/main.js"></script>
+    <script type="module" src="/src/main.ts"></script>
     
     <!-- Test Script (for debugging - only in dev mode) -->
     <script>

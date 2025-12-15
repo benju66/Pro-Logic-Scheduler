@@ -1,67 +1,95 @@
-// @ts-check
 /**
  * ============================================================================
- * CanvasGantt.js
+ * CanvasGantt.ts
  * ============================================================================
  * 
  * A high-performance Gantt chart renderer using HTML5 Canvas API.
  * Designed to render 10,000+ tasks at 60 FPS.
  * 
- * ARCHITECTURE:
- * â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”
- * â”‚  Container                                                      â”‚
- * â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”‚
- * â”‚  â”‚  Header Canvas (fixed position - timeline/dates)          â”‚  â”‚
- * â”‚  â”‚  [Mon 1/6] [Tue 1/7] [Wed 1/8] [Thu 1/9] [Fri 1/10] ...  â”‚  â”‚
- * â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â”‚
- * â”‚  â”Œâ”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”  â”‚
- * â”‚  â”‚  Main Canvas (scrollable - bars, dependencies, grid)      â”‚  â”‚
- * â”‚  â”‚  â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–‘â–‘â–‘â–‘â–‘                                    â”‚  â”‚
- * â”‚  â”‚      â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ                             â”‚  â”‚
- * â”‚  â”‚          â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–‘â–‘                                 â”‚  â”‚
- * â”‚  â”‚              â–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆâ–ˆ                         â”‚  â”‚
- * â”‚  â”‚  â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€     â”‚  â”‚
- * â”‚  â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜  â”‚
- * â””â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”˜
- * 
- * COORDINATE SYSTEM:
- * - X axis: Time (pixels from project start)
- *   x = (date - projectStart) * pixelsPerDay
- * - Y axis: Task index (row number)
- *   y = rowIndex * rowHeight
- * 
- * RENDERING PIPELINE:
- * 1. Clear canvas
- * 2. Draw grid lines (vertical date lines, horizontal row lines)
- * 3. Draw today marker
- * 4. Draw dependency arrows (behind bars)
- * 5. Draw task bars (with progress fill)
- * 6. Draw labels (task names on bars if space)
- * 7. Draw selection highlight
- * 
- * PERFORMANCE TECHNIQUES:
- * 1. Only draw visible viewport (culling)
- * 2. Use requestAnimationFrame for render loop
- * 3. Batch similar draw operations
- * 4. Cache computed values (date positions, colors)
- * 5. Use offscreen canvas for complex static elements
- * 6. Dirty flag to skip unnecessary redraws
- * 
- * USAGE:
- * ```javascript
- * const gantt = new CanvasGantt(containerElement, {
- *     rowHeight: 38,
- *     headerHeight: 50,
- *     onBarClick: (task, event) => {},
- *     onBarDrag: (task, newStart, newEnd) => {},
- * });
- * gantt.setData(tasks);
- * gantt.setViewMode('Week'); // 'Day', 'Week', 'Month'
- * ```
- * 
  * @author Pro Logic Scheduler
  * @version 2.0.0 - Ferrari Engine
  */
+
+import type { Task, CanvasGanttOptions, LinkType } from '../../types';
+
+/**
+ * View mode configuration
+ */
+interface ViewModeConfig {
+    pixelsPerDay: number;
+    headerFormat: 'day' | 'week' | 'month';
+    gridInterval: number;
+    majorInterval: number;
+}
+
+/**
+ * Drag state
+ */
+interface DragState {
+    taskId: string;
+    startX: number;
+    startY: number;
+    originalStart: Date | null;
+    originalEnd: Date | null;
+}
+
+/**
+ * Bar position for hit testing
+ */
+interface BarPosition {
+    taskId: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    rowIndex: number;
+}
+
+/**
+ * Canvas DOM references
+ */
+interface CanvasGanttDOM {
+    wrapper: HTMLElement;
+    headerCanvas: HTMLCanvasElement;
+    headerCtx: CanvasRenderingContext2D | null;
+    mainCanvas: HTMLCanvasElement;
+    mainCtx: CanvasRenderingContext2D | null;
+    scrollContainer: HTMLElement;
+    scrollContent: HTMLElement;
+}
+
+/**
+ * Canvas Gantt options with defaults merged
+ */
+type MergedCanvasGanttOptions = Required<Pick<CanvasGanttOptions, 'rowHeight' | 'headerHeight'>> & CanvasGanttOptions & {
+    colors: {
+        background: string;
+        gridLine: string;
+        gridLineMajor: string;
+        headerBg: string;
+        headerText: string;
+        barNormal: string;
+        barCritical: string;
+        barCriticalStroke: string;
+        barParent: string;
+        barProgress: string;
+        barSelected: string;
+        barHover: string;
+        dependency: string;
+        dependencyArrow: string;
+        todayLine: string;
+        weekendBg: string;
+        selectionBg: string;
+    };
+    fonts: {
+        header: string;
+        barLabel: string;
+    };
+    barHeight: number;
+    barPadding: number;
+    barRadius: number;
+    minBarWidth: number;
+};
 
 export class CanvasGantt {
     
@@ -70,7 +98,7 @@ export class CanvasGantt {
     // =========================================================================
     
     /** View mode configurations */
-    static VIEW_MODES = {
+    static readonly VIEW_MODES: Readonly<Record<string, ViewModeConfig>> = {
         Day: { 
             pixelsPerDay: 40,
             headerFormat: 'day',
@@ -92,7 +120,7 @@ export class CanvasGantt {
     };
 
     /** Default configuration */
-    static DEFAULTS = {
+    static readonly DEFAULTS = {
         rowHeight: 38,
         headerHeight: 50,
         barHeight: 20,
@@ -126,10 +154,54 @@ export class CanvasGantt {
             header: '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
             barLabel: '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
         },
-    };
+    } as const;
 
     /** Milliseconds per day */
-    static MS_PER_DAY = 86400000;
+    static readonly MS_PER_DAY = 86400000;
+
+    // =========================================================================
+    // INSTANCE PROPERTIES
+    // =========================================================================
+    
+    private options: MergedCanvasGanttOptions;
+    private container: HTMLElement;
+    private data: Task[] = [];                          // Array of visible tasks
+    private taskMap: Map<string, Task> = new Map();                // Quick lookup by ID
+    private selectedIds: Set<string> = new Set();
+    private hoveredTaskId: string | null = null;
+    private dragState: DragState | null = null;                   // Active drag operation
+    
+    // View state
+    private viewMode: string = 'Week';
+    private scrollX: number = 0;
+    private scrollY: number = 0;
+    private viewportWidth: number = 0;
+    private viewportHeight: number = 0;
+    
+    // Time range
+    private projectStart: Date | null = null;                // Earliest task start
+    private projectEnd: Date | null = null;                  // Latest task end
+    private timelineStart: Date | null = null;               // Visible timeline start
+    private timelineEnd: Date | null = null;                 // Visible timeline end
+    private pixelsPerDay: number = 20;
+    
+    // Canvas elements
+    private dom!: CanvasGanttDOM; // Initialized in _buildDOM()
+    
+    // Render state
+    private _dirty: boolean = true;
+    private _rafId: number | null = null;
+    private _lastRenderTime: number = 0;
+    private _resizeObserver: ResizeObserver | null = null;
+    
+    // Cached calculations
+    private _cache: {
+        datePositions: Map<string, number>;
+        barPositions: BarPosition[];
+    } = {
+        datePositions: new Map(),
+        barPositions: [],
+    };
 
     // =========================================================================
     // CONSTRUCTOR
@@ -138,56 +210,14 @@ export class CanvasGantt {
     /**
      * Create a new CanvasGantt instance
      * 
-     * @param {HTMLElement} container - The container element
-     * @param {Object} options - Configuration options
+     * @param container - The container element
+     * @param options - Configuration options
      */
-    constructor(container, options = {}) {
+    constructor(container: HTMLElement, options: CanvasGanttOptions = {} as CanvasGanttOptions) {
         // Merge options with defaults
-        this.options = this._mergeOptions(CanvasGantt.DEFAULTS, options);
+        this.options = this._mergeOptions(CanvasGantt.DEFAULTS, options) as MergedCanvasGanttOptions;
         
-        // Core state
         this.container = container;
-        this.data = [];                          // Array of visible tasks
-        this.taskMap = new Map();                // Quick lookup by ID
-        this.selectedIds = new Set();
-        this.hoveredTaskId = null;
-        this.dragState = null;                   // Active drag operation
-        
-        // View state
-        this.viewMode = 'Week';
-        this.scrollX = 0;
-        this.scrollY = 0;
-        this.viewportWidth = 0;
-        this.viewportHeight = 0;
-        
-        // Time range
-        this.projectStart = null;                // Earliest task start
-        this.projectEnd = null;                  // Latest task end
-        this.timelineStart = null;               // Visible timeline start
-        this.timelineEnd = null;                 // Visible timeline end
-        this.pixelsPerDay = 20;
-        
-        // Canvas elements
-        this.dom = {
-            wrapper: null,
-            headerCanvas: null,
-            headerCtx: null,
-            mainCanvas: null,
-            mainCtx: null,
-            scrollContainer: null,
-            scrollContent: null,
-        };
-        
-        // Render state
-        this._dirty = true;
-        this._rafId = null;
-        this._lastRenderTime = 0;
-        
-        // Cached calculations
-        this._cache = {
-            datePositions: new Map(),
-            barPositions: [],
-        };
         
         // Initialize
         this._init();
@@ -197,16 +227,43 @@ export class CanvasGantt {
      * Deep merge options with defaults
      * @private
      */
-    _mergeOptions(defaults, options) {
-        const result = { ...defaults };
+    private _mergeOptions(defaults: typeof CanvasGantt.DEFAULTS, options: CanvasGanttOptions): MergedCanvasGanttOptions {
+        const result: any = { ...defaults };
         for (const key in options) {
-            if (options[key] && typeof options[key] === 'object' && !Array.isArray(options[key])) {
-                result[key] = this._mergeOptions(defaults[key] || {}, options[key]);
+            const optionKey = key as keyof CanvasGanttOptions;
+            const optionValue = options[optionKey];
+            
+            // Skip null, undefined, and non-objects
+            if (!optionValue || typeof optionValue !== 'object') {
+                result[key] = optionValue;
+                continue;
+            }
+            
+            // Skip arrays, DOM elements, Date objects, and other non-plain objects
+            if (Array.isArray(optionValue) || 
+                optionValue instanceof HTMLElement ||
+                optionValue instanceof Date ||
+                optionValue instanceof RegExp ||
+                optionValue instanceof Function) {
+                result[key] = optionValue;
+                continue;
+            }
+            
+            // Only recursively merge plain objects (POJOs)
+            // Check if it's a plain object by verifying constructor
+            const isPlainObject = optionValue.constructor === Object || 
+                                  Object.getPrototypeOf(optionValue) === Object.prototype ||
+                                  Object.getPrototypeOf(optionValue) === null;
+            
+            if (isPlainObject) {
+                const defaultValue = (defaults as any)[key] || {};
+                result[key] = this._mergeOptions(defaultValue, optionValue as any);
             } else {
-                result[key] = options[key];
+                // For other object types, just assign directly
+                result[key] = optionValue;
             }
         }
-        return result;
+        return result as MergedCanvasGanttOptions;
     }
 
     // =========================================================================
@@ -217,7 +274,7 @@ export class CanvasGantt {
      * Initialize the Gantt chart
      * @private
      */
-    _init() {
+    private _init(): void {
         this._buildDOM();
         this._bindEvents();
         this._measure();
@@ -233,15 +290,15 @@ export class CanvasGantt {
      * Build the DOM structure
      * @private
      */
-    _buildDOM() {
+    private _buildDOM(): void {
         this.container.innerHTML = '';
         this.container.style.position = 'relative';
         this.container.style.overflow = 'hidden';
         
         // Create wrapper
-        this.dom.wrapper = document.createElement('div');
-        this.dom.wrapper.className = 'cg-wrapper';
-        this.dom.wrapper.style.cssText = `
+        const wrapper = document.createElement('div');
+        wrapper.className = 'cg-wrapper';
+        wrapper.style.cssText = `
             position: relative;
             width: 100%;
             height: 100%;
@@ -259,55 +316,66 @@ export class CanvasGantt {
             overflow: hidden;
         `;
         
-        this.dom.headerCanvas = document.createElement('canvas');
-        this.dom.headerCanvas.className = 'cg-header-canvas';
-        this.dom.headerCanvas.style.cssText = `
+        const headerCanvas = document.createElement('canvas');
+        headerCanvas.className = 'cg-header-canvas';
+        headerCanvas.style.cssText = `
             position: absolute;
             top: 0;
             left: 0;
         `;
-        headerWrapper.appendChild(this.dom.headerCanvas);
-        this.dom.headerCtx = this.dom.headerCanvas.getContext('2d');
+        headerWrapper.appendChild(headerCanvas);
+        const headerCtx = headerCanvas.getContext('2d');
         
         // Create scroll container for main canvas
-        this.dom.scrollContainer = document.createElement('div');
-        this.dom.scrollContainer.className = 'cg-scroll-container';
-        this.dom.scrollContainer.style.cssText = `
+        const scrollContainer = document.createElement('div');
+        scrollContainer.className = 'cg-scroll-container';
+        scrollContainer.style.cssText = `
             flex: 1;
             overflow: auto;
             position: relative;
         `;
         
         // Create scroll content (sized to full timeline/tasks)
-        this.dom.scrollContent = document.createElement('div');
-        this.dom.scrollContent.className = 'cg-scroll-content';
-        this.dom.scrollContent.style.cssText = `
+        const scrollContent = document.createElement('div');
+        scrollContent.className = 'cg-scroll-content';
+        scrollContent.style.cssText = `
             position: relative;
         `;
         
         // Create main canvas
-        this.dom.mainCanvas = document.createElement('canvas');
-        this.dom.mainCanvas.className = 'cg-main-canvas';
-        this.dom.mainCanvas.style.cssText = `
+        const mainCanvas = document.createElement('canvas');
+        mainCanvas.className = 'cg-main-canvas';
+        mainCanvas.style.cssText = `
             position: sticky;
             top: 0;
             left: 0;
         `;
-        this.dom.mainCtx = this.dom.mainCanvas.getContext('2d');
+        const mainCtx = mainCanvas.getContext('2d');
         
         // Assemble structure
-        this.dom.scrollContent.appendChild(this.dom.mainCanvas);
-        this.dom.scrollContainer.appendChild(this.dom.scrollContent);
-        this.dom.wrapper.appendChild(headerWrapper);
-        this.dom.wrapper.appendChild(this.dom.scrollContainer);
-        this.container.appendChild(this.dom.wrapper);
+        scrollContent.appendChild(mainCanvas);
+        scrollContainer.appendChild(scrollContent);
+        wrapper.appendChild(headerWrapper);
+        wrapper.appendChild(scrollContainer);
+        this.container.appendChild(wrapper);
+        
+        // Store DOM references
+        this.dom = {
+            wrapper,
+            headerCanvas,
+            headerCtx,
+            mainCanvas,
+            mainCtx,
+            scrollContainer,
+            scrollContent,
+        };
     }
 
     /**
      * Bind event listeners
      * @private
      */
-    _bindEvents() {
+    private _bindEvents(): void {
         // Scroll handling
         this.dom.scrollContainer.addEventListener('scroll', this._onScroll.bind(this), { passive: true });
         
@@ -331,13 +399,15 @@ export class CanvasGantt {
      * Measure and size canvases
      * @private
      */
-    _measure() {
+    private _measure(): void {
         const rect = this.container.getBoundingClientRect();
         this.viewportWidth = rect.width;
         this.viewportHeight = rect.height - this.options.headerHeight;
         
         // Account for device pixel ratio for sharp rendering
         const dpr = window.devicePixelRatio || 1;
+        
+        if (!this.dom.headerCtx || !this.dom.mainCtx) return;
         
         // Size header canvas
         this.dom.headerCanvas.width = this.viewportWidth * dpr;
@@ -361,7 +431,7 @@ export class CanvasGantt {
      * Update scroll content dimensions based on data
      * @private
      */
-    _updateScrollContentSize() {
+    private _updateScrollContentSize(): void {
         if (!this.timelineStart || !this.timelineEnd) return;
         
         const totalDays = this._daysBetween(this.timelineStart, this.timelineEnd);
@@ -380,8 +450,8 @@ export class CanvasGantt {
      * Start the render loop
      * @private
      */
-    _startRenderLoop() {
-        const loop = (timestamp) => {
+    private _startRenderLoop(): void {
+        const loop = (timestamp: number): void => {
             if (this._dirty) {
                 this._render(timestamp);
                 this._dirty = false;
@@ -395,7 +465,7 @@ export class CanvasGantt {
      * Main render function
      * @private
      */
-    _render(timestamp) {
+    private _render(_timestamp: number): void {
         const startTime = performance.now();
         
         this._renderHeader();
@@ -408,8 +478,10 @@ export class CanvasGantt {
      * Render the header (timeline)
      * @private
      */
-    _renderHeader() {
+    private _renderHeader(): void {
         const ctx = this.dom.headerCtx;
+        if (!ctx) return;
+        
         const width = this.viewportWidth;
         const height = this.options.headerHeight;
         const colors = this.options.colors;
@@ -429,6 +501,8 @@ export class CanvasGantt {
         if (!this.timelineStart) return;
         
         const viewMode = CanvasGantt.VIEW_MODES[this.viewMode];
+        if (!viewMode) return;
+        
         const startDate = this._addDays(this.timelineStart, Math.floor(this.scrollX / this.pixelsPerDay));
         const visibleDays = Math.ceil(width / this.pixelsPerDay) + 2;
         
@@ -450,7 +524,7 @@ export class CanvasGantt {
      * Render day-level header
      * @private
      */
-    _renderHeaderDays(ctx, startDate, visibleDays) {
+    private _renderHeaderDays(ctx: CanvasRenderingContext2D, startDate: Date, visibleDays: number): void {
         const colors = this.options.colors;
         const height = this.options.headerHeight;
         const ppd = this.pixelsPerDay;
@@ -486,7 +560,7 @@ export class CanvasGantt {
      * Render week-level header
      * @private
      */
-    _renderHeaderWeeks(ctx, startDate, visibleDays) {
+    private _renderHeaderWeeks(ctx: CanvasRenderingContext2D, startDate: Date, visibleDays: number): void {
         const colors = this.options.colors;
         const height = this.options.headerHeight;
         const ppd = this.pixelsPerDay;
@@ -528,7 +602,7 @@ export class CanvasGantt {
      * Render month-level header
      * @private
      */
-    _renderHeaderMonths(ctx, startDate, visibleDays) {
+    private _renderHeaderMonths(ctx: CanvasRenderingContext2D, startDate: Date, visibleDays: number): void {
         const colors = this.options.colors;
         const height = this.options.headerHeight;
         const ppd = this.pixelsPerDay;
@@ -576,8 +650,10 @@ export class CanvasGantt {
      * Render the main canvas (bars, grid, dependencies)
      * @private
      */
-    _renderMain() {
+    private _renderMain(): void {
         const ctx = this.dom.mainCtx;
+        if (!ctx) return;
+        
         const width = this.viewportWidth;
         const height = this.viewportHeight;
         const colors = this.options.colors;
@@ -611,7 +687,7 @@ export class CanvasGantt {
      * Render empty state message
      * @private
      */
-    _renderEmptyState(ctx) {
+    private _renderEmptyState(ctx: CanvasRenderingContext2D): void {
         ctx.fillStyle = this.options.colors.headerText;
         ctx.font = '13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
         ctx.textAlign = 'center';
@@ -623,13 +699,15 @@ export class CanvasGantt {
      * Render horizontal and vertical grid lines
      * @private
      */
-    _renderGridLines(ctx, firstRow, lastRow) {
+    private _renderGridLines(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number): void {
         const colors = this.options.colors;
         const rowHeight = this.options.rowHeight;
         const ppd = this.pixelsPerDay;
         const width = this.viewportWidth;
         const offsetY = this.scrollY % rowHeight;
         const offsetX = this.scrollX % ppd;
+        
+        if (!this.timelineStart) return;
         
         ctx.strokeStyle = colors.gridLine;
         ctx.lineWidth = 0.5;
@@ -677,12 +755,15 @@ export class CanvasGantt {
      * Render weekend shading
      * @private
      */
-    _renderWeekendShading(ctx, firstRow, lastRow) {
+    private _renderWeekendShading(ctx: CanvasRenderingContext2D, _firstRow: number, _lastRow: number): void {
         const colors = this.options.colors;
         const ppd = this.pixelsPerDay;
         const height = this.viewportHeight;
         const offsetX = this.scrollX % ppd;
         const visibleDays = Math.ceil(this.viewportWidth / ppd) + 2;
+        
+        if (!this.timelineStart) return;
+        
         const startDate = this._addDays(this.timelineStart, Math.floor(this.scrollX / ppd));
         
         ctx.fillStyle = colors.weekendBg;
@@ -702,10 +783,11 @@ export class CanvasGantt {
      * Render today marker line
      * @private
      */
-    _renderTodayLine(ctx) {
+    private _renderTodayLine(ctx: CanvasRenderingContext2D): void {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         
+        if (!this.timelineStart || !this.timelineEnd) return;
         if (today < this.timelineStart || today > this.timelineEnd) return;
         
         const x = this._dateToX(today);
@@ -725,7 +807,7 @@ export class CanvasGantt {
      * Render dependency arrows
      * @private
      */
-    _renderDependencies(ctx, firstRow, lastRow) {
+    private _renderDependencies(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number): void {
         const colors = this.options.colors;
         const rowHeight = this.options.rowHeight;
         const barHeight = this.options.barHeight;
@@ -741,7 +823,9 @@ export class CanvasGantt {
             if (!task.dependencies || task.dependencies.length === 0) continue;
             
             const taskY = (i * rowHeight) - this.scrollY + barPadding + barHeight / 2;
-            const taskX = this._dateToX(this._parseDate(task.start));
+            const taskStart = this._parseDate(task.start);
+            if (!taskStart) continue;
+            const taskX = this._dateToX(taskStart);
             
             task.dependencies.forEach(dep => {
                 const predTask = this.taskMap.get(dep.id);
@@ -751,7 +835,9 @@ export class CanvasGantt {
                 if (predIndex === -1) return;
                 
                 const predY = (predIndex * rowHeight) - this.scrollY + barPadding + barHeight / 2;
-                const predEndX = this._dateToX(this._parseDate(predTask.end)) + this.pixelsPerDay;
+                const predEnd = this._parseDate(predTask.end);
+                if (!predEnd) return;
+                const predEndX = this._dateToX(predEnd) + this.pixelsPerDay;
                 
                 // Draw based on dependency type
                 this._drawDependencyArrow(ctx, predEndX, predY, taskX, taskY, dep.type);
@@ -763,7 +849,7 @@ export class CanvasGantt {
      * Draw a dependency arrow
      * @private
      */
-    _drawDependencyArrow(ctx, x1, y1, x2, y2, type = 'FS') {
+    private _drawDependencyArrow(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number, y2: number, type: LinkType = 'FS'): void {
         const arrowSize = 6;
         const cornerRadius = 5;
         
@@ -824,7 +910,7 @@ export class CanvasGantt {
      * Render task bars
      * @private
      */
-    _renderBars(ctx, firstRow, lastRow) {
+    private _renderBars(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number): void {
         const colors = this.options.colors;
         const rowHeight = this.options.rowHeight;
         const barHeight = this.options.barHeight;
@@ -863,7 +949,7 @@ export class CanvasGantt {
             const isHovered = this.hoveredTaskId === task.id;
             
             let barColor = colors.barNormal;
-            let strokeColor = null;
+            let strokeColor: string | null = null;
             
             if (isParent) {
                 // Parent bars are thinner and darker
@@ -922,7 +1008,7 @@ export class CanvasGantt {
      * Draw a parent (summary) bar
      * @private
      */
-    _drawParentBar(ctx, x, y, width, height, color) {
+    private _drawParentBar(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, color: string): void {
         const parentBarHeight = 8;
         const yOffset = (height - parentBarHeight) / 2;
         
@@ -954,7 +1040,7 @@ export class CanvasGantt {
      * Render selection highlight
      * @private
      */
-    _renderSelectionHighlight(ctx, firstRow, lastRow) {
+    private _renderSelectionHighlight(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number): void {
         if (this.selectedIds.size === 0) return;
         
         const colors = this.options.colors;
@@ -975,7 +1061,7 @@ export class CanvasGantt {
      * Draw a rounded rectangle
      * @private
      */
-    _roundRect(ctx, x, y, width, height, radius) {
+    private _roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number): void {
         ctx.beginPath();
         ctx.moveTo(x + radius, y);
         ctx.lineTo(x + width - radius, y);
@@ -993,7 +1079,7 @@ export class CanvasGantt {
      * Truncate text to fit width
      * @private
      */
-    _truncateText(ctx, text, maxWidth) {
+    private _truncateText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
         if (ctx.measureText(text).width <= maxWidth) return text;
         
         let truncated = text;
@@ -1011,7 +1097,7 @@ export class CanvasGantt {
      * Handle scroll events
      * @private
      */
-    _onScroll(e) {
+    private _onScroll(_e: Event): void {
         this.scrollX = this.dom.scrollContainer.scrollLeft;
         this.scrollY = this.dom.scrollContainer.scrollTop;
         this._dirty = true;
@@ -1026,7 +1112,7 @@ export class CanvasGantt {
      * Handle mouse move for hover effects
      * @private
      */
-    _onMouseMove(e) {
+    private _onMouseMove(e: MouseEvent): void {
         const rect = this.dom.mainCanvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
@@ -1053,20 +1139,23 @@ export class CanvasGantt {
      * Handle mouse down for drag start
      * @private
      */
-    _onMouseDown(e) {
+    private _onMouseDown(e: MouseEvent): void {
         const rect = this.dom.mainCanvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
         
         const hitBar = this._hitTestBar(x, y);
         if (hitBar) {
+            const task = this.taskMap.get(hitBar.taskId);
+            if (!task) return;
+            
             // Start drag
             this.dragState = {
                 taskId: hitBar.taskId,
                 startX: x,
                 startY: y,
-                originalStart: this._parseDate(this.taskMap.get(hitBar.taskId)?.start),
-                originalEnd: this._parseDate(this.taskMap.get(hitBar.taskId)?.end),
+                originalStart: this._parseDate(task.start),
+                originalEnd: this._parseDate(task.end),
             };
         }
     }
@@ -1075,7 +1164,7 @@ export class CanvasGantt {
      * Handle mouse up for drag end
      * @private
      */
-    _onMouseUp(e) {
+    private _onMouseUp(_e: MouseEvent): void {
         if (this.dragState) {
             const task = this.taskMap.get(this.dragState.taskId);
             if (task && this.options.onBarDrag) {
@@ -1089,7 +1178,7 @@ export class CanvasGantt {
      * Handle mouse leave
      * @private
      */
-    _onMouseLeave(e) {
+    private _onMouseLeave(_e: MouseEvent): void {
         if (this.hoveredTaskId) {
             this.hoveredTaskId = null;
             this._dirty = true;
@@ -1106,7 +1195,7 @@ export class CanvasGantt {
      * Handle click events
      * @private
      */
-    _onClick(e) {
+    private _onClick(e: MouseEvent): void {
         const rect = this.dom.mainCanvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
@@ -1121,7 +1210,7 @@ export class CanvasGantt {
      * Handle double-click events
      * @private
      */
-    _onDoubleClick(e) {
+    private _onDoubleClick(e: MouseEvent): void {
         const rect = this.dom.mainCanvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
@@ -1136,7 +1225,7 @@ export class CanvasGantt {
      * Handle drag operation
      * @private
      */
-    _handleDrag(x, y) {
+    private _handleDrag(x: number, y: number): void {
         if (!this.dragState) return;
         
         const deltaX = x - this.dragState.startX;
@@ -1145,7 +1234,7 @@ export class CanvasGantt {
         if (deltaDays === 0) return;
         
         const task = this.taskMap.get(this.dragState.taskId);
-        if (!task) return;
+        if (!task || !this.dragState.originalStart || !this.dragState.originalEnd) return;
         
         // Update task dates
         const newStart = this._addDays(this.dragState.originalStart, deltaDays);
@@ -1161,7 +1250,7 @@ export class CanvasGantt {
      * Hit test for bar at position
      * @private
      */
-    _hitTestBar(x, y) {
+    private _hitTestBar(x: number, y: number): BarPosition | null {
         for (const bar of this._cache.barPositions) {
             if (x >= bar.x && x <= bar.x + bar.width &&
                 y >= bar.y && y <= bar.y + bar.height) {
@@ -1179,26 +1268,19 @@ export class CanvasGantt {
      * Convert date to X coordinate
      * @private
      */
-    _dateToX(date) {
+    private _dateToX(date: Date | null): number {
         if (!date || !this.timelineStart) return 0;
         const days = this._daysBetween(this.timelineStart, date);
         return (days * this.pixelsPerDay) - this.scrollX;
     }
 
-    /**
-     * Convert X coordinate to date
-     * @private
-     */
-    _xToDate(x) {
-        const days = (x + this.scrollX) / this.pixelsPerDay;
-        return this._addDays(this.timelineStart, Math.round(days));
-    }
+    // _xToDate method removed - not currently used
 
     /**
      * Parse date string to Date object
      * @private
      */
-    _parseDate(dateStr) {
+    private _parseDate(dateStr: string | Date | null | undefined): Date | null {
         if (!dateStr) return null;
         if (dateStr instanceof Date) return dateStr;
         return new Date(dateStr + 'T12:00:00');
@@ -1208,7 +1290,7 @@ export class CanvasGantt {
      * Format date to ISO string (YYYY-MM-DD)
      * @private
      */
-    _formatDateISO(date) {
+    private _formatDateISO(date: Date): string {
         return date.toISOString().split('T')[0];
     }
 
@@ -1216,7 +1298,7 @@ export class CanvasGantt {
      * Format date for display
      * @private
      */
-    _formatDate(date, format) {
+    private _formatDate(date: Date, format: 'day' | 'week' | 'month'): string {
         const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
                        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
         const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -1237,17 +1319,17 @@ export class CanvasGantt {
      * Calculate days between two dates
      * @private
      */
-    _daysBetween(date1, date2) {
+    private _daysBetween(date1: Date, date2: Date): number {
         const d1 = date1 instanceof Date ? date1 : new Date(date1);
         const d2 = date2 instanceof Date ? date2 : new Date(date2);
-        return Math.round((d2 - d1) / CanvasGantt.MS_PER_DAY);
+        return Math.round((d2.getTime() - d1.getTime()) / CanvasGantt.MS_PER_DAY);
     }
 
     /**
      * Add days to a date
      * @private
      */
-    _addDays(date, days) {
+    private _addDays(date: Date, days: number): Date {
         const result = new Date(date);
         result.setDate(result.getDate() + days);
         return result;
@@ -1259,9 +1341,9 @@ export class CanvasGantt {
     
     /**
      * Set the task data
-     * @param {Array} tasks - Array of task objects
+     * @param tasks - Array of task objects
      */
-    setData(tasks) {
+    setData(tasks: Task[]): void {
         this.data = tasks;
         
         // Build task map for quick lookup
@@ -1282,7 +1364,7 @@ export class CanvasGantt {
      * Calculate the timeline range from task data
      * @private
      */
-    _calculateTimelineRange() {
+    private _calculateTimelineRange(): void {
         if (this.data.length === 0) {
             this.projectStart = null;
             this.projectEnd = null;
@@ -1291,17 +1373,17 @@ export class CanvasGantt {
             return;
         }
         
-        let minDate = null;
-        let maxDate = null;
+        let minDate: Date | null = null;
+        let maxDate: Date | null = null;
         
         this.data.forEach(task => {
             if (task.start) {
                 const start = this._parseDate(task.start);
-                if (!minDate || start < minDate) minDate = start;
+                if (start && (!minDate || start < minDate)) minDate = start;
             }
             if (task.end) {
                 const end = this._parseDate(task.end);
-                if (!maxDate || end > maxDate) maxDate = end;
+                if (end && (!maxDate || end > maxDate)) maxDate = end;
             }
         });
         
@@ -1317,13 +1399,14 @@ export class CanvasGantt {
 
     /**
      * Set the view mode
-     * @param {string} mode - 'Day', 'Week', or 'Month'
+     * @param mode - 'Day', 'Week', or 'Month'
      */
-    setViewMode(mode) {
-        if (!CanvasGantt.VIEW_MODES[mode]) return;
+    setViewMode(mode: string): void {
+        const viewMode = CanvasGantt.VIEW_MODES[mode];
+        if (!viewMode) return;
         
         this.viewMode = mode;
-        this.pixelsPerDay = CanvasGantt.VIEW_MODES[mode].pixelsPerDay;
+        this.pixelsPerDay = viewMode.pixelsPerDay;
         
         this._updateScrollContentSize();
         this._dirty = true;
@@ -1331,18 +1414,18 @@ export class CanvasGantt {
 
     /**
      * Set selection state
-     * @param {Set} selectedIds - Set of selected task IDs
+     * @param selectedIds - Set of selected task IDs
      */
-    setSelection(selectedIds) {
+    setSelection(selectedIds: Set<string>): void {
         this.selectedIds = selectedIds;
         this._dirty = true;
     }
 
     /**
      * Set scroll position (for sync with grid)
-     * @param {number} scrollY - Vertical scroll position
+     * @param scrollY - Vertical scroll position
      */
-    setScrollTop(scrollY) {
+    setScrollTop(scrollY: number): void {
         if (Math.abs(this.dom.scrollContainer.scrollTop - scrollY) > 1) {
             this.dom.scrollContainer.scrollTop = scrollY;
         }
@@ -1350,17 +1433,17 @@ export class CanvasGantt {
 
     /**
      * Get current scroll position
-     * @returns {number} Current scrollTop
+     * @returns Current scrollTop
      */
-    getScrollTop() {
+    getScrollTop(): number {
         return this.scrollY;
     }
 
     /**
      * Scroll to a specific task
-     * @param {string} taskId - The task ID to scroll to
+     * @param taskId - The task ID to scroll to
      */
-    scrollToTask(taskId) {
+    scrollToTask(taskId: string): void {
         const index = this.data.findIndex(t => t.id === taskId);
         if (index === -1) return;
         
@@ -1373,15 +1456,22 @@ export class CanvasGantt {
     /**
      * Force a re-render
      */
-    refresh() {
+    refresh(): void {
         this._dirty = true;
     }
 
     /**
      * Get render statistics
-     * @returns {Object} Stats object
+     * @returns Stats object
      */
-    getStats() {
+    getStats(): {
+        taskCount: number;
+        viewMode: string;
+        pixelsPerDay: number;
+        lastRenderTime: string;
+        scrollX: number;
+        scrollY: number;
+    } {
         return {
             taskCount: this.data.length,
             viewMode: this.viewMode,
@@ -1395,8 +1485,8 @@ export class CanvasGantt {
     /**
      * Clean up resources
      */
-    destroy() {
-        if (this._rafId) {
+    destroy(): void {
+        if (this._rafId !== null) {
             cancelAnimationFrame(this._rafId);
         }
         if (this._resizeObserver) {
@@ -1405,5 +1495,3 @@ export class CanvasGantt {
         this.container.innerHTML = '';
     }
 }
-
-// Export for module systems

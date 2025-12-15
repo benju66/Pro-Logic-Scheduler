@@ -1,4 +1,3 @@
-// @ts-check
 /**
  * Pro Logic Scheduler - Main Entry Point
  * 
@@ -6,15 +5,18 @@
  * Works in both browser and Tauri environments.
  */
 
+/// <reference path="./types/globals.d.ts" />
+
 // Import main service
-import { SchedulerService } from './services/SchedulerService.js';
-import { AppInitializer } from './services/AppInitializer.js';
-import { UIEventManager } from './services/UIEventManager.js';
+import { SchedulerService } from './services/SchedulerService';
+import { AppInitializer } from './services/AppInitializer';
+import { UIEventManager } from './services/UIEventManager';
+import type { ToastType } from './types';
 
 // NOTE: Using clean architecture - no globals, dependency injection only
 
 // Detect if running in Tauri
-const isTauri = window.__TAURI__ !== undefined;
+const isTauri: boolean = (window as Window & { __TAURI__?: unknown }).__TAURI__ !== undefined;
 
 // Export for use in other modules
 export {
@@ -23,12 +25,12 @@ export {
 };
 
 // Initialize app when DOM is ready
-let appInitializer = null;
-let scheduler = null;
-let uiEventManager = null;
+let appInitializer: AppInitializer | null = null;
+let scheduler: SchedulerService | null = null;
+let uiEventManager: UIEventManager | null = null;
 
 // Initialize app
-function initApp() {
+function initApp(): void {
     if (appInitializer) {
         console.log('⚠️ Already initializing, skipping duplicate initApp() call');
         return;
@@ -72,7 +74,7 @@ if (document.readyState === 'loading') {
 window.addEventListener('load', () => {
     console.log('📄 Window load event fired');
     // Only initialize if scheduler wasn't already initialized
-    if (!window.scheduler && (!appInitializer || !appInitializer.isInitialized)) {
+    if (!(window as Window & { scheduler?: SchedulerService }).scheduler && (!appInitializer || !appInitializer.isInitialized)) {
         console.warn('⚠️ Scheduler not initialized on DOMContentLoaded, trying again on window load');
         initApp();
     } else {
@@ -83,27 +85,27 @@ window.addEventListener('load', () => {
 // ================================================================
 // UI HELPER FUNCTIONS (Backward Compatibility)
 // ================================================================
-// NOTE: All UI handlers have been moved to UIEventManager.js
+// NOTE: All UI handlers have been moved to UIEventManager.ts
 // These functions delegate to UIEventManager for backward compatibility
 
-function showToast(message, type = 'info') {
+function showToast(message: string, type: ToastType = 'info'): void {
     if (uiEventManager?.toastService) {
         uiEventManager.toastService.show(message, type);
     } else if (scheduler?.toastService) {
         scheduler.toastService.show(message, type);
     } else {
         // Fallback to DOM-based toast
-    const toast = document.getElementById('toast');
+        const toast = document.getElementById('toast');
         if (toast) {
-    toast.textContent = message;
-    toast.className = 'toast ' + type;
-    toast.classList.add('show');
+            toast.textContent = message;
+            toast.className = 'toast ' + type;
+            toast.classList.add('show');
             setTimeout(() => toast.classList.remove('show'), 3000);
         }
     }
 }
 
-window.showToast = showToast;
+window.showToast = showToast as (message: string, type?: string) => void;
 
 // ================================================================
 // WINDOW FUNCTIONS (Backward Compatibility)
@@ -111,79 +113,79 @@ window.showToast = showToast;
 // These functions delegate to UIEventManager for backward compatibility
 // They're kept here because they may be called from HTML or other scripts
 
-window.toggleDropdown = function(menuId) {
+(window as Window & { toggleDropdown?: (menuId: string) => void }).toggleDropdown = function(menuId: string): void {
     if (uiEventManager) {
         uiEventManager.toggleDropdown(menuId);
     }
 };
 
-window.handleNewProject = function() {
+(window as Window & { handleNewProject?: () => void }).handleNewProject = function(): void {
     if (uiEventManager) {
         uiEventManager.handleNewProject();
     }
 };
 
-window.handleOpenFile = async function() {
+(window as Window & { handleOpenFile?: () => Promise<void> }).handleOpenFile = async function(): Promise<void> {
     if (uiEventManager) {
         await uiEventManager.handleOpenFile();
     }
 };
 
-window.handleSaveFile = async function() {
+(window as Window & { handleSaveFile?: () => Promise<void> }).handleSaveFile = async function(): Promise<void> {
     if (uiEventManager) {
         await uiEventManager.handleSaveFile();
     }
 };
 
-window.handleExportJSON = function() {
+(window as Window & { handleExportJSON?: () => void }).handleExportJSON = function(): void {
     if (uiEventManager) {
         uiEventManager.handleExportJSON();
     }
 };
 
-window.handleImportXML = function() {
+(window as Window & { handleImportXML?: () => void }).handleImportXML = function(): void {
     if (uiEventManager) {
         uiEventManager.handleImportXML();
     }
 };
 
-window.handleExportXML = function() {
+(window as Window & { handleExportXML?: () => void }).handleExportXML = function(): void {
     if (uiEventManager) {
         uiEventManager.handleExportXML();
     }
 };
 
-window.generate1000Tasks = function() {
+(window as Window & { generate1000Tasks?: () => void }).generate1000Tasks = function(): void {
     if (uiEventManager) {
         uiEventManager.generate1000Tasks();
     }
 };
 
-window.generate5000Tasks = function() {
+(window as Window & { generate5000Tasks?: () => void }).generate5000Tasks = function(): void {
     if (uiEventManager) {
         uiEventManager.generate5000Tasks();
     }
 };
 
-window.clearTasks = function() {
+(window as Window & { clearTasks?: () => void }).clearTasks = function(): void {
     if (uiEventManager) {
         uiEventManager.clearTasks();
     }
 };
 
-window.showStats = function() {
+(window as Window & { showStats?: () => void }).showStats = function(): void {
     if (uiEventManager) {
         uiEventManager.showStats();
     }
 };
 
-window.popoutGantt = function() {
+(window as Window & { popoutGantt?: () => void }).popoutGantt = function(): void {
     if (uiEventManager) {
         uiEventManager.popoutGantt();
     }
 };
 
-window.copyConsoleOutput = function() {
+(window as Window & { copyConsoleOutput?: () => void }).copyConsoleOutput = function(): void {
     if (uiEventManager) {
         uiEventManager.copyConsoleOutput();
     }

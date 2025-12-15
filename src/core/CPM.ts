@@ -1,7 +1,6 @@
-// @ts-check
 /**
  * ============================================================================
- * CPM.js - Critical Path Method Engine
+ * CPM.ts - Critical Path Method Engine
  * ============================================================================
  * 
  * Pure calculation module for Critical Path Method scheduling.
@@ -28,26 +27,51 @@
  * │     - Critical path = longest path through network                     │
  * └─────────────────────────────────────────────────────────────────────────┘
  * 
- * USAGE:
- * ```javascript
- * import { CPM } from './CPM.js';
- * 
- * const result = CPM.calculate(tasks, calendar);
- * // result.tasks - array with calculated dates and float values
- * // result.stats - calculation statistics
- * ```
- * 
  * @author Pro Logic Scheduler
  * @version 2.0.0 - Ferrari Engine
  */
 
-import { DateUtils } from './DateUtils.js';
-import { LINK_TYPES, DEFAULT_LINK_TYPE } from './Constants.js';
+import type { Task, Calendar, CPMResult, LinkType } from '../types';
+import { DateUtils } from './DateUtils';
+import { DEFAULT_LINK_TYPE, MAX_CPM_ITERATIONS } from './Constants';
 
 /**
  * @fileoverview Critical Path Method (CPM) calculation engine
  * @module core/CPM
  */
+
+/**
+ * Successor map entry
+ */
+interface SuccessorEntry {
+  id: string;
+  type: LinkType;
+  lag: number;
+}
+
+/**
+ * Task context functions
+ */
+interface TaskContext {
+  isParent: (id: string) => boolean;
+  getDepth: (id: string, depth?: number) => number;
+}
+
+/**
+ * CPM calculation context
+ */
+interface CPMContext {
+  tasks: Task[];
+  calendar: Calendar;
+  isParent: (id: string) => boolean;
+  getDepth: (id: string, depth?: number) => number;
+  successorMap: Map<string, SuccessorEntry[]>;
+}
+
+/**
+ * CPM calculation options
+ */
+export interface CPMOptions extends Partial<TaskContext> {}
 
 /**
  * CPM (Critical Path Method) Calculator
@@ -56,7 +80,7 @@ import { LINK_TYPES, DEFAULT_LINK_TYPE } from './Constants.js';
 export class CPM {
     
     /** Maximum iterations to prevent infinite loops in circular dependencies */
-    static MAX_ITERATIONS = 50;;
+    static readonly MAX_ITERATIONS = MAX_CPM_ITERATIONS;
 
     /**
      * Calculate the full CPM schedule for a set of tasks
@@ -70,33 +94,48 @@ export class CPM {
      * 5. Float calculation
      * 6. Critical path marking
      * 
-     * @param {Array} tasks - Array of task objects
-     * @param {Object} calendar - Calendar configuration
-     * @param {Object} options - Additional options
-     * @param {Function} options.isParent - Function to check if task is a parent
-     * @param {Function} options.getDepth - Function to get task hierarchy depth
-     * @returns {Object} Result with calculated tasks and statistics
+     * @param tasks - Array of task objects
+     * @param calendar - Calendar configuration
+     * @param options - Additional options
+     * @returns Result with calculated tasks and statistics
      */
-    static calculate(tasks, calendar, options = {}) {
+    static calculate(tasks: Task[], calendar: Calendar, options: CPMOptions = {}): CPMResult {
         const startTime = performance.now();
         
         // Validate inputs
         if (!tasks || !Array.isArray(tasks)) {
             console.error('[CPM] Invalid tasks array');
-            return { tasks: [], stats: { error: 'Invalid tasks array' } };
+            return { 
+                tasks: [], 
+                stats: { 
+                    calcTime: 0,
+                    taskCount: 0,
+                    criticalCount: 0,
+                    projectEnd: '',
+                    error: 'Invalid tasks array' 
+                } 
+            };
         }
         
         if (tasks.length === 0) {
-            return { tasks: [], stats: { duration: 0, taskCount: 0 } };
+            return { 
+                tasks: [], 
+                stats: { 
+                    calcTime: 0,
+                    taskCount: 0,
+                    criticalCount: 0,
+                    projectEnd: ''
+                } 
+            };
         }
         
         // Create a deep copy of tasks to avoid mutating the original array
         // This prevents issues if tasks are modified during calculation
-        const tasksCopy = tasks.map(t => ({ ...t }));
+        const tasksCopy: Task[] = tasks.map(t => ({ ...t }));
         
         // Create helper functions with closure over tasksCopy
-        const isParent = options.isParent || ((id) => tasksCopy.some(t => t.parentId === id));
-        const getDepth = options.getDepth || ((id, depth = 0) => {
+        const isParent = options.isParent || ((id: string) => tasksCopy.some(t => t.parentId === id));
+        const getDepth = options.getDepth || ((id: string, depth: number = 0): number => {
             const task = tasksCopy.find(t => t.id === id);
             if (task && task.parentId) {
                 return getDepth(task.parentId, depth + 1);
@@ -105,7 +144,7 @@ export class CPM {
         });
         
         // Create context object for passing to internal methods
-        const ctx = {
+        const ctx: CPMContext = {
             tasks: tasksCopy,
             calendar,
             isParent,
@@ -134,23 +173,35 @@ export class CPM {
             
             const calcTime = performance.now() - startTime;
             
+            // Find project end date
+            const validEnds = tasksCopy
+                .filter(t => t.end && !isParent(t.id))
+                .map(t => t.end!)
+                .sort()
+                .reverse();
+            const projectEnd = validEnds.length > 0 ? validEnds[0] : '';
+            
             return {
                 tasks: ctx.tasks,
                 stats: {
-                    calcTimeMs: calcTime,
+                    calcTime,
                     taskCount: tasks.length,
                     criticalCount: tasksCopy.filter(t => t._isCritical && !isParent(t.id)).length,
+                    projectEnd,
                 },
             };
         } catch (error) {
-            console.error('[CPM] Calculation error:', error);
+            const err = error as Error;
+            console.error('[CPM] Calculation error:', err);
             // Return original tasks with error info
             return {
                 tasks: tasksCopy,
                 stats: {
-                    calcTimeMs: performance.now() - startTime,
+                    calcTime: performance.now() - startTime,
                     taskCount: tasks.length,
-                    error: error.message,
+                    criticalCount: 0,
+                    projectEnd: '',
+                    error: err.message,
                 },
             };
         }
@@ -162,10 +213,10 @@ export class CPM {
      * For each task, we need to know which tasks depend on it (successors).
      * This inverts the dependency relationships stored on tasks.
      * 
-     * @param {Object} ctx - Calculation context
+     * @param ctx - Calculation context
      * @private
      */
-    static _buildSuccessorMap(ctx) {
+    private static _buildSuccessorMap(ctx: CPMContext): void {
         const { tasks } = ctx;
         
         ctx.successorMap = new Map();
@@ -200,10 +251,10 @@ export class CPM {
      * ES = Max(all predecessor constraints based on dependency type)
      * EF = ES + Duration - 1 (in work days)
      * 
-     * @param {Object} ctx - Calculation context
+     * @param ctx - Calculation context
      * @private
      */
-    static _forwardPass(ctx) {
+    private static _forwardPass(ctx: CPMContext): void {
         const { tasks, calendar, isParent } = ctx;
         
         let changed = true;
@@ -216,13 +267,13 @@ export class CPM {
             tasks.forEach(task => {
                 if (isParent(task.id)) return;
                 
-                let earliestStart = null;
+                let earliestStart: string | null | undefined = null;
                 
                 // Calculate based on dependencies (predecessors)
                 if (task.dependencies && task.dependencies.length > 0) {
                     task.dependencies.forEach(dep => {
                         // Use find with error handling to prevent stack overflow
-                        let pred;
+                        let pred: Task | undefined;
                         try {
                             pred = tasks.find(t => t && t.id === dep.id);
                         } catch (err) {
@@ -232,7 +283,7 @@ export class CPM {
                         if (!pred || !pred.start || !pred.end) return;
                         
                         const lag = dep.lag || 0;
-                        let depStart;
+                        let depStart: string;
                         
                         // Calculate earliest start based on dependency type
                         switch (dep.type) {
@@ -261,33 +312,52 @@ export class CPM {
                 
                 // Apply constraints
                 const constType = task.constraintType || 'asap';
-                const constDate = task.constraintDate;
+                const constDate: string | null = task.constraintDate;
                 
-                let finalStart = earliestStart;
+                let finalStart: string | null | undefined = earliestStart;
                 
                 switch (constType) {
                     case 'snet': // Start No Earlier Than
-                        if (constDate && (!finalStart || constDate > finalStart)) {
-                            finalStart = constDate;
+                        if (constDate) {
+                            if (finalStart === null || finalStart === undefined) {
+                                finalStart = constDate;
+                            } else {
+                                const fs: string = finalStart;
+                                if (constDate > fs) {
+                                    finalStart = constDate;
+                                }
+                            }
                         }
                         break;
                     case 'snlt': // Start No Later Than
-                        if (constDate && (!finalStart || finalStart > constDate)) {
-                            finalStart = constDate;
+                        if (constDate) {
+                            if (finalStart === null || finalStart === undefined) {
+                                finalStart = constDate;
+                            } else {
+                                const fs: string = finalStart;
+                                if (fs > constDate) {
+                                    finalStart = constDate;
+                                }
+                            }
                         }
                         break;
                     case 'fnet': // Finish No Earlier Than
                         if (constDate) {
                             const impliedStart = DateUtils.addWorkDays(constDate, -(task.duration - 1), calendar);
-                            if (!finalStart || impliedStart > finalStart) {
+                            if (finalStart === null || finalStart === undefined) {
                                 finalStart = impliedStart;
+                            } else {
+                                const fs: string = finalStart;
+                                if (impliedStart > fs) {
+                                    finalStart = impliedStart;
+                                }
                             }
                         }
                         break;
                     case 'fnlt': // Finish No Later Than
                         // FNLT: Task must finish by constraint date (deadline)
                         // If normal end (from dependencies) exceeds constraint, push start earlier to meet deadline
-                        if (constDate) {
+                        if (constDate && typeof constDate === 'string') {
                             // Ensure we have a start date to work with (from dependencies or task.start)
                             const dependencyStart = finalStart || task.start || DateUtils.today();
                             
@@ -352,10 +422,10 @@ export class CPM {
      * Parent ES = Min(Child ES)
      * Parent EF = Max(Child EF)
      * 
-     * @param {Object} ctx - Calculation context
+     * @param ctx - Calculation context
      * @private
      */
-    static _calculateParentDates(ctx) {
+    private static _calculateParentDates(ctx: CPMContext): void {
         const { tasks, calendar, isParent, getDepth } = ctx;
         
         // Process from deepest level up to handle nested parents
@@ -371,12 +441,20 @@ export class CPM {
                 );
                 
                 if (children.length > 0) {
-                    const starts = children.map(c => c.start).sort();
-                    const ends = children.map(c => c.end).sort();
+                    const starts: string[] = children
+                        .map(c => c.start)
+                        .filter((s): s is string => typeof s === 'string')
+                        .sort();
+                    const ends: string[] = children
+                        .map(c => c.end)
+                        .filter((e): e is string => typeof e === 'string')
+                        .sort();
                     
-                    parent.start = starts[0];
-                    parent.end = ends[ends.length - 1];
-                    parent.duration = DateUtils.calcWorkDays(parent.start, parent.end, calendar);
+                    if (starts.length > 0 && ends.length > 0) {
+                        parent.start = starts[0];
+                        parent.end = ends[ends.length - 1];
+                        parent.duration = DateUtils.calcWorkDays(parent.start, parent.end, calendar);
+                    }
                 }
             });
         }
@@ -389,20 +467,22 @@ export class CPM {
      * LF = Min(all successor constraints based on dependency type)
      * LS = LF - Duration + 1 (in work days)
      * 
-     * @param {Object} ctx - Calculation context
+     * @param ctx - Calculation context
      * @private
      */
-    static _backwardPass(ctx) {
+    private static _backwardPass(ctx: CPMContext): void {
         const { tasks, calendar, isParent, successorMap } = ctx;
         
         // Find project Late Finish (maximum end date of all leaf tasks)
         const validEnds = tasks
             .filter(t => t.end && !isParent(t.id))
-            .map(t => t.end);
+            .map(t => t.end!)
+            .sort()
+            .reverse();
         
         if (validEnds.length === 0) return;
         
-        const projectLateFinish = validEnds.sort().reverse()[0];
+        const projectLateFinish = validEnds[0];
         
         // Initialize late dates for tasks with no successors
         tasks.forEach(task => {
@@ -438,7 +518,7 @@ export class CPM {
                 const successors = successorMap.get(task.id) || [];
                 if (successors.length === 0) return; // Already initialized
                 
-                let minLateFinish = null;
+                let minLateFinish: string | null = null;
                 let allSuccessorsCalculated = true;
                 
                 successors.forEach(succ => {
@@ -454,24 +534,24 @@ export class CPM {
                     }
                     
                     const lag = succ.lag || 0;
-                    let constrainedFinish;
+                    let constrainedFinish: string;
                     
                     // Calculate late finish based on dependency type
                     switch (succ.type) {
                         case 'FS': // Finish-to-Start
-                            constrainedFinish = DateUtils.addWorkDays(succTask.lateStart, -1 - lag, calendar);
+                            constrainedFinish = DateUtils.addWorkDays(succTask.lateStart!, -1 - lag, calendar);
                             break;
                         case 'SS': // Start-to-Start
-                            constrainedFinish = DateUtils.addWorkDays(succTask.lateStart, task.duration - 1 - lag, calendar);
+                            constrainedFinish = DateUtils.addWorkDays(succTask.lateStart!, task.duration - 1 - lag, calendar);
                             break;
                         case 'FF': // Finish-to-Finish
-                            constrainedFinish = DateUtils.addWorkDays(succTask.lateFinish, -lag, calendar);
+                            constrainedFinish = DateUtils.addWorkDays(succTask.lateFinish!, -lag, calendar);
                             break;
                         case 'SF': // Start-to-Finish
-                            constrainedFinish = DateUtils.addWorkDays(succTask.lateFinish, task.duration - 1 - lag, calendar);
+                            constrainedFinish = DateUtils.addWorkDays(succTask.lateFinish!, task.duration - 1 - lag, calendar);
                             break;
                         default:
-                            constrainedFinish = DateUtils.addWorkDays(succTask.lateStart, -1 - lag, calendar);
+                            constrainedFinish = DateUtils.addWorkDays(succTask.lateStart!, -1 - lag, calendar);
                     }
                     
                     // Take the minimum (earliest) late finish from all successors
@@ -517,10 +597,10 @@ export class CPM {
      * Parent LS = Min(Child LS)
      * Parent LF = Max(Child LF)
      * 
-     * @param {Object} ctx - Calculation context
+     * @param ctx - Calculation context
      * @private
      */
-    static _calculateParentLateDates(ctx) {
+    private static _calculateParentLateDates(ctx: CPMContext): void {
         const { tasks, isParent, getDepth } = ctx;
         
         // Process from deepest level up
@@ -536,8 +616,8 @@ export class CPM {
                 );
                 
                 if (children.length > 0) {
-                    const lateStarts = children.map(c => c.lateStart).sort();
-                    const lateFinishes = children.map(c => c.lateFinish).sort();
+                    const lateStarts = children.map(c => c.lateStart!).sort();
+                    const lateFinishes = children.map(c => c.lateFinish!).sort();
                     
                     parent.lateStart = lateStarts[0];
                     parent.lateFinish = lateFinishes[lateFinishes.length - 1];
@@ -552,10 +632,10 @@ export class CPM {
      * Total Float = LS - ES = LF - EF (slack before delaying project)
      * Free Float = Min(Successor ES) - EF - 1 (slack before delaying successor)
      * 
-     * @param {Object} ctx - Calculation context
+     * @param ctx - Calculation context
      * @private
      */
-    static _calculateFloat(ctx) {
+    private static _calculateFloat(ctx: CPMContext): void {
         const { tasks, calendar, isParent, successorMap } = ctx;
         
         tasks.forEach(task => {
@@ -565,7 +645,7 @@ export class CPM {
                 if (children.length > 0) {
                     const childFloats = children
                         .filter(c => c.totalFloat !== undefined)
-                        .map(c => c.totalFloat);
+                        .map(c => c.totalFloat!);
                     task.totalFloat = childFloats.length > 0 ? Math.min(...childFloats) : 0;
                     task.freeFloat = 0;
                 } else {
@@ -589,14 +669,14 @@ export class CPM {
                 // No successors - free float equals total float
                 task.freeFloat = task.totalFloat;
             } else {
-                let minFreeFloat = null;
+                let minFreeFloat: number | null = null;
                 
                 successors.forEach(succ => {
                     const succTask = tasks.find(t => t.id === succ.id);
                     if (!succTask || !succTask.start || isParent(succTask.id)) return;
                     
                     const lag = succ.lag || 0;
-                    let freeFloatForSucc;
+                    let freeFloatForSucc: number;
                     
                     // Calculate free float based on dependency type
                     switch (succ.type) {
@@ -623,8 +703,8 @@ export class CPM {
                 
                 // Free float cannot exceed total float
                 task.freeFloat = minFreeFloat !== null 
-                    ? Math.max(0, Math.min(minFreeFloat, task.totalFloat))
-                    : task.totalFloat;
+                    ? Math.max(0, Math.min(minFreeFloat, task.totalFloat || 0))
+                    : (task.totalFloat || 0);
             }
         });
     }
@@ -635,10 +715,10 @@ export class CPM {
      * A task is critical if Total Float <= 0
      * Parent tasks are critical if any child is critical
      * 
-     * @param {Object} ctx - Calculation context
+     * @param ctx - Calculation context
      * @private
      */
-    static _markCriticalPath(ctx) {
+    private static _markCriticalPath(ctx: CPMContext): void {
         const { tasks, isParent, getDepth } = ctx;
         
         // First pass: mark leaf tasks based on float
@@ -667,23 +747,40 @@ export class CPM {
     /**
      * Get detailed CPM data for a specific task
      * 
-     * @param {Array} tasks - Array of all tasks
-     * @param {string} taskId - ID of the task to get data for
-     * @param {Map} successorMap - Pre-built successor map (optional)
-     * @returns {Object|null} CPM data object or null if task not found
+     * @param tasks - Array of all tasks
+     * @param taskId - ID of the task to get data for
+     * @param successorMap - Pre-built successor map (optional)
+     * @returns CPM data object or null if task not found
      */
-    static getTaskCPMData(tasks, taskId, successorMap = null) {
+    static getTaskCPMData(
+        tasks: Task[], 
+        taskId: string, 
+        successorMap: Map<string, SuccessorEntry[]> | null = null
+    ): {
+        id: string;
+        name: string;
+        earlyStart: string;
+        earlyFinish: string;
+        lateStart: string | null | undefined;
+        lateFinish: string | null | undefined;
+        duration: number;
+        totalFloat: number | undefined;
+        freeFloat: number | undefined;
+        isCritical: boolean | undefined;
+        predecessors: string[];
+        successors: string[];
+    } | null {
         const task = tasks.find(t => t.id === taskId);
         if (!task) return null;
         
         // Build successor map if not provided
         if (!successorMap) {
             successorMap = new Map();
-            tasks.forEach(t => successorMap.set(t.id, []));
+            tasks.forEach(t => successorMap!.set(t.id, []));
             tasks.forEach(t => {
                 if (t.dependencies) {
                     t.dependencies.forEach(dep => {
-                        const succs = successorMap.get(dep.id);
+                        const succs = successorMap!.get(dep.id);
                         if (succs) succs.push({ id: t.id, type: dep.type, lag: dep.lag });
                     });
                 }

@@ -1,4 +1,3 @@
-// @ts-check
 /**
  * @fileoverview Date utility functions for working day calculations
  * @module core/DateUtils
@@ -11,6 +10,9 @@
  * - exceptions: Object mapping date strings to holiday reasons
  */
 
+import type { Calendar } from '../types';
+import { DEFAULT_WORKING_DAYS } from './Constants';
+
 /**
  * DateUtils class providing static methods for date calculations
  * All methods are calendar-aware and handle working days correctly
@@ -21,31 +23,30 @@ export class DateUtils {
      * Default calendar configuration
      * Mon(1) through Fri(5) as working days
      */
-    static DEFAULT_CALENDAR = {
-        workingDays: [1, 2, 3, 4, 5],
+    static readonly DEFAULT_CALENDAR: Calendar = {
+        workingDays: [...DEFAULT_WORKING_DAYS],
         exceptions: {},
     };
 
     /**
      * Check if a date is a working day based on the calendar
      * 
-     * @param {Date} date - The date to check
-     * @param {Object} calendar - Calendar configuration
-     * @param {number[]} calendar.workingDays - Array of working day indices (0=Sun, 6=Sat)
-     * @param {Object} calendar.exceptions - Map of "YYYY-MM-DD" to exception reasons (holidays)
-     * @returns {boolean} True if the date is a working day
+     * @param date - The date to check
+     * @param calendar - Calendar configuration
+     * @returns True if the date is a working day
      * 
      * @example
-     * const calendar = { workingDays: [1,2,3,4,5], exceptions: { "2025-12-25": "Christmas" } };
+     * const calendar = { workingDays: [1,2,3,4,5], exceptions: { "2025-12-25": { date: "2025-12-25", working: false, description: "Christmas" } } };
      * DateUtils.isWorkDay(new Date("2025-12-25"), calendar); // false (holiday)
      * DateUtils.isWorkDay(new Date("2025-12-22"), calendar); // true (Monday)
      * DateUtils.isWorkDay(new Date("2025-12-21"), calendar); // false (Sunday)
      */
-    static isWorkDay(date, calendar = DateUtils.DEFAULT_CALENDAR) {
+    static isWorkDay(date: Date, calendar: Calendar = DateUtils.DEFAULT_CALENDAR): boolean {
         const dateStr = date.toISOString().split('T')[0];
         
         // Check exceptions (holidays)
-        if (calendar.exceptions && calendar.exceptions[dateStr]) {
+        const exception = calendar.exceptions[dateStr];
+        if (exception && !exception.working) {
             return false;
         }
         
@@ -61,10 +62,10 @@ export class DateUtils {
      * Skips non-working days (weekends and holidays) when counting.
      * Ensures the result always lands on a working day.
      * 
-     * @param {string} dateStr - Start date string in "YYYY-MM-DD" format
-     * @param {number} days - Number of working days to add (can be negative)
-     * @param {Object} calendar - Calendar configuration
-     * @returns {string} Result date string in "YYYY-MM-DD" format
+     * @param dateStr - Start date string in "YYYY-MM-DD" format
+     * @param days - Number of working days to add (can be negative)
+     * @param calendar - Calendar configuration
+     * @returns Result date string in "YYYY-MM-DD" format
      * 
      * @example
      * // Adding 5 working days from Friday
@@ -73,7 +74,7 @@ export class DateUtils {
      * // Subtracting 1 working day from Monday
      * DateUtils.addWorkDays("2025-01-06", -1, calendar); // "2025-01-03" (Friday)
      */
-    static addWorkDays(dateStr, days, calendar = DateUtils.DEFAULT_CALENDAR) {
+    static addWorkDays(dateStr: string, days: number, calendar: Calendar = DateUtils.DEFAULT_CALENDAR): string {
         if (!dateStr) return dateStr;
         
         const date = new Date(dateStr + 'T12:00:00');
@@ -102,10 +103,10 @@ export class DateUtils {
      * Counts the number of working days from start to end date,
      * including both the start and end dates if they are working days.
      * 
-     * @param {string} startStr - Start date string in "YYYY-MM-DD" format
-     * @param {string} endStr - End date string in "YYYY-MM-DD" format
-     * @param {Object} calendar - Calendar configuration
-     * @returns {number} Number of working days (minimum 1)
+     * @param startStr - Start date string in "YYYY-MM-DD" format
+     * @param endStr - End date string in "YYYY-MM-DD" format
+     * @param calendar - Calendar configuration
+     * @returns Number of working days (minimum 1)
      * 
      * @example
      * // Monday to Friday = 5 working days
@@ -114,7 +115,7 @@ export class DateUtils {
      * // Friday to next Friday (spans weekend) = 6 working days
      * DateUtils.calcWorkDays("2025-01-03", "2025-01-10", calendar); // 6
      */
-    static calcWorkDays(startStr, endStr, calendar = DateUtils.DEFAULT_CALENDAR) {
+    static calcWorkDays(startStr: string, endStr: string, calendar: Calendar = DateUtils.DEFAULT_CALENDAR): number {
         if (!startStr || !endStr) return 0;
         
         let current = new Date(startStr + 'T12:00:00');
@@ -142,10 +143,10 @@ export class DateUtils {
      * Unlike calcWorkDays which counts inclusive days, this method
      * returns a signed difference suitable for float calculations.
      * 
-     * @param {string} startStr - Start date string in "YYYY-MM-DD" format
-     * @param {string} endStr - End date string in "YYYY-MM-DD" format
-     * @param {Object} calendar - Calendar configuration
-     * @returns {number} Signed work day difference (positive if endDate > startDate)
+     * @param startStr - Start date string in "YYYY-MM-DD" format
+     * @param endStr - End date string in "YYYY-MM-DD" format
+     * @param calendar - Calendar configuration
+     * @returns Signed work day difference (positive if endDate > startDate)
      * 
      * @example
      * // Forward difference
@@ -157,7 +158,7 @@ export class DateUtils {
      * // Same date
      * DateUtils.calcWorkDaysDifference("2025-01-06", "2025-01-06", calendar); // 0
      */
-    static calcWorkDaysDifference(startStr, endStr, calendar = DateUtils.DEFAULT_CALENDAR) {
+    static calcWorkDaysDifference(startStr: string, endStr: string, calendar: Calendar = DateUtils.DEFAULT_CALENDAR): number {
         if (!startStr || !endStr) return 0;
         
         const start = new Date(startStr + 'T12:00:00');
@@ -192,10 +193,10 @@ export class DateUtils {
      * Parse a date string to a Date object
      * Uses noon to avoid timezone issues
      * 
-     * @param {string|Date} dateStr - Date string or Date object
-     * @returns {Date|null} Parsed Date object or null if invalid
+     * @param dateStr - Date string or Date object
+     * @returns Parsed Date object or null if invalid
      */
-    static parseDate(dateStr) {
+    static parseDate(dateStr: string | Date): Date | null {
         if (!dateStr) return null;
         if (dateStr instanceof Date) return dateStr;
         return new Date(dateStr + 'T12:00:00');
@@ -204,24 +205,24 @@ export class DateUtils {
     /**
      * Format a Date object to ISO date string (YYYY-MM-DD)
      * 
-     * @param {Date} date - Date object to format
-     * @returns {string} Formatted date string
+     * @param date - Date object to format
+     * @returns Formatted date string
      */
-    static formatDateISO(date) {
+    static formatDateISO(date: Date): string {
         return date.toISOString().split('T')[0];
     }
 
     /**
      * Get today's date as an ISO string
      * 
-     * @returns {string} Today's date in "YYYY-MM-DD" format
+     * @returns Today's date in "YYYY-MM-DD" format
      */
-    static today() {
+    static today(): string {
         return new Date().toISOString().split('T')[0];
     }
 }
 
-// Also export individual functions for convenience
+// Also export individual functions for convenience (preserve existing API)
 export const isWorkDay = DateUtils.isWorkDay;
 export const addWorkDays = DateUtils.addWorkDays;
 export const calcWorkDays = DateUtils.calcWorkDays;

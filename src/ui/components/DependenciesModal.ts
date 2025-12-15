@@ -1,7 +1,6 @@
-// @ts-check
 /**
  * ============================================================================
- * DependenciesModal.js
+ * DependenciesModal.ts
  * ============================================================================
  * 
  * Modal dialog for managing task dependencies (predecessors/successors).
@@ -16,35 +15,62 @@
  * @version 2.0.0 - Ferrari Engine
  */
 
-import { LINK_TYPE_LABELS } from '../../core/Constants.js';
+import { LINK_TYPE_LABELS } from '../../core/Constants';
+import type { Task, Dependency, LinkType } from '../../types';
+
+/**
+ * Dependencies modal options
+ */
+export interface DependenciesModalOptions {
+  container?: HTMLElement;
+  onSave?: (taskId: string, dependencies: Dependency[]) => void;
+  getTasks?: () => Task[];
+  isParent?: (taskId: string) => boolean;
+}
+
+/**
+ * Dependencies modal DOM references
+ */
+interface DependenciesModalDOM {
+  taskName: HTMLElement;
+  predCount: HTMLElement;
+  succCount: HTMLElement;
+  tabBtns: NodeListOf<HTMLElement>;
+  panels: NodeListOf<HTMLElement>;
+  predSelect: HTMLSelectElement;
+  addPredBtn: HTMLButtonElement;
+  predBody: HTMLElement;
+  succBody: HTMLElement;
+  closeBtn: HTMLElement;
+  cancelBtn: HTMLButtonElement;
+  saveBtn: HTMLButtonElement;
+}
 
 export class DependenciesModal {
     
     /**
      * Link type labels for display
-     * @deprecated Use LINK_TYPE_LABELS from core/Constants.js instead
+     * @deprecated Use LINK_TYPE_LABELS from core/Constants.ts instead
      */
-    static get LINK_TYPES() {
+    static get LINK_TYPES(): Readonly<Record<LinkType, string>> {
         return LINK_TYPE_LABELS;
     }
+
+    private options: DependenciesModalOptions;
+    private container: HTMLElement;
+    private element!: HTMLDialogElement; // Initialized in _buildDOM()
+    private dom!: DependenciesModalDOM; // Initialized in _buildDOM()
+    private activeTaskId: string | null = null;
+    private tempDependencies: Dependency[] = [];
 
     /**
      * Create a new DependenciesModal instance
      * 
-     * @param {Object} options - Configuration options
-     * @param {HTMLElement} options.container - Parent container for the modal
-     * @param {Function} options.onSave - Callback when dependencies are saved (taskId, dependencies)
-     * @param {Function} options.getTasks - Function to get all tasks
-     * @param {Function} options.isParent - Function to check if task is a parent
+     * @param options - Configuration options
      */
-    constructor(options = {}) {
+    constructor(options: DependenciesModalOptions = {}) {
         this.options = options;
         this.container = options.container || document.body;
-        
-        this.activeTaskId = null;
-        this.activeTaskName = '';
-        this.tempDependencies = [];
-        this.currentTab = 'pred';
         
         this._buildDOM();
         this._bindEvents();
@@ -54,7 +80,7 @@ export class DependenciesModal {
      * Build the modal DOM structure
      * @private
      */
-    _buildDOM() {
+    private _buildDOM(): void {
         this.element = document.createElement('dialog');
         this.element.className = 'modal-dialog dependencies-modal';
         this.element.innerHTML = `
@@ -178,19 +204,25 @@ export class DependenciesModal {
         this.container.appendChild(this.element);
         
         // Cache DOM references
+        const getElement = <T extends HTMLElement>(id: string): T => {
+            const el = this.element.querySelector(`#${id}`) as T;
+            if (!el) throw new Error(`Element #${id} not found`);
+            return el;
+        };
+
         this.dom = {
-            taskName: this.element.querySelector('#modal-task-name'),
-            predCount: this.element.querySelector('#pred-count'),
-            succCount: this.element.querySelector('#succ-count'),
+            taskName: getElement<HTMLElement>('modal-task-name'),
+            predCount: getElement<HTMLElement>('pred-count'),
+            succCount: getElement<HTMLElement>('succ-count'),
             tabBtns: this.element.querySelectorAll('.tab-btn'),
             panels: this.element.querySelectorAll('.tab-panel'),
-            predSelect: this.element.querySelector('#new-pred-select'),
-            addPredBtn: this.element.querySelector('#add-pred-btn'),
-            predBody: this.element.querySelector('#pred-list-body'),
-            succBody: this.element.querySelector('#succ-list-body'),
-            closeBtn: this.element.querySelector('.modal-close'),
-            cancelBtn: this.element.querySelector('#cancel-btn'),
-            saveBtn: this.element.querySelector('#save-btn'),
+            predSelect: getElement<HTMLSelectElement>('new-pred-select'),
+            addPredBtn: getElement<HTMLButtonElement>('add-pred-btn'),
+            predBody: getElement<HTMLElement>('pred-list-body'),
+            succBody: getElement<HTMLElement>('succ-list-body'),
+            closeBtn: this.element.querySelector('.modal-close') as HTMLElement,
+            cancelBtn: getElement<HTMLButtonElement>('cancel-btn'),
+            saveBtn: getElement<HTMLButtonElement>('save-btn'),
         };
     }
 
@@ -198,7 +230,7 @@ export class DependenciesModal {
      * Bind event listeners
      * @private
      */
-    _bindEvents() {
+    private _bindEvents(): void {
         // Close buttons
         this.dom.closeBtn.addEventListener('click', () => this.close());
         this.dom.cancelBtn.addEventListener('click', () => this.close());
@@ -208,21 +240,24 @@ export class DependenciesModal {
         
         // Tab switching
         this.dom.tabBtns.forEach(btn => {
-            btn.addEventListener('click', () => this._switchTab(btn.dataset.tab));
+            btn.addEventListener('click', () => {
+                const tab = btn.getAttribute('data-tab') as 'pred' | 'succ' | null;
+                if (tab) this._switchTab(tab);
+            });
         });
         
         // Add predecessor
         this.dom.addPredBtn.addEventListener('click', () => this._addPredecessor());
         
         // Close on backdrop click
-        this.element.addEventListener('click', (e) => {
+        this.element.addEventListener('click', (e: MouseEvent) => {
             if (e.target === this.element) {
                 this.close();
             }
         });
         
         // Close on Escape
-        this.element.addEventListener('keydown', (e) => {
+        this.element.addEventListener('keydown', (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
                 this.close();
             }
@@ -233,12 +268,11 @@ export class DependenciesModal {
      * Switch active tab
      * @private
      */
-    _switchTab(tab) {
-        this.currentTab = tab;
-        
+    private _switchTab(tab: 'pred' | 'succ'): void {
         // Update tab buttons
         this.dom.tabBtns.forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.tab === tab);
+            const btnTab = btn.getAttribute('data-tab');
+            btn.classList.toggle('active', btnTab === tab);
         });
         
         // Update panels
@@ -251,7 +285,7 @@ export class DependenciesModal {
      * Render the modal content
      * @private
      */
-    _render() {
+    private _render(): void {
         this._renderPredecessors();
         this._renderSuccessors();
         this._populatePredSelect();
@@ -262,7 +296,7 @@ export class DependenciesModal {
      * Render predecessors list
      * @private
      */
-    _renderPredecessors() {
+    private _renderPredecessors(): void {
         const tbody = this.dom.predBody;
         
         if (this.tempDependencies.length === 0) {
@@ -311,22 +345,31 @@ export class DependenciesModal {
         
         // Bind events to new elements
         tbody.querySelectorAll('.link-type-select').forEach(select => {
-            select.addEventListener('change', (e) => {
-                const idx = parseInt(e.target.dataset.index);
-                this.tempDependencies[idx].type = e.target.value;
+            const selectEl = select as HTMLSelectElement;
+            selectEl.addEventListener('change', () => {
+                const idx = parseInt(selectEl.getAttribute('data-index') || '0');
+                const type = selectEl.value as LinkType;
+                if (this.tempDependencies[idx]) {
+                    this.tempDependencies[idx].type = type;
+                }
             });
         });
         
         tbody.querySelectorAll('.lag-input').forEach(input => {
-            input.addEventListener('change', (e) => {
-                const idx = parseInt(e.target.dataset.index);
-                this.tempDependencies[idx].lag = parseInt(e.target.value) || 0;
+            const inputEl = input as HTMLInputElement;
+            inputEl.addEventListener('change', () => {
+                const idx = parseInt(inputEl.getAttribute('data-index') || '0');
+                const lag = parseInt(inputEl.value) || 0;
+                if (this.tempDependencies[idx]) {
+                    this.tempDependencies[idx].lag = lag;
+                }
             });
         });
         
         tbody.querySelectorAll('.remove-link-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                const idx = parseInt(btn.dataset.index);
+            const btnEl = btn as HTMLButtonElement;
+            btnEl.addEventListener('click', () => {
+                const idx = parseInt(btnEl.getAttribute('data-index') || '0');
                 this._removePredecessor(idx);
             });
         });
@@ -336,16 +379,25 @@ export class DependenciesModal {
      * Render successors list (read-only)
      * @private
      */
-    _renderSuccessors() {
+    private _renderSuccessors(): void {
         const tbody = this.dom.succBody;
         const tasks = this.options.getTasks ? this.options.getTasks() : [];
+        
+        if (!this.activeTaskId) {
+            tbody.innerHTML = `
+                <tr class="empty-row">
+                    <td colspan="3">No successors found.</td>
+                </tr>
+            `;
+            return;
+        }
         
         // Find tasks that have this task as a dependency
         const successors = tasks.filter(t => 
             t.dependencies && t.dependencies.some(d => d.id === this.activeTaskId)
         );
         
-        this.dom.succCount.textContent = successors.length;
+        this.dom.succCount.textContent = String(successors.length);
         
         if (successors.length === 0) {
             tbody.innerHTML = `
@@ -358,6 +410,7 @@ export class DependenciesModal {
         
         tbody.innerHTML = successors.map(succ => {
             const link = succ.dependencies.find(d => d.id === this.activeTaskId);
+            if (!link) return '';
             const typeLabel = DependenciesModal.LINK_TYPES[link.type] || link.type;
             
             return `
@@ -376,14 +429,16 @@ export class DependenciesModal {
      * Populate the predecessor select dropdown
      * @private
      */
-    _populatePredSelect() {
+    private _populatePredSelect(): void {
         const select = this.dom.predSelect;
         const tasks = this.options.getTasks ? this.options.getTasks() : [];
         const isParent = this.options.isParent || (() => false);
         
         // Get existing predecessor IDs
         const existingIds = new Set(this.tempDependencies.map(d => d.id));
-        existingIds.add(this.activeTaskId); // Can't link to self
+        if (this.activeTaskId) {
+            existingIds.add(this.activeTaskId); // Can't link to self
+        }
         
         // Filter available tasks
         const availableTasks = tasks.filter(t => 
@@ -404,15 +459,15 @@ export class DependenciesModal {
      * Update predecessor/successor counts
      * @private
      */
-    _updateCounts() {
-        this.dom.predCount.textContent = this.tempDependencies.length;
+    private _updateCounts(): void {
+        this.dom.predCount.textContent = String(this.tempDependencies.length);
     }
 
     /**
      * Add a new predecessor
      * @private
      */
-    _addPredecessor() {
+    private _addPredecessor(): void {
         const select = this.dom.predSelect;
         const taskId = select.value;
         
@@ -436,7 +491,7 @@ export class DependenciesModal {
      * Remove a predecessor
      * @private
      */
-    _removePredecessor(index) {
+    private _removePredecessor(index: number): void {
         this.tempDependencies.splice(index, 1);
         this._render();
     }
@@ -445,8 +500,8 @@ export class DependenciesModal {
      * Save dependencies and close
      * @private
      */
-    _save() {
-        if (this.options.onSave) {
+    private _save(): void {
+        if (this.options.onSave && this.activeTaskId) {
             this.options.onSave(this.activeTaskId, [...this.tempDependencies]);
         }
         this.close();
@@ -456,7 +511,7 @@ export class DependenciesModal {
      * Escape HTML special characters
      * @private
      */
-    _escapeHtml(str) {
+    private _escapeHtml(str: string): string {
         if (!str) return '';
         return str.replace(/&/g, '&amp;')
                   .replace(/</g, '&lt;')
@@ -467,15 +522,13 @@ export class DependenciesModal {
     /**
      * Open the modal for a task
      * 
-     * @param {Object} task - The task to edit dependencies for
+     * @param task - The task to edit dependencies for
      */
-    open(task) {
+    open(task: Task): void {
         if (!task) return;
         
         this.activeTaskId = task.id;
-        this.activeTaskName = task.name;
-        this.tempDependencies = JSON.parse(JSON.stringify(task.dependencies || []));
-        this.currentTab = 'pred';
+        this.tempDependencies = JSON.parse(JSON.stringify(task.dependencies || [])) as Dependency[];
         
         // Update UI
         this.dom.taskName.textContent = task.name;
@@ -489,7 +542,7 @@ export class DependenciesModal {
     /**
      * Close the modal
      */
-    close() {
+    close(): void {
         this.element.close();
         this.activeTaskId = null;
         this.tempDependencies = [];
@@ -498,12 +551,7 @@ export class DependenciesModal {
     /**
      * Destroy the modal
      */
-    destroy() {
+    destroy(): void {
         this.element.remove();
     }
-}
-
-// Export for module systems
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = DependenciesModal;
 }
