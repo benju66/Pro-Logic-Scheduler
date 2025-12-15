@@ -46,6 +46,8 @@ interface SideDrawerDOM {
   lateFinish: HTMLElement;
   criticalBadge: HTMLElement;
   cpmSection: HTMLElement;
+  healthStatus: HTMLElement;
+  healthSection: HTMLElement;
   closeBtn: HTMLButtonElement;
   deleteBtn: HTMLButtonElement;
   linksBtn: HTMLButtonElement;
@@ -166,6 +168,55 @@ export class SideDrawer {
                     </div>
                 </div>
                 
+                <!-- Schedule Health -->
+                <div class="form-group" id="drawer-health-section">
+                    <label class="form-label">Schedule Health</label>
+                    <div class="health-status" id="drawer-health-status"></div>
+                </div>
+                
+                <!-- Progress Tracking Section (shown when baseline exists) -->
+                <div class="form-section" id="drawer-progress-section" style="display: none;">
+                    <h4 class="form-section-title">Progress Tracking</h4>
+                    
+                    <!-- Baseline Dates (readonly) -->
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Baseline Start</label>
+                            <input type="text" id="drawer-baseline-start" class="form-input" readonly style="background: #f1f5f9; color: #64748b;">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Baseline Finish</label>
+                            <input type="text" id="drawer-baseline-finish" class="form-input" readonly style="background: #f1f5f9; color: #64748b;">
+                        </div>
+                    </div>
+                    
+                    <!-- Actual Dates (editable) -->
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Actual Start</label>
+                            <input type="date" id="drawer-actual-start" class="form-input">
+                            <p class="form-hint">When work actually began</p>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Actual Finish</label>
+                            <input type="date" id="drawer-actual-finish" class="form-input">
+                            <p class="form-hint">When work actually completed</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Variance Display (readonly) -->
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Start Variance</label>
+                            <input type="text" id="drawer-start-variance" class="form-input" readonly style="background: #f1f5f9;">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Finish Variance</label>
+                            <input type="text" id="drawer-finish-variance" class="form-input" readonly style="background: #f1f5f9;">
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- Constraints Section -->
                 <div class="form-section">
                     <h4 class="form-section-title">Constraints & Logic</h4>
@@ -248,6 +299,15 @@ export class SideDrawer {
             lateFinish: getElement<HTMLElement>('drawer-late-finish'),
             criticalBadge: getElement<HTMLElement>('drawer-critical-badge'),
             cpmSection: getElement<HTMLElement>('drawer-cpm-section'),
+            healthStatus: getElement<HTMLElement>('drawer-health-status'),
+            healthSection: getElement<HTMLElement>('drawer-health-section'),
+            progressSection: getElement<HTMLElement>('drawer-progress-section'),
+            baselineStart: getElement<HTMLInputElement>('drawer-baseline-start'),
+            baselineFinish: getElement<HTMLInputElement>('drawer-baseline-finish'),
+            actualStart: getElement<HTMLInputElement>('drawer-actual-start'),
+            actualFinish: getElement<HTMLInputElement>('drawer-actual-finish'),
+            startVariance: getElement<HTMLInputElement>('drawer-start-variance'),
+            finishVariance: getElement<HTMLInputElement>('drawer-finish-variance'),
             closeBtn: this.element.querySelector('.drawer-close') as HTMLButtonElement,
             deleteBtn: getElement<HTMLButtonElement>('drawer-delete-btn'),
             linksBtn: getElement<HTMLButtonElement>('drawer-links-btn'),
@@ -282,6 +342,19 @@ export class SideDrawer {
         // Constraint date change
         this.dom.constraintDate.addEventListener('change', () => {
             this._handleChange('constraintDate', this.dom.constraintDate.value);
+        });
+        
+        // Actual dates change handlers
+        this.dom.actualStart.addEventListener('change', () => {
+            if (this.activeTaskId) {
+                this.options.onUpdate(this.activeTaskId, 'actualStart', this.dom.actualStart.value || null);
+            }
+        });
+        
+        this.dom.actualFinish.addEventListener('change', () => {
+            if (this.activeTaskId) {
+                this.options.onUpdate(this.activeTaskId, 'actualFinish', this.dom.actualFinish.value || null);
+            }
         });
         
         // Delete button
@@ -367,6 +440,74 @@ export class SideDrawer {
         // Update CPM data
         this._updateCPMData(task);
         
+        // Update health display
+        if (this.dom.healthStatus && task._health) {
+            const health = task._health;
+            const statusClass = `health-${health.status}`;
+            
+            this.dom.healthStatus.innerHTML = `
+                <div class="health-indicator ${statusClass}">
+                    <span class="health-icon">${health.icon}</span>
+                    <span class="health-summary">${health.summary}</span>
+                </div>
+                ${health.details.length > 0 ? `
+                    <ul class="health-details">
+                        ${health.details.map(d => `<li>${d}</li>`).join('')}
+                    </ul>
+                ` : ''}
+            `;
+            this.dom.healthSection.style.display = 'block';
+        } else if (this.dom.healthSection) {
+            this.dom.healthSection.style.display = 'none';
+        }
+        
+        // Update progress tracking section (baseline/actuals)
+        if (this.dom.progressSection && this.options.getScheduler) {
+            const scheduler = this.options.getScheduler();
+            const hasBaseline = scheduler?.hasBaseline() || false;
+            
+            if (hasBaseline) {
+                // Show progress section
+                this.dom.progressSection.style.display = 'block';
+                
+                // Update baseline fields (readonly)
+                this.dom.baselineStart.value = task.baselineStart || '';
+                this.dom.baselineFinish.value = task.baselineFinish || '';
+                
+                // Update actual fields (editable)
+                this.dom.actualStart.value = task.actualStart || '';
+                this.dom.actualFinish.value = task.actualFinish || '';
+                
+                // Calculate and display variance
+                if (scheduler && task.baselineStart && task.baselineFinish) {
+                    const variance = (scheduler as any)._calculateVariance(task);
+                    
+                    if (variance.start !== null) {
+                        const startVar = variance.start;
+                        const prefix = startVar > 0 ? '+' : '';
+                        this.dom.startVariance.value = `${prefix}${startVar} day${Math.abs(startVar) !== 1 ? 's' : ''}`;
+                        this.dom.startVariance.className = `form-input ${startVar > 0 ? 'variance-ahead' : startVar < 0 ? 'variance-behind' : 'variance-on-time'}`;
+                    } else {
+                        this.dom.startVariance.value = '-';
+                        this.dom.startVariance.className = 'form-input';
+                    }
+                    
+                    if (variance.finish !== null) {
+                        const finishVar = variance.finish;
+                        const prefix = finishVar > 0 ? '+' : '';
+                        this.dom.finishVariance.value = `${prefix}${finishVar} day${Math.abs(finishVar) !== 1 ? 's' : ''}`;
+                        this.dom.finishVariance.className = `form-input ${finishVar > 0 ? 'variance-ahead' : finishVar < 0 ? 'variance-behind' : 'variance-on-time'}`;
+                    } else {
+                        this.dom.finishVariance.value = '-';
+                        this.dom.finishVariance.className = 'form-input';
+                    }
+                }
+            } else {
+                // Hide progress section
+                this.dom.progressSection.style.display = 'none';
+            }
+        }
+        
         // Handle parent tasks (dates roll up from children, not directly editable)
         const isParent = options.isParent || false;
         this.dom.duration.disabled = isParent;
@@ -448,6 +589,74 @@ export class SideDrawer {
         
         // Update CPM data display
         this._updateCPMData(task);
+        
+        // Update health display
+        if (this.dom.healthStatus && task._health) {
+            const health = task._health;
+            const statusClass = `health-${health.status}`;
+            
+            this.dom.healthStatus.innerHTML = `
+                <div class="health-indicator ${statusClass}">
+                    <span class="health-icon">${health.icon}</span>
+                    <span class="health-summary">${health.summary}</span>
+                </div>
+                ${health.details.length > 0 ? `
+                    <ul class="health-details">
+                        ${health.details.map(d => `<li>${d}</li>`).join('')}
+                    </ul>
+                ` : ''}
+            `;
+            this.dom.healthSection.style.display = 'block';
+        } else if (this.dom.healthSection) {
+            this.dom.healthSection.style.display = 'none';
+        }
+        
+        // Update progress tracking section (baseline/actuals)
+        if (this.dom.progressSection && this.options.getScheduler) {
+            const scheduler = this.options.getScheduler();
+            const hasBaseline = scheduler?.hasBaseline() || false;
+            
+            if (hasBaseline) {
+                // Show progress section
+                this.dom.progressSection.style.display = 'block';
+                
+                // Update baseline fields (readonly)
+                this.dom.baselineStart.value = task.baselineStart || '';
+                this.dom.baselineFinish.value = task.baselineFinish || '';
+                
+                // Update actual fields (editable)
+                this.dom.actualStart.value = task.actualStart || '';
+                this.dom.actualFinish.value = task.actualFinish || '';
+                
+                // Calculate and display variance
+                if (scheduler && task.baselineStart && task.baselineFinish) {
+                    const variance = (scheduler as any)._calculateVariance(task);
+                    
+                    if (variance.start !== null) {
+                        const startVar = variance.start;
+                        const prefix = startVar > 0 ? '+' : '';
+                        this.dom.startVariance.value = `${prefix}${startVar} day${Math.abs(startVar) !== 1 ? 's' : ''}`;
+                        this.dom.startVariance.className = `form-input ${startVar > 0 ? 'variance-ahead' : startVar < 0 ? 'variance-behind' : 'variance-on-time'}`;
+                    } else {
+                        this.dom.startVariance.value = '-';
+                        this.dom.startVariance.className = 'form-input';
+                    }
+                    
+                    if (variance.finish !== null) {
+                        const finishVar = variance.finish;
+                        const prefix = finishVar > 0 ? '+' : '';
+                        this.dom.finishVariance.value = `${prefix}${finishVar} day${Math.abs(finishVar) !== 1 ? 's' : ''}`;
+                        this.dom.finishVariance.className = `form-input ${finishVar > 0 ? 'variance-ahead' : finishVar < 0 ? 'variance-behind' : 'variance-on-time'}`;
+                    } else {
+                        this.dom.finishVariance.value = '-';
+                        this.dom.finishVariance.className = 'form-input';
+                    }
+                }
+            } else {
+                // Hide progress section
+                this.dom.progressSection.style.display = 'none';
+            }
+        }
     }
 
     /**

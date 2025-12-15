@@ -31,7 +31,7 @@
  * @version 2.0.0 - Ferrari Engine
  */
 
-import type { Task, Calendar, CPMResult, LinkType } from '../types';
+import type { Task, Calendar, CPMResult, LinkType, HealthStatus, HealthIndicator } from '../types';
 import { DateUtils } from './DateUtils';
 import { DEFAULT_LINK_TYPE, MAX_CPM_ITERATIONS } from './Constants';
 
@@ -170,6 +170,9 @@ export class CPM {
             
             // Step 6: Mark critical path based on float
             CPM._markCriticalPath(ctx);
+            
+            // Step 7: Analyze schedule health (constraint violations, float issues, etc.)
+            CPM._analyzeScheduleHealth(ctx);
             
             const calcTime = performance.now() - startTime;
             
@@ -355,27 +358,10 @@ export class CPM {
                         }
                         break;
                     case 'fnlt': // Finish No Later Than
-                        // FNLT: Task must finish by constraint date (deadline)
-                        // If normal end (from dependencies) exceeds constraint, push start earlier to meet deadline
-                        if (constDate && typeof constDate === 'string') {
-                            // Ensure we have a start date to work with (from dependencies or task.start)
-                            const dependencyStart = finalStart || task.start || DateUtils.today();
-                            
-                            // Calculate what the normal end would be from dependency-driven start
-                            const normalEnd = DateUtils.addWorkDays(dependencyStart, task.duration - 1, calendar);
-                            
-                            // If normal end exceeds constraint date, we need to start earlier to meet deadline
-                            if (normalEnd > constDate) {
-                                // Calculate required start to meet deadline
-                                const requiredStart = DateUtils.addWorkDays(constDate, -(task.duration - 1), calendar);
-                                
-                                // Use the required start to meet deadline
-                                // If requiredStart < earliestStart (from dependencies), this creates an impossible
-                                // constraint - the backward pass will show negative float
-                                finalStart = requiredStart;
-                            }
-                            // If normalEnd <= constDate, constraint is already satisfied, no change needed
-                        }
+                        // FNLT does NOT affect forward pass - dependencies take priority
+                        // FNLT will be applied in backward pass to constrain Late Finish
+                        // This allows float calculation to show negative values when deadline is impossible
+                        // The health system will flag these violations with clear explanations
                         break;
                     case 'mfo': // Must Finish On
                         if (constDate) {
@@ -495,7 +481,16 @@ export class CPM {
             const successors = successorMap.get(task.id) || [];
             if (successors.length === 0) {
                 // No successors - late finish equals project end
-                task.lateFinish = projectLateFinish;
+                let lateFinish = projectLateFinish;
+                
+                // Apply FNLT constraint if present
+                if (task.constraintType === 'fnlt' && task.constraintDate) {
+                    if (task.constraintDate < lateFinish) {
+                        lateFinish = task.constraintDate;
+                    }
+                }
+                
+                task.lateFinish = lateFinish;
                 task.lateStart = DateUtils.addWorkDays(task.lateFinish, -(task.duration - 1), calendar);
             } else {
                 // Will be calculated in iteration
@@ -560,6 +555,16 @@ export class CPM {
                     }
                 });
                 
+                // Apply FNLT (Finish No Later Than) constraint
+                // FNLT sets the latest allowable finish date (deadline)
+                if (task.constraintType === 'fnlt' && task.constraintDate && minLateFinish !== null) {
+                    // If constraint date is earlier than successor-driven late finish,
+                    // use the constraint date as the deadline
+                    if (task.constraintDate < minLateFinish) {
+                        minLateFinish = task.constraintDate;
+                    }
+                }
+                
                 // Update if we have a valid late finish
                 if (minLateFinish !== null) {
                     if (task.lateFinish !== minLateFinish) {
@@ -578,8 +583,17 @@ export class CPM {
             if (isParent(task.id)) return;
             
             if (!task.lateFinish) {
-                task.lateFinish = projectLateFinish;
-                task.lateStart = DateUtils.addWorkDays(projectLateFinish, -(task.duration - 1), calendar);
+                let lateFinish = projectLateFinish;
+                
+                // Apply FNLT constraint if present
+                if (task.constraintType === 'fnlt' && task.constraintDate) {
+                    if (task.constraintDate < lateFinish) {
+                        lateFinish = task.constraintDate;
+                    }
+                }
+                
+                task.lateFinish = lateFinish;
+                task.lateStart = DateUtils.addWorkDays(lateFinish, -(task.duration - 1), calendar);
             }
         });
         
@@ -706,6 +720,190 @@ export class CPM {
                     ? Math.max(0, Math.min(minFreeFloat, task.totalFloat || 0))
                     : (task.totalFloat || 0);
             }
+        });
+    }
+
+    /**
+     * Analyze schedule health for all tasks
+     * 
+     * Calculates health indicators based on:
+     * - Constraint violations (FNLT deadlines)
+     * - Float values (negative = over-constrained)
+     * - Critical path status
+     * - Circular dependencies (blocked status)
+     * 
+     * Health Status Definitions:
+     * - critical: >3 days late OR negative float
+     * - at-risk: 1-3 days late OR critical path with ≤2 days float
+     * - blocked: Part of circular dependency (detected via MAX_ITERATIONS)
+     * - healthy: On track with adequate float
+     * 
+     * @param ctx - Calculation context
+     * @private
+     */
+    private static _analyzeScheduleHealth(ctx: CPMContext): void {
+        const { tasks, calendar, isParent } = ctx;
+        
+        // Track if forward/backward pass hit max iterations (circular dependency indicator)
+        // We'll check this by looking for tasks that might be in cycles
+        // For now, we'll detect blocked status by checking if task has dependencies but no valid dates
+        const blockedTaskIds = new Set<string>();
+        
+        // Detect blocked tasks: tasks with dependencies but invalid start/end dates
+        tasks.forEach(task => {
+            if (isParent(task.id)) return;
+            if (task.dependencies && task.dependencies.length > 0) {
+                // Check if any predecessor is missing or invalid
+                const hasInvalidPredecessor = task.dependencies.some(dep => {
+                    const pred = tasks.find(t => t.id === dep.id);
+                    return !pred || !pred.start || !pred.end;
+                });
+                
+                // Also check if task itself has invalid dates despite having dependencies
+                if ((hasInvalidPredecessor || !task.start || !task.end) && task.dependencies.length > 0) {
+                    blockedTaskIds.add(task.id);
+                }
+            }
+        });
+        
+        tasks.forEach(task => {
+            // Parent tasks: minimal health indicator
+            if (isParent(task.id)) {
+                task._health = {
+                    status: 'healthy',
+                    icon: '',
+                    summary: 'Summary task',
+                    details: ['Health is derived from child tasks'],
+                };
+                return;
+            }
+            
+            // Priority 0: Check for blocked status (circular dependencies or missing predecessors)
+            if (blockedTaskIds.has(task.id)) {
+                task._health = {
+                    status: 'blocked',
+                    icon: '🟣',
+                    summary: 'Blocked by dependency issues',
+                    details: [
+                        'Task has dependency errors',
+                        'Check for circular dependencies or missing predecessors',
+                        'Review dependency relationships',
+                    ],
+                };
+                return;
+            }
+            
+            // Priority 1: Check FNLT constraint violations
+            if (task.constraintType === 'fnlt' && task.constraintDate && task.end) {
+                const projectedEnd = task.end;
+                const deadline = task.constraintDate;
+                
+                // Calculate variance: deadline - projectedEnd
+                // Negative means projectedEnd is AFTER deadline (late)
+                // IMPORTANT: calcWorkDaysDifference(start, end) returns end - start
+                // So calcWorkDaysDifference(projectedEnd, deadline) = deadline - projectedEnd
+                const variance = DateUtils.calcWorkDaysDifference(projectedEnd, deadline, calendar);
+                
+                if (variance < 0) {
+                    const daysLate = Math.abs(variance);
+                    const status: HealthStatus = daysLate > 3 ? 'critical' : 'at-risk';
+                    const icon = status === 'critical' ? '🔴' : '🟡';
+                    
+                    task._health = {
+                        status,
+                        icon,
+                        summary: `${daysLate} day${daysLate > 1 ? 's' : ''} past deadline`,
+                        details: [
+                            `Deadline: ${deadline}`,
+                            `Projected finish: ${projectedEnd}`,
+                            `Variance: ${variance} work days`,
+                            status === 'critical' 
+                                ? 'Cannot meet deadline with current logic'
+                                : 'At risk of missing deadline',
+                        ],
+                        constraintVariance: variance,
+                        constraintTarget: deadline,
+                        projectedDate: projectedEnd,
+                    };
+                    return;
+                }
+                
+                // Deadline will be met, but check if buffer is tight
+                if (variance <= 2) {
+                    task._health = {
+                        status: 'at-risk',
+                        icon: '🟡',
+                        summary: `${variance} day${variance !== 1 ? 's' : ''} buffer to deadline`,
+                        details: [
+                            `Deadline: ${deadline}`,
+                            `Projected finish: ${projectedEnd}`,
+                            'Limited buffer before deadline',
+                        ],
+                        constraintVariance: variance,
+                        constraintTarget: deadline,
+                        projectedDate: projectedEnd,
+                    };
+                    return;
+                }
+            }
+            
+            // Priority 2: Check for negative float (over-constrained)
+            const totalFloat = task.totalFloat ?? task._totalFloat ?? 0;
+            if (totalFloat < 0) {
+                task._health = {
+                    status: 'critical',
+                    icon: '🔴',
+                    summary: `Negative float (${totalFloat}d)`,
+                    details: [
+                        'Task is over-constrained',
+                        'Dependencies conflict with constraints',
+                        `Total float: ${totalFloat} work days`,
+                        'Review constraints or predecessor logic',
+                    ],
+                    constraintVariance: totalFloat,
+                };
+                return;
+            }
+            
+            // Priority 3: Critical path with low float
+            if (task._isCritical && totalFloat <= 2) {
+                task._health = {
+                    status: 'at-risk',
+                    icon: '🟡',
+                    summary: `Critical path, ${totalFloat}d flexibility`,
+                    details: [
+                        'On the critical path',
+                        'Any delay directly affects project end date',
+                        `Total float: ${totalFloat} work days`,
+                    ],
+                };
+                return;
+            }
+            
+            // Priority 4: Low float (not critical, but limited flexibility)
+            if (totalFloat > 0 && totalFloat <= 3) {
+                task._health = {
+                    status: 'healthy',
+                    icon: '🟢',
+                    summary: `${totalFloat}d flexibility (limited)`,
+                    details: [
+                        `Total float: ${totalFloat} work days`,
+                        'Task has limited schedule flexibility',
+                    ],
+                };
+                return;
+            }
+            
+            // Default: Healthy with good float
+            task._health = {
+                status: 'healthy',
+                icon: '🟢',
+                summary: `${totalFloat}d flexibility`,
+                details: [
+                    `Total float: ${totalFloat} work days`,
+                    'Task has adequate schedule flexibility',
+                ],
+            };
         });
     }
 

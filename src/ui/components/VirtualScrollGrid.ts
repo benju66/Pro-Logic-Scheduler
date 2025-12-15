@@ -104,6 +104,7 @@ export class VirtualScrollGrid {
         READONLY: 'readonly',
         ACTIONS: 'actions',
         DRAG: 'drag',             // Drag handle for row reordering
+        VARIANCE: 'variance',     // Variance column (computed, readonly)
     } as const;
 
     // =========================================================================
@@ -362,6 +363,7 @@ export class VirtualScrollGrid {
                 return `<select class="vsg-select cell-input" data-field="${col.field}">${options}</select>`;
                 
             case VirtualScrollGrid.COLUMN_TYPES.READONLY:
+            case VirtualScrollGrid.COLUMN_TYPES.VARIANCE:
                 return `<span class="vsg-readonly" data-field="${col.field}"></span>`;
                 
             case VirtualScrollGrid.COLUMN_TYPES.ACTIONS:
@@ -1126,8 +1128,9 @@ export class VirtualScrollGrid {
             }
             (input as HTMLInputElement | HTMLSelectElement).value = value ? String(value) : '';
             
-            // Handle readonly state for parent tasks
-            if (col.readonlyForParent && meta.isParent) {
+            // Handle readonly state for parent tasks and readonly columns
+            const isReadonly = col.editable === false || (col.readonlyForParent && meta.isParent);
+            if (isReadonly) {
                 input.classList.add('cell-readonly');
                 (input as HTMLInputElement | HTMLSelectElement).disabled = true;
             } else {
@@ -1137,6 +1140,11 @@ export class VirtualScrollGrid {
         } else {
             // Text/readonly display
             input.textContent = value ? String(value) : '';
+        }
+        
+        // Apply cell class if specified
+        if (col.cellClass) {
+            cell.classList.add(...col.cellClass.split(' '));
         }
         
         // Handle special column: name with indent and collapse
@@ -1449,6 +1457,32 @@ export class VirtualScrollGrid {
     refresh(): void {
         this._measure();
         this._updateVisibleRows();
+    }
+
+    /**
+     * Update column definitions and rebuild grid structure
+     * Used when columns change dynamically (e.g., baseline columns added/removed)
+     * @param columns - New column definitions
+     */
+    updateColumns(columns: GridColumn[]): void {
+        console.log('[VirtualScrollGrid] Updating columns:', columns.length);
+        
+        // Update options
+        this.options.columns = columns;
+        
+        // Rebuild row pool with new column structure
+        // Clear existing rows
+        this.dom.rowContainer.innerHTML = '';
+        this.dom.rows = [];
+        
+        // Recreate row pool with new column structure
+        this._createRowPool();
+        
+        // Re-render visible rows
+        this._measure();
+        this._updateVisibleRows();
+        
+        console.log('[VirtualScrollGrid] ✅ Columns updated, row pool rebuilt');
     }
 
     /**

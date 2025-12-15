@@ -327,16 +327,8 @@
             background: white;
             border-right: 1px solid #e2e8f0;
             
-            /* Column widths as CSS variables */
-            --w-drag: 28px;
-            --w-checkbox: 30px;
-            --w-rowNum: 35px;
-            --w-name: 220px;
-            --w-duration: 50px;
-            --w-start: 110px;
-            --w-end: 95px;
-            --w-constraintType: 70px;
-            --w-actions: 120px;
+            /* Column widths as CSS variables - initialized programmatically by SchedulerService._initializeColumnCSSVariables() */
+            /* Default values are set in code, saved values from localStorage override these */
         }
         
         .grid-header {
@@ -1412,6 +1404,134 @@
         .toast.error {
             background: #dc2626;
         }
+        
+        /* ============================================================
+           HEALTH STATUS INDICATORS
+           ============================================================ */
+        .health-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-weight: 500;
+        }
+        
+        .health-indicator-inline {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+        }
+        
+        .health-indicator.health-healthy,
+        .health-indicator-inline.health-healthy {
+            background: rgba(34, 197, 94, 0.1);
+            color: #22c55e;
+            border: 1px solid rgba(34, 197, 94, 0.2);
+        }
+        
+        .health-indicator.health-at-risk,
+        .health-indicator-inline.health-at-risk {
+            background: rgba(245, 158, 11, 0.1);
+            color: #f59e0b;
+            border: 1px solid rgba(245, 158, 11, 0.2);
+        }
+        
+        .health-indicator.health-critical,
+        .health-indicator-inline.health-critical {
+            background: rgba(239, 68, 68, 0.1);
+            color: #ef4444;
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+        
+        .health-indicator.health-blocked,
+        .health-indicator-inline.health-blocked {
+            background: rgba(124, 58, 237, 0.1);
+            color: #7c3aed;
+            border: 1px solid rgba(124, 58, 237, 0.2);
+        }
+        
+        .health-indicator.health-forced,
+        .health-indicator-inline.health-forced {
+            background: rgba(249, 115, 22, 0.1);
+            color: #f97316;
+            border: 1px solid rgba(249, 115, 22, 0.2);
+        }
+        
+        .health-icon {
+            font-size: 16px;
+        }
+        
+        .health-summary {
+            flex: 1;
+        }
+        
+        .health-details {
+            margin: 8px 0 0 0;
+            padding-left: 24px;
+            font-size: 12px;
+            color: #94a3b8;
+            list-style: disc;
+        }
+        
+        .health-details li {
+            margin-bottom: 4px;
+        }
+        
+        /* Critical pulse animation */
+        .health-indicator.health-critical .health-icon,
+        .health-indicator-inline.health-critical {
+            animation: health-pulse 2s infinite;
+        }
+        
+        @keyframes health-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        /* ============================================================
+           VARIANCE COLUMNS
+           ============================================================ */
+        .variance-on-time {
+            color: #22c55e;
+            font-weight: 500;
+        }
+        
+        .variance-ahead {
+            color: #22c55e;
+            font-weight: 600;
+        }
+        
+        .variance-behind {
+            color: #ef4444;
+            font-weight: 600;
+        }
+        
+        /* Baseline columns styling (readonly reference) */
+        .baseline-column-header {
+            background: rgba(148, 163, 184, 0.1);
+            font-weight: 600;
+            color: #64748b;
+        }
+        
+        .baseline-column {
+            background: rgba(148, 163, 184, 0.05);
+            color: #64748b;
+        }
+        
+        /* Actual columns styling */
+        .actual-column-header {
+            background: rgba(59, 130, 246, 0.05);
+            font-weight: 600;
+        }
+        
+        .actual-column {
+            background: rgba(59, 130, 246, 0.02);
+        }
     </style>
 </head>
 <body>
@@ -1540,6 +1660,19 @@
                 </svg>
                 Calendar
             </button>
+            <button class="btn btn-outline" data-action="set-baseline" title="Set Baseline from Current Schedule">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                    <path d="M2 17l10 5 10-5M2 12l10 5 10-5"/>
+                </svg>
+                Set Baseline
+            </button>
+            <button class="btn btn-outline" data-action="clear-baseline" title="Clear Baseline Data" id="clear-baseline-btn" style="display: none;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M18 6L6 18M6 6l12 12"/>
+                </svg>
+                Clear Baseline
+            </button>
         </div>
         
         <div class="header-right">
@@ -1567,22 +1700,8 @@
     <main class="main">
         <!-- Grid Pane -->
         <div class="grid-pane" id="grid-pane">
-            <div class="grid-header" id="grid-header">
-                <div class="grid-header-cell" data-field="drag" style="width: var(--w-drag);">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.4">
-                        <circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/>
-                        <circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/>
-                    </svg>
-                </div>
-                <div class="grid-header-cell" data-field="checkbox" style="width: var(--w-checkbox);">☑</div>
-                <div class="grid-header-cell" data-field="rowNum" style="width: var(--w-rowNum);">#<div class="col-resizer" data-field="rowNum"></div></div>
-                <div class="grid-header-cell" data-field="name" style="width: var(--w-name); justify-content: flex-start;">Task Name<div class="col-resizer" data-field="name"></div></div>
-                <div class="grid-header-cell" data-field="duration" style="width: var(--w-duration);">Dur<div class="col-resizer" data-field="duration"></div></div>
-                <div class="grid-header-cell" data-field="start" style="width: var(--w-start); justify-content: flex-start;">Start<div class="col-resizer" data-field="start"></div></div>
-                <div class="grid-header-cell" data-field="end" style="width: var(--w-end); justify-content: flex-start;">Finish<div class="col-resizer" data-field="end"></div></div>
-                <div class="grid-header-cell" data-field="constraintType" style="width: var(--w-constraintType);">Constr<div class="col-resizer" data-field="constraintType"></div></div>
-                <div class="grid-header-cell" data-field="actions" style="width: var(--w-actions);">Actions<div class="col-resizer" data-field="actions"></div></div>
-            </div>
+            <!-- Grid header is built dynamically by SchedulerService._buildGridHeader() -->
+            <div class="grid-header" id="grid-header"></div>
             <div class="grid-container" id="grid-container"></div>
         </div>
         

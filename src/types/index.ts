@@ -23,6 +23,37 @@ export type LinkType = 'FS' | 'SS' | 'FF' | 'SF';
 export type ConstraintType = 'asap' | 'snet' | 'snlt' | 'fnet' | 'fnlt' | 'mfo';
 
 /**
+ * Health status for schedule analysis
+ * - healthy: Task is on track with adequate float
+ * - at-risk: Task has low float or minor constraint variance (1-3 days)
+ * - critical: Task has negative float or significant constraint variance (>3 days)
+ * - blocked: Task has dependency errors (circular, missing predecessor)
+ * - forced: Task dates have been manually overridden
+ */
+export type HealthStatus = 'healthy' | 'at-risk' | 'critical' | 'blocked' | 'forced';
+
+/**
+ * Health indicator for a task
+ * Provides at-a-glance status with progressive detail levels
+ */
+export interface HealthIndicator {
+  /** Overall health status */
+  status: HealthStatus;
+  /** Icon for display (emoji or can be mapped to SVG) */
+  icon: string;
+  /** One-line summary for tooltips */
+  summary: string;
+  /** Detailed bullet points explaining the status */
+  details: string[];
+  /** Variance from constraint in work days (negative = late) */
+  constraintVariance?: number;
+  /** The constraint date being compared against */
+  constraintTarget?: string;
+  /** The projected/calculated date */
+  projectedDate?: string;
+}
+
+/**
  * Dependency between tasks
  */
 export interface Dependency {
@@ -89,6 +120,29 @@ export interface Task {
   totalFloat?: number;
   /** Free float in days (calculated by CPM) */
   freeFloat?: number;
+  
+  // === Schedule Health (calculated by CPM) ===
+  
+  /** Schedule health analysis */
+  _health?: HealthIndicator;
+  
+  // === Actuals Tracking (future implementation) ===
+  
+  /** Actual start date - when work actually began (null if not started) */
+  actualStart?: string | null;
+  /** Actual finish date - when work actually completed (null if not finished) */
+  actualFinish?: string | null;
+  /** Remaining duration in work days (for in-progress tasks) */
+  remainingDuration?: number;
+  
+  // === Baseline Tracking (future implementation) ===
+  
+  /** Baseline start date - from saved baseline snapshot */
+  baselineStart?: string | null;
+  /** Baseline finish date - from saved baseline snapshot */
+  baselineFinish?: string | null;
+  /** Baseline duration in work days */
+  baselineDuration?: number;
 }
 
 /**
@@ -147,11 +201,11 @@ export interface GridColumn {
   /** Is column editable? */
   editable: boolean;
   /** Column type for rendering/editing */
-  type: 'text' | 'number' | 'date' | 'select' | 'checkbox' | 'readonly' | 'actions' | 'drag';
+  type: 'text' | 'number' | 'date' | 'select' | 'checkbox' | 'readonly' | 'actions' | 'drag' | 'health' | 'variance';
   /** Options for select type */
   options?: string[];
-  /** Field name on Task object */
-  field: keyof Task | 'checkbox';
+  /** Field name on Task object (or computed field name) */
+  field: keyof Task | 'checkbox' | 'startVariance' | 'finishVariance';
   /** Alignment */
   align?: 'left' | 'center' | 'right';
   /** Is column readonly for parent tasks? */
@@ -170,6 +224,16 @@ export interface GridColumn {
     color?: string;
     showIf?: (task: Task, meta: { isParent: boolean; depth: number; isCollapsed: boolean; index: number }) => boolean;
   }>;
+  /** Minimum width for resizing (defaults to width * 0.5) */
+  minWidth?: number;
+  /** Whether column should have a resizer (defaults to true, except for drag/checkbox) */
+  resizable?: boolean;
+  /** CSS class for header cell */
+  headerClass?: string;
+  /** CSS class for data cells */
+  cellClass?: string;
+  /** Whether column is visible (for conditional columns, defaults to true) */
+  visible?: boolean | (() => boolean);
 }
 
 /**
@@ -319,5 +383,11 @@ export function getTaskFieldValue(task: Task, field: GridColumn['field']): unkno
   if (field === 'checkbox' || field === 'drag' || field === 'rowNum' || field === 'actions') {
     return undefined;
   }
+  
+  // Computed fields (variance) - these are calculated, not stored
+  if (field === 'startVariance' || field === 'finishVariance') {
+    return undefined; // Variance is computed in renderer, not stored
+  }
+  
   return task[field as keyof Task];
 }

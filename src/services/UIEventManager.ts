@@ -188,18 +188,31 @@ export class UIEventManager {
     // Load saved column widths from localStorage
     this._loadColumnWidths(gridPane);
     
-    // Minimum widths for each column (industry standard: prevent columns from becoming unusable)
-    const minWidths: Record<string, number> = {
-      drag: 20,
-      checkbox: 25,
-      rowNum: 30,
-      name: 100,
-      duration: 40,
-      start: 80,
-      end: 80,
-      constraintType: 50,
-      actions: 80,
-    };
+    // Get minimum widths from column definitions (single source of truth)
+    const scheduler = this.getScheduler();
+    let minWidths: Record<string, number> = {};
+    
+    if (scheduler) {
+      const columns = scheduler.getColumnDefinitions();
+      columns.forEach(col => {
+        minWidths[col.field] = col.minWidth ?? Math.max(20, col.width * 0.5);
+      });
+    } else {
+      // Fallback to defaults if scheduler not available (shouldn't happen)
+      console.warn('[UIEventManager] Scheduler not available, using fallback min widths');
+      minWidths = {
+        drag: 20,
+        checkbox: 25,
+        rowNum: 30,
+        name: 100,
+        duration: 40,
+        start: 80,
+        end: 80,
+        constraintType: 50,
+        health: 60,
+        actions: 80,
+      };
+    }
     
     let isResizing = false;
     let startX = 0;
@@ -591,6 +604,12 @@ export class UIEventManager {
         case 'copy-console':
           this.copyConsoleOutput();
           break;
+        case 'set-baseline':
+          this.handleSetBaseline();
+          break;
+        case 'clear-baseline':
+          this.handleClearBaseline();
+          break;
         default:
           // Don't warn for grid actions or modal actions
           const gridActions = ['collapse', 'indent', 'outdent', 'links', 'delete'];
@@ -873,5 +892,29 @@ To copy console output:
       document.removeEventListener('click', this._buttonClickHandler, true);
       this._buttonClickHandler = null;
     }
+  }
+
+  /**
+   * Handle Set Baseline button click
+   */
+  handleSetBaseline(): void {
+    const scheduler = this.getScheduler();
+    if (!scheduler) {
+      this._showToast('Scheduler not ready', 'error');
+      return;
+    }
+    scheduler.setBaseline();
+  }
+
+  /**
+   * Handle Clear Baseline button click
+   */
+  handleClearBaseline(): void {
+    const scheduler = this.getScheduler();
+    if (!scheduler) {
+      this._showToast('Scheduler not ready', 'error');
+      return;
+    }
+    scheduler.clearBaseline();
   }
 }

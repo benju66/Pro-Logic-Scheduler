@@ -175,6 +175,21 @@ export class SchedulerService {
             throw new Error('gridContainer and ganttContainer are required');
         }
 
+        // Check for existing baseline on load
+        this._hasBaseline = this.hasBaseline();
+
+        // Check for existing baseline on load
+        this._hasBaseline = this.hasBaseline();
+
+        // Initialize CSS variables for column widths (must be before header build)
+        this._initializeColumnCSSVariables();
+
+        // Build grid header dynamically from column definitions
+        this._buildGridHeader();
+        
+        // Update baseline button visibility
+        this._updateBaselineButtonVisibility();
+
         // Create grid component
         this.grid = new VirtualScrollGrid(gridContainer, {
             rowHeight: 38,
@@ -351,19 +366,31 @@ export class SchedulerService {
 
     /**
      * Get column definitions for the grid
+     * @returns Column definitions
+     */
+    getColumnDefinitions(): GridColumn[] {
+        return this._getColumnDefinitions();
+    }
+
+    /**
+     * Get column definitions for the grid (internal)
+     * Conditionally includes actual/variance columns when baseline exists
      * @private
      * @returns Column definitions
      */
     private _getColumnDefinitions(): GridColumn[] {
-        return [
+        const hasBaseline = this.hasBaseline();
+        const columns: GridColumn[] = [
             {
                 id: 'drag',
                 label: '',
-                field: 'drag', // Fixed: must match HTML header data-field
+                field: 'drag',
                 type: 'drag',
                 width: 28,
                 align: 'center',
                 editable: false,
+                resizable: false,
+                minWidth: 20,
             },
             {
                 id: 'checkbox',
@@ -373,15 +400,18 @@ export class SchedulerService {
                 width: 30,
                 align: 'center',
                 editable: false,
+                resizable: false,
+                minWidth: 25,
             },
             {
                 id: 'rowNum',
                 label: '#',
-                field: 'rowNum', // Fixed: must match HTML header data-field
+                field: 'rowNum',
                 type: 'readonly',
                 width: 35,
                 align: 'center',
                 editable: false,
+                minWidth: 30,
                 renderer: (_task, meta) => `<span style="color: #94a3b8; font-size: 11px;">${meta.index + 1}</span>`,
             },
             {
@@ -391,6 +421,7 @@ export class SchedulerService {
                 type: 'text',
                 width: 220,
                 editable: true,
+                minWidth: 100,
             },
             {
                 id: 'duration',
@@ -401,6 +432,7 @@ export class SchedulerService {
                 align: 'center',
                 editable: true,
                 readonlyForParent: true,
+                minWidth: 40,
             },
             {
                 id: 'start',
@@ -411,6 +443,7 @@ export class SchedulerService {
                 editable: true,
                 showConstraintIcon: true,
                 readonlyForParent: true,
+                minWidth: 80,
             },
             {
                 id: 'end',
@@ -421,6 +454,7 @@ export class SchedulerService {
                 editable: true,
                 showConstraintIcon: true,
                 readonlyForParent: true,
+                minWidth: 80,
             },
             {
                 id: 'constraintType',
@@ -431,14 +465,32 @@ export class SchedulerService {
                 editable: true,
                 options: ['asap', 'snet', 'snlt', 'fnet', 'fnlt', 'mfo'],
                 readonlyForParent: true,
+                minWidth: 50,
+            },
+            {
+                id: 'health',
+                label: 'Health',
+                field: '_health' as keyof Task,
+                type: 'readonly',
+                width: 80,
+                align: 'center',
+                editable: false,
+                minWidth: 60,
+                renderer: (task) => {
+                    if (!task._health) return '<span style="color: #94a3b8;">-</span>';
+                    const health = task._health;
+                    const statusClass = `health-${health.status}`;
+                    return `<span class="health-indicator-inline ${statusClass}" title="${health.summary}">${health.icon}</span>`;
+                },
             },
             {
                 id: 'actions',
                 label: 'Actions',
-                field: 'actions', // Fixed: must match HTML header data-field
+                field: 'actions',
                 type: 'actions',
                 width: 80,
                 editable: false,
+                minWidth: 80,
                 actions: [
                     { 
                         id: 'outdent', 
@@ -471,6 +523,449 @@ export class SchedulerService {
                 ],
             },
         ];
+
+        // Add baseline/actual/variance columns if baseline exists
+        if (hasBaseline) {
+            // Baseline Start column (readonly reference)
+            columns.push({
+                id: 'baselineStart',
+                label: 'Baseline Start',
+                field: 'baselineStart',
+                type: 'date',
+                width: 110,
+                editable: false,
+                readonlyForParent: true,
+                minWidth: 80,
+                headerClass: 'baseline-column-header',
+                cellClass: 'baseline-column',
+                visible: true,
+            });
+
+            // Actual Start column
+            columns.push({
+                id: 'actualStart',
+                label: 'Actual Start',
+                field: 'actualStart',
+                type: 'date',
+                width: 110,
+                editable: true,
+                readonlyForParent: true,
+                minWidth: 80,
+                headerClass: 'actual-column-header',
+                cellClass: 'actual-column',
+                visible: true,
+            });
+
+            // Start Variance column
+            columns.push({
+                id: 'startVariance',
+                label: 'Start Var',
+                field: 'startVariance',
+                type: 'variance',
+                width: 80,
+                align: 'center',
+                editable: false,
+                readonlyForParent: true,
+                minWidth: 60,
+                visible: true,
+                renderer: (task) => {
+                    const variance = this._calculateVariance(task);
+                    if (variance.start === null) return '<span style="color: #94a3b8;">-</span>';
+                    
+                    const value = variance.start;
+                    const absValue = Math.abs(value);
+                    const isPositive = value > 0;
+                    const isNegative = value < 0;
+                    
+                    let className = 'variance-on-time';
+                    let prefix = '';
+                    
+                    if (isPositive) {
+                        className = 'variance-ahead';
+                        prefix = '+';
+                    } else if (isNegative) {
+                        className = 'variance-behind';
+                        prefix = '';
+                    }
+                    
+                    return `<span class="${className}" title="${isPositive ? 'Ahead' : isNegative ? 'Behind' : 'On time'} by ${absValue} day${absValue !== 1 ? 's' : ''}">${prefix}${value}</span>`;
+                },
+            });
+
+            // Baseline Finish column (readonly reference)
+            columns.push({
+                id: 'baselineFinish',
+                label: 'Baseline Finish',
+                field: 'baselineFinish',
+                type: 'date',
+                width: 110,
+                editable: false,
+                readonlyForParent: true,
+                minWidth: 80,
+                headerClass: 'baseline-column-header',
+                cellClass: 'baseline-column',
+                visible: true,
+            });
+
+            // Actual Finish column
+            columns.push({
+                id: 'actualFinish',
+                label: 'Actual Finish',
+                field: 'actualFinish',
+                type: 'date',
+                width: 110,
+                editable: true,
+                readonlyForParent: true,
+                minWidth: 80,
+                headerClass: 'actual-column-header',
+                cellClass: 'actual-column',
+                visible: true,
+            });
+
+            // Finish Variance column
+            columns.push({
+                id: 'finishVariance',
+                label: 'Finish Var',
+                field: 'finishVariance',
+                type: 'variance',
+                width: 80,
+                align: 'center',
+                editable: false,
+                readonlyForParent: true,
+                minWidth: 60,
+                visible: true,
+                renderer: (task) => {
+                    const variance = this._calculateVariance(task);
+                    if (variance.finish === null) return '<span style="color: #94a3b8;">-</span>';
+                    
+                    const value = variance.finish;
+                    const absValue = Math.abs(value);
+                    const isPositive = value > 0;
+                    const isNegative = value < 0;
+                    
+                    let className = 'variance-on-time';
+                    let prefix = '';
+                    
+                    if (isPositive) {
+                        className = 'variance-ahead';
+                        prefix = '+';
+                    } else if (isNegative) {
+                        className = 'variance-behind';
+                        prefix = '';
+                    }
+                    
+                    return `<span class="${className}" title="${isPositive ? 'Ahead' : isNegative ? 'Behind' : 'On time'} by ${absValue} day${absValue !== 1 ? 's' : ''}">${prefix}${value}</span>`;
+                },
+            });
+        }
+
+        return columns;
+    }
+
+    /**
+     * Build the grid header dynamically from column definitions
+     * @private
+     */
+    private _buildGridHeader(): void {
+        const headerContainer = document.getElementById('grid-header');
+        if (!headerContainer) {
+            console.warn('[SchedulerService] Grid header container not found');
+            return;
+        }
+
+        const columns = this._getColumnDefinitions();
+        
+        // Clear existing header
+        headerContainer.innerHTML = '';
+
+        // Build header cells from column definitions
+        columns.forEach(col => {
+            // Check if column should be visible
+            const isVisible = col.visible === undefined 
+                ? true 
+                : typeof col.visible === 'function' 
+                    ? col.visible() 
+                    : col.visible;
+
+            if (!isVisible) return;
+
+            const headerCell = document.createElement('div');
+            headerCell.className = 'grid-header-cell';
+            headerCell.setAttribute('data-field', col.field);
+            
+            // Set width using CSS variable
+            headerCell.style.width = `var(--w-${col.field}, ${col.width}px)`;
+            
+            // Set alignment
+            if (col.align === 'center' || col.align === 'right') {
+                headerCell.style.justifyContent = col.align === 'center' ? 'center' : 'flex-end';
+            } else {
+                headerCell.style.justifyContent = 'flex-start';
+            }
+
+            // Add header class if specified
+            if (col.headerClass) {
+                headerCell.classList.add(...col.headerClass.split(' '));
+            }
+
+            // Build header content based on column type
+            let content = '';
+            
+            if (col.type === 'drag') {
+                content = `
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.4">
+                        <circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/>
+                        <circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/>
+                    </svg>
+                `;
+            } else if (col.type === 'checkbox') {
+                content = '☑';
+            } else {
+                content = col.label;
+            }
+
+            headerCell.innerHTML = content;
+
+            // Add resizer if column is resizable
+            const isResizable = col.resizable !== undefined ? col.resizable : (col.type !== 'drag' && col.type !== 'checkbox');
+            if (isResizable) {
+                const resizer = document.createElement('div');
+                resizer.className = 'col-resizer';
+                resizer.setAttribute('data-field', col.field);
+                headerCell.appendChild(resizer);
+            }
+
+            headerContainer.appendChild(headerCell);
+        });
+
+        console.log('[SchedulerService] ✅ Grid header built with', columns.length, 'columns');
+    }
+
+    /**
+     * Initialize CSS variables for column widths from column definitions
+     * @private
+     */
+    private _initializeColumnCSSVariables(): void {
+        const gridPane = document.getElementById('grid-pane');
+        if (!gridPane) {
+            console.warn('[SchedulerService] Grid pane not found for CSS variable initialization');
+            return;
+        }
+
+        const columns = this._getColumnDefinitions();
+        
+        // Load saved widths from localStorage first
+        try {
+            const saved = localStorage.getItem('pro_scheduler_column_widths');
+            if (saved) {
+                const savedWidths = JSON.parse(saved) as Record<string, number>;
+                columns.forEach(col => {
+                    if (savedWidths[col.field]) {
+                        gridPane.style.setProperty(`--w-${col.field}`, `${savedWidths[col.field]}px`);
+                        return;
+                    }
+                });
+            }
+        } catch (err) {
+            console.warn('[SchedulerService] Failed to load saved column widths:', err);
+        }
+
+        // Set default widths for columns that don't have saved values
+        columns.forEach(col => {
+            const varName = `--w-${col.field}`;
+            const currentValue = gridPane.style.getPropertyValue(varName);
+            if (!currentValue) {
+                gridPane.style.setProperty(varName, `${col.width}px`);
+            }
+        });
+
+        console.log('[SchedulerService] ✅ CSS variables initialized for', columns.length, 'columns');
+    }
+
+    /**
+     * Get minimum widths for columns (for resizing)
+     * @private
+     * @returns Record of field -> minWidth
+     */
+    private _getColumnMinWidths(): Record<string, number> {
+        const columns = this._getColumnDefinitions();
+        const minWidths: Record<string, number> = {};
+        
+        columns.forEach(col => {
+            minWidths[col.field] = col.minWidth ?? Math.max(20, col.width * 0.5);
+        });
+        
+        return minWidths;
+    }
+
+    // =========================================================================
+    // BASELINE MANAGEMENT
+    // =========================================================================
+
+    /**
+     * Track whether baseline has been set
+     * @private
+     */
+    private _hasBaseline: boolean = false;
+
+    /**
+     * Check if baseline has been set for any task
+     * @returns True if baseline exists
+     */
+    hasBaseline(): boolean {
+        if (this._hasBaseline) return true;
+        
+        // Check if any task has baseline data
+        const hasBaselineData = this.tasks.some(task => 
+            task.baselineStart !== null && task.baselineStart !== undefined ||
+            task.baselineFinish !== null && task.baselineFinish !== undefined
+        );
+        
+        this._hasBaseline = hasBaselineData;
+        return hasBaselineData;
+    }
+
+    /**
+     * Set baseline from current schedule
+     * Saves current start/end/duration as baseline for all tasks
+     */
+    setBaseline(): void {
+        console.log('[SchedulerService] Setting baseline from current schedule...');
+        
+        this.saveCheckpoint();
+        
+        let baselineCount = 0;
+        this.tasks.forEach(task => {
+            if (task.start && task.end && task.duration) {
+                task.baselineStart = task.start;
+                task.baselineFinish = task.end;
+                task.baselineDuration = task.duration;
+                baselineCount++;
+            }
+        });
+        
+        this._hasBaseline = baselineCount > 0;
+        
+        // Rebuild grid columns to show actual/variance columns
+        this._rebuildGridColumns();
+        
+        // Update UI button visibility
+        this._updateBaselineButtonVisibility();
+        
+        this.saveData();
+        this.toastService.success(`Baseline set for ${baselineCount} task${baselineCount !== 1 ? 's' : ''}`);
+        
+        console.log('[SchedulerService] ✅ Baseline set for', baselineCount, 'tasks');
+    }
+
+    /**
+     * Clear baseline data from all tasks
+     */
+    clearBaseline(): void {
+        console.log('[SchedulerService] Clearing baseline...');
+        
+        this.saveCheckpoint();
+        
+        let clearedCount = 0;
+        this.tasks.forEach(task => {
+            if (task.baselineStart !== null || task.baselineFinish !== null) {
+                task.baselineStart = null;
+                task.baselineFinish = null;
+                task.baselineDuration = undefined;
+                clearedCount++;
+            }
+        });
+        
+        this._hasBaseline = false;
+        
+        // Rebuild grid columns to hide actual/variance columns
+        this._rebuildGridColumns();
+        
+        // Update UI button visibility
+        this._updateBaselineButtonVisibility();
+        
+        this.saveData();
+        this.toastService.success(`Baseline cleared from ${clearedCount} task${clearedCount !== 1 ? 's' : ''}`);
+        
+        console.log('[SchedulerService] ✅ Baseline cleared from', clearedCount, 'tasks');
+    }
+
+    /**
+     * Update baseline button visibility based on baseline state
+     * @private
+     */
+    private _updateBaselineButtonVisibility(): void {
+        const setBtn = document.querySelector('[data-action="set-baseline"]') as HTMLElement;
+        const clearBtn = document.getElementById('clear-baseline-btn');
+        
+        if (this._hasBaseline) {
+            if (setBtn) setBtn.style.display = 'none';
+            if (clearBtn) clearBtn.style.display = 'inline-flex';
+        } else {
+            if (setBtn) setBtn.style.display = 'inline-flex';
+            if (clearBtn) clearBtn.style.display = 'none';
+        }
+    }
+
+    /**
+     * Calculate variance for a task
+     * @private
+     * @param task - Task to calculate variance for
+     * @returns Variance object with start and finish variances in work days
+     */
+    private _calculateVariance(task: Task): { start: number | null; finish: number | null } {
+        let startVariance: number | null = null;
+        let finishVariance: number | null = null;
+        
+        // Calculate start variance: actualStart - baselineStart (or current start if no actual)
+        // Positive = ahead of baseline, Negative = behind baseline
+        if (task.baselineStart) {
+            const compareStart = task.actualStart || task.start;
+            if (compareStart) {
+                // calcWorkDaysDifference(baselineStart, compareStart) = compareStart - baselineStart
+                startVariance = DateUtils.calcWorkDaysDifference(task.baselineStart, compareStart, this.calendar);
+            }
+        }
+        
+        // Calculate finish variance: actualFinish - baselineFinish (or current end if no actual)
+        // Positive = ahead of baseline, Negative = behind baseline
+        if (task.baselineFinish) {
+            const compareFinish = task.actualFinish || task.end;
+            if (compareFinish) {
+                // calcWorkDaysDifference(baselineFinish, compareFinish) = compareFinish - baselineFinish
+                finishVariance = DateUtils.calcWorkDaysDifference(task.baselineFinish, compareFinish, this.calendar);
+            }
+        }
+        
+        return { start: startVariance, finish: finishVariance };
+    }
+
+    /**
+     * Rebuild grid columns when baseline state changes
+     * Updates header and grid to show/hide actual/variance columns
+     * @private
+     */
+    private _rebuildGridColumns(): void {
+        // Rebuild header with updated column definitions
+        this._buildGridHeader();
+        
+        // Update grid columns if grid exists
+        if (this.grid) {
+            const columns = this._getColumnDefinitions();
+            this.grid.updateColumns(columns);
+        }
+        
+        // Re-render to show new columns
+        this.render();
+        
+        // Re-initialize column resizers (new columns may have been added)
+        // This will be handled by UIEventManager, but we trigger it here
+        // The resizers will be re-initialized on next interaction or we can call it explicitly
+        setTimeout(() => {
+            if (window.uiEventManager) {
+                window.uiEventManager.initColumnResizers();
+            }
+        }, 100);
     }
 
     // =========================================================================
@@ -649,6 +1144,42 @@ export class SchedulerService {
                 }
                 break;
                 
+            case 'actualStart':
+                // Actual start edit: Update actual start date (does NOT trigger CPM recalculation)
+                if (value && !isParent) {
+                    const actualStartValue = String(value);
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(actualStartValue)) {
+                        console.warn('[SchedulerService] Invalid date format:', actualStartValue);
+                        return;
+                    }
+                    this.taskStore.update(taskId, { actualStart: actualStartValue });
+                    // Re-render to update variance display
+                    this.render();
+                } else if (!value && !isParent) {
+                    // Clear actual start
+                    this.taskStore.update(taskId, { actualStart: null });
+                    this.render();
+                }
+                break;
+                
+            case 'actualFinish':
+                // Actual finish edit: Update actual finish date (does NOT trigger CPM recalculation)
+                if (value && !isParent) {
+                    const actualFinishValue = String(value);
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(actualFinishValue)) {
+                        console.warn('[SchedulerService] Invalid date format:', actualFinishValue);
+                        return;
+                    }
+                    this.taskStore.update(taskId, { actualFinish: actualFinishValue });
+                    // Re-render to update variance display
+                    this.render();
+                } else if (!value && !isParent) {
+                    // Clear actual finish
+                    this.taskStore.update(taskId, { actualFinish: null });
+                    this.render();
+                }
+                break;
+                
             case 'constraintType':
                 // Constraint type change: if set to ASAP, clear constraint date
                 const constraintValue = String(value);
@@ -669,8 +1200,8 @@ export class SchedulerService {
                 this.taskStore.update(taskId, { [field]: value });
         }
 
-        // Recalculate if date/duration changed
-        if (['start', 'end', 'duration'].includes(field)) {
+        // Recalculate if date/duration changed (but NOT for actuals - they don't affect schedule)
+        if (['start', 'end', 'duration'].includes(field) && !['actualStart', 'actualFinish'].includes(field)) {
             this.recalculateAll();
         } else {
             this.render();
@@ -1239,6 +1770,13 @@ export class SchedulerService {
                 notes: taskData.notes || '',
                 level: taskData.level || 0,
                 _collapsed: false,
+                // Initialize baseline/actual fields to null
+                baselineStart: taskData.baselineStart ?? null,
+                baselineFinish: taskData.baselineFinish ?? null,
+                baselineDuration: taskData.baselineDuration,
+                actualStart: taskData.actualStart ?? null,
+                actualFinish: taskData.actualFinish ?? null,
+                remainingDuration: taskData.remainingDuration,
                 ...taskData
             } as Task;
 
@@ -1877,6 +2415,11 @@ export class SchedulerService {
                         _isCritical: calculatedTask._isCritical || false,
                         _totalFloat: calculatedTask._totalFloat || 0,
                         _freeFloat: calculatedTask._freeFloat || 0,
+                        lateStart: calculatedTask.lateStart,
+                        lateFinish: calculatedTask.lateFinish,
+                        totalFloat: calculatedTask.totalFloat,
+                        freeFloat: calculatedTask.freeFloat,
+                        _health: calculatedTask._health,
                     });
                 }
             });
@@ -1886,6 +2429,25 @@ export class SchedulerService {
 
             // Roll up parent dates
             this._rollupParentDates();
+
+            // Check for constraint violations and warn user
+            const criticalTasks = result.tasks.filter(t => 
+                t._health?.status === 'critical'
+            );
+
+            if (criticalTasks.length > 0) {
+                const deadlineViolations = criticalTasks.filter(t => t.constraintType === 'fnlt');
+                
+                if (deadlineViolations.length > 0) {
+                    const names = deadlineViolations.slice(0, 2).map(t => `"${t.name}"`).join(', ');
+                    const moreCount = deadlineViolations.length > 2 ? ` +${deadlineViolations.length - 2} more` : '';
+                    this.toastService.warning(`Deadline at risk: ${names}${moreCount}`);
+                } else {
+                    const names = criticalTasks.slice(0, 2).map(t => `"${t.name}"`).join(', ');
+                    const moreCount = criticalTasks.length > 2 ? ` +${criticalTasks.length - 2} more` : '';
+                    this.toastService.warning(`Schedule issues: ${names}${moreCount}`);
+                }
+            }
 
             this._lastCalcTime = performance.now() - startTime;
         } catch (error) {
