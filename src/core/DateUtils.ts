@@ -44,10 +44,10 @@ export class DateUtils {
     static isWorkDay(date: Date, calendar: Calendar = DateUtils.DEFAULT_CALENDAR): boolean {
         const dateStr = date.toISOString().split('T')[0];
         
-        // Check exceptions (holidays)
+        // Check exceptions first - if an exception exists, use its working value directly
         const exception = calendar.exceptions[dateStr];
-        if (exception && !exception.working) {
-            return false;
+        if (exception) {
+            return exception.working;
         }
         
         // Check working days (0=Sunday, 1=Monday, etc.)
@@ -78,6 +78,15 @@ export class DateUtils {
         if (!dateStr) return dateStr;
         
         const date = new Date(dateStr + 'T12:00:00');
+        
+        // Special case: when days is 0, adjust to next working day if current date is non-working
+        if (days === 0) {
+            while (!DateUtils.isWorkDay(date, calendar)) {
+                date.setDate(date.getDate() + 1);
+            }
+            return date.toISOString().split('T')[0];
+        }
+        
         const direction = days >= 0 ? 1 : -1;
         let remaining = Math.abs(days);
         

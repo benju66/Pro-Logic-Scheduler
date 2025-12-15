@@ -38,6 +38,17 @@ describe('DateUtils', () => {
             expect(DateUtils.isWorkDay(christmas, calendar)).toBe(false);
         });
 
+        it('should honor working exception on weekend', () => {
+            const calendar = {
+                workingDays: [1, 2, 3, 4, 5], // Mon-Fri
+                exceptions: { 
+                    '2024-01-06': { date: '2024-01-06', working: true, description: 'Saturday Overtime' }
+                }
+            };
+            const saturday = new Date('2024-01-06');
+            expect(DateUtils.isWorkDay(saturday, calendar)).toBe(true);
+        });
+
         it('should use default calendar if not provided', () => {
             const monday = new Date('2024-01-01');
             expect(DateUtils.isWorkDay(monday)).toBe(true);
@@ -61,6 +72,18 @@ describe('DateUtils', () => {
             const start = '2024-01-01';
             const result = DateUtils.addWorkDays(start, 0, defaultCalendar);
             expect(result).toBe(start);
+        });
+
+        it('should adjust to next working day when adding 0 days from weekend', () => {
+            const saturday = '2024-01-06'; // Saturday
+            const result = DateUtils.addWorkDays(saturday, 0, defaultCalendar);
+            expect(result).toBe('2024-01-08'); // Monday
+        });
+
+        it('should return same date when adding 0 days from working day', () => {
+            const monday = '2024-01-08'; // Monday
+            const result = DateUtils.addWorkDays(monday, 0, defaultCalendar);
+            expect(result).toBe('2024-01-08'); // Same Monday
         });
 
         it('should handle negative days (subtract)', () => {
@@ -88,10 +111,10 @@ describe('DateUtils', () => {
             expect(result).toBe(5); // Mon-Fri = 5 days
         });
 
-        it('should return 0 for same day', () => {
+        it('should return 1 for same day (inclusive counting)', () => {
             const date = '2024-01-01';
             const result = DateUtils.calcWorkDays(date, date, defaultCalendar);
-            expect(result).toBe(0);
+            expect(result).toBe(1);
         });
 
         it('should handle reversed dates', () => {

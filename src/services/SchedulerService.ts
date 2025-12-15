@@ -950,23 +950,29 @@ export class SchedulerService {
         let startVariance: number | null = null;
         let finishVariance: number | null = null;
         
-        // Calculate start variance: actualStart - baselineStart (or current start if no actual)
+        // Calculate start variance: compareStart - baselineStart (or current start if no actual)
         // Positive = ahead of baseline, Negative = behind baseline
         if (task.baselineStart) {
             const compareStart = task.actualStart || task.start;
             if (compareStart) {
-                // calcWorkDaysDifference(baselineStart, compareStart) = compareStart - baselineStart
-                startVariance = DateUtils.calcWorkDaysDifference(task.baselineStart, compareStart, this.calendar);
+                // calcWorkDaysDifference(compareStart, baselineStart) returns:
+                // - Positive if compareStart < baselineStart (ahead of schedule)
+                // - Negative if compareStart > baselineStart (behind schedule)
+                // This matches the desired sign convention
+                startVariance = DateUtils.calcWorkDaysDifference(compareStart, task.baselineStart, this.calendar);
             }
         }
         
-        // Calculate finish variance: actualFinish - baselineFinish (or current end if no actual)
+        // Calculate finish variance: compareFinish - baselineFinish (or current end if no actual)
         // Positive = ahead of baseline, Negative = behind baseline
         if (task.baselineFinish) {
             const compareFinish = task.actualFinish || task.end;
             if (compareFinish) {
-                // calcWorkDaysDifference(baselineFinish, compareFinish) = compareFinish - baselineFinish
-                finishVariance = DateUtils.calcWorkDaysDifference(task.baselineFinish, compareFinish, this.calendar);
+                // calcWorkDaysDifference(compareFinish, baselineFinish) returns:
+                // - Positive if compareFinish < baselineFinish (ahead of schedule)
+                // - Negative if compareFinish > baselineFinish (behind schedule)
+                // This matches the desired sign convention
+                finishVariance = DateUtils.calcWorkDaysDifference(compareFinish, task.baselineFinish, this.calendar);
             }
         }
         
