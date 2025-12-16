@@ -659,16 +659,17 @@ export class VirtualScrollGrid {
         const checkbox = target.closest('.vsg-checkbox') as HTMLInputElement | null;
         if (checkbox) {
             e.stopPropagation(); // Prevent row click handler
-            // Always toggle selection (like Ctrl+click) to allow multiple selections
             if (this.options.onRowClick) {
-                // Create synthetic event object with ctrlKey set for toggle behavior
-                const toggleEvent = {
+                // Read shiftKey from original event before creating synthetic event
+                const isShiftKey = e.shiftKey;
+                // Preserve shiftKey for range selection, otherwise use Ctrl+click behavior for toggle
+                const event = {
                     ...e,
-                    ctrlKey: true,
+                    shiftKey: isShiftKey, // Explicitly preserve shiftKey for range selection
+                    ctrlKey: !isShiftKey, // Only use Ctrl behavior if not Shift (for range selection)
                     metaKey: false,
-                    shiftKey: false
                 } as MouseEvent;
-                this.options.onRowClick(taskId, toggleEvent);
+                this.options.onRowClick(taskId, event);
             }
             return;
         }

@@ -221,6 +221,13 @@ export class KeyboardService {
    * @returns True if editing
    */
   private _isEditing(target: HTMLElement): boolean {
+    // Exclude checkboxes - they're selection controls, not editable cells for Tab navigation
+    // This allows Tab/Shift+Tab to indent/outdent when checkbox is focused (if tasks are selected)
+    if (target.classList.contains('vsg-checkbox') || 
+        (target.tagName === 'INPUT' && (target as HTMLInputElement).type === 'checkbox')) {
+      return false; // Checkboxes are NOT considered editing
+    }
+    
     return target.classList.contains('vsg-input') ||
            target.classList.contains('form-input') ||
            target.tagName === 'INPUT' ||
