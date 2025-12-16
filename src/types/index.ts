@@ -312,6 +312,7 @@ export interface VirtualScrollGridOptions {
   onAction?: (taskId: string, action: string, event: MouseEvent) => void;
   onToggleCollapse?: (taskId: string) => void;
   onScroll?: (scrollTop: number) => void;
+  onHorizontalScroll?: (scrollLeft: number) => void;
   onRowMove?: (taskIds: string[], targetId: string, position: 'before' | 'after' | 'child') => void;
   getRowClass?: (task: Task) => string;
   isParent?: (id: string) => boolean;

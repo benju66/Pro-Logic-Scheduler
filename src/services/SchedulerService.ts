@@ -111,6 +111,7 @@ export class SchedulerService {
     private _lastCalcTime: number = 0;
     private _renderScheduled: boolean = false;
     private _isRecalculating: boolean = false;            // Prevent infinite recursion
+    private _isSyncingHeader: boolean = false;            // Prevent scroll sync loops
 
     // Initialization flag
     public isInitialized: boolean = false;  // Public for access from UIEventManager
@@ -193,6 +194,7 @@ export class SchedulerService {
             onAction: (taskId, action, e) => this._handleAction(taskId, action, e),
             onToggleCollapse: (taskId) => this.toggleCollapse(taskId),
             onScroll: (scrollTop) => this._syncScrollToGantt(scrollTop),
+            onHorizontalScroll: (scrollLeft) => this._syncHeaderScroll(scrollLeft),
             onRowMove: (taskIds, targetId, position) => this._handleRowMove(taskIds, targetId, position),
         });
 
@@ -672,16 +674,16 @@ export class SchedulerService {
      * @private
      */
     private _buildGridHeader(): void {
-        const headerContainer = document.getElementById('grid-header');
-        if (!headerContainer) {
-            console.warn('[SchedulerService] Grid header container not found');
+        const headerContent = document.getElementById('grid-header-content');
+        if (!headerContent) {
+            console.warn('[SchedulerService] Grid header content container not found');
             return;
         }
 
         const columns = this._getColumnDefinitions();
         
         // Clear existing header
-        headerContainer.innerHTML = '';
+        headerContent.innerHTML = '';
 
         // Build header cells from column definitions
         columns.forEach(col => {
@@ -740,10 +742,41 @@ export class SchedulerService {
                 headerCell.appendChild(resizer);
             }
 
-            headerContainer.appendChild(headerCell);
+            headerContent.appendChild(headerCell);
         });
 
         console.log('[SchedulerService] ✅ Grid header built with', columns.length, 'columns');
+        
+        // Set up bidirectional scroll sync: header → grid
+        this._initHeaderScrollSync();
+    }
+
+    /**
+     * Initialize header scroll sync (header → grid)
+     * @private
+     */
+    private _initHeaderScrollSync(): void {
+        const header = document.getElementById('grid-header');
+        const gridContainer = document.getElementById('grid-container');
+        if (!header || !gridContainer) return;
+        
+        // Find the viewport element (first scrollable child of grid-container)
+        const viewport = gridContainer.querySelector('.vsg-viewport') as HTMLElement | null;
+        if (!viewport) {
+            console.warn('[SchedulerService] Grid viewport not found for header scroll sync');
+            return;
+        }
+        
+        // Listen for header scroll events and sync to grid
+        header.addEventListener('scroll', () => {
+            // Skip if we're currently syncing from grid to header (prevent loops)
+            if (this._isSyncingHeader) return;
+            
+            // Sync header scroll to grid body
+            if (Math.abs(viewport.scrollLeft - header.scrollLeft) > 1) {
+                viewport.scrollLeft = header.scrollLeft;
+            }
+        }, { passive: true });
     }
 
     /**
@@ -1724,6 +1757,23 @@ export class SchedulerService {
      * @private
      * @param scrollTop - Scroll position
      */
+    /**
+     * Sync header horizontal scroll with grid body
+     * @private
+     */
+    private _syncHeaderScroll(scrollLeft: number): void {
+        const header = document.getElementById('grid-header');
+        if (header && Math.abs(header.scrollLeft - scrollLeft) > 1) {
+            // Prevent scroll event from triggering sync back to grid
+            this._isSyncingHeader = true;
+            header.scrollLeft = scrollLeft;
+            // Reset flag after a short delay to allow scroll event to process
+            requestAnimationFrame(() => {
+                this._isSyncingHeader = false;
+            });
+        }
+    }
+
     private _syncScrollToGantt(scrollTop: number): void {
         if (this.syncService) {
             this.syncService.syncGridToGantt(scrollTop);

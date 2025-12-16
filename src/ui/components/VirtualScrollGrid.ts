@@ -122,6 +122,7 @@ export class VirtualScrollGrid {
     
     // Scroll state
     private scrollTop: number = 0;
+    private scrollLeft: number = 0;
     private viewportHeight: number = 0;
     private totalHeight: number = 0;
     private firstVisibleIndex: number = 0;
@@ -432,12 +433,28 @@ export class VirtualScrollGrid {
         
         // Schedule update on next animation frame
         this._scrollRAF = requestAnimationFrame(() => {
-            this.scrollTop = this.dom.viewport.scrollTop;
-            this._updateVisibleRows();
+            const newScrollTop = this.dom.viewport.scrollTop;
+            const newScrollLeft = this.dom.viewport.scrollLeft;
             
-            // Emit scroll event for sync with Gantt
-            if (this.options.onScroll) {
-                this.options.onScroll(this.scrollTop);
+            // Vertical scroll
+            if (newScrollTop !== this.scrollTop) {
+                this.scrollTop = newScrollTop;
+                this._updateVisibleRows();
+                
+                // Emit scroll event for sync with Gantt
+                if (this.options.onScroll) {
+                    this.options.onScroll(this.scrollTop);
+                }
+            }
+            
+            // Horizontal scroll
+            if (newScrollLeft !== this.scrollLeft) {
+                this.scrollLeft = newScrollLeft;
+                
+                // Emit horizontal scroll event for sync with header
+                if (this.options.onHorizontalScroll) {
+                    this.options.onHorizontalScroll(this.scrollLeft);
+                }
             }
         });
     }
