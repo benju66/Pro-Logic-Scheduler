@@ -548,6 +548,41 @@
             height: 14px;
             cursor: pointer;
             accent-color: #6366f1;
+            outline: none;
+            border: none;
+        }
+        
+        .vsg-checkbox:focus {
+            outline: none;
+            border: none;
+            box-shadow: none;
+        }
+        
+        .vsg-checkbox:focus-visible {
+            outline: none;
+            border: none;
+            box-shadow: none;
+        }
+        
+        .header-checkbox-select-all {
+            width: 14px;
+            height: 14px;
+            cursor: pointer;
+            accent-color: #6366f1;
+            outline: none;
+            border: none;
+        }
+        
+        .header-checkbox-select-all:focus {
+            outline: none;
+            border: none;
+            box-shadow: none;
+        }
+        
+        .header-checkbox-select-all:focus-visible {
+            outline: none;
+            border: none;
+            box-shadow: none;
         }
         
         .vsg-action-btn {
@@ -818,13 +853,48 @@
         }
         
         .form-label {
-            display: block;
+            display: flex;
+            align-items: center;
             font-size: 11px;
             font-weight: 700;
             color: #64748b;
             margin-bottom: 6px;
             text-transform: uppercase;
             letter-spacing: 0.025em;
+            position: relative;
+        }
+        
+        .drawer-constraint-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin-left: 6px;
+            line-height: 1;
+            flex-shrink: 0;
+        }
+        
+        /* Hide native browser calendar icon for date inputs */
+        input[type="date"]::-webkit-calendar-picker-indicator {
+            display: none;
+            -webkit-appearance: none;
+        }
+        
+        input[type="date"]::-webkit-inner-spin-button,
+        input[type="date"]::-webkit-clear-button {
+            display: none;
+            -webkit-appearance: none;
+        }
+        
+        /* ============================================================
+           PRINT STYLES
+           ============================================================ */
+        @media print {
+            /* Hide constraint icons and calendar icons when printing */
+            .vsg-constraint-icon,
+            .vsg-calendar-icon,
+            .drawer-constraint-icon {
+                display: none !important;
+            }
         }
         
         .form-input {

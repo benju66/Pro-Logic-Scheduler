@@ -880,7 +880,30 @@ export class SchedulerService {
                     </svg>
                 `;
             } else if (col.type === 'checkbox') {
-                headerCell.innerHTML = '☑';
+                // Create functional checkbox for select/deselect all
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'header-checkbox-select-all';
+                checkbox.title = 'Select/Deselect all visible tasks';
+                checkbox.style.cssText = `
+                    width: 14px;
+                    height: 14px;
+                    cursor: pointer;
+                    accent-color: #6366f1;
+                    outline: none;
+                    border: none;
+                `;
+                
+                // Update checkbox state based on current selection
+                this._updateHeaderCheckboxState(checkbox);
+                
+                // Handle click to select/deselect all visible tasks
+                checkbox.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this._handleSelectAllClick(checkbox);
+                });
+                
+                headerCell.appendChild(checkbox);
             } else {
                 // Text columns: wrap in span for truncation
                 const textSpan = document.createElement('span');
@@ -1314,6 +1337,7 @@ export class SchedulerService {
 
         this.focusedId = taskId;
         this._updateSelection();
+        this._updateHeaderCheckboxState();
     }
 
     /**
@@ -1950,6 +1974,40 @@ export class SchedulerService {
      * @param scrollTop - Scroll position
      */
     /**
+     * Calculate the total width of pinned columns
+     * @private
+     * @returns Total width in pixels
+     */
+    private _calculatePinnedColumnsWidth(): number {
+        const columns = this._getColumnDefinitions();
+        const prefs = this._getColumnPreferences();
+        const pinnedIndex = prefs.pinned.length;
+        
+        if (pinnedIndex === 0) return 0;
+        
+        const pinnedColumns = columns.filter(c => prefs.pinned.includes(c.id)).slice(0, pinnedIndex);
+        if (pinnedColumns.length === 0) return 0;
+        
+        // Calculate total width by summing column widths
+        const gridPane = document.getElementById('grid-pane');
+        if (!gridPane) return 0;
+        
+        let totalWidth = 0;
+        pinnedColumns.forEach(col => {
+            const varName = `--w-${col.field}`;
+            const computedStyle = getComputedStyle(gridPane);
+            const widthValue = computedStyle.getPropertyValue(varName).trim();
+            if (widthValue) {
+                totalWidth += parseFloat(widthValue) || col.width || 100;
+            } else {
+                totalWidth += col.width || 100;
+            }
+        });
+        
+        return totalWidth;
+    }
+
+    /**
      * Sync header horizontal scroll with grid body
      * @private
      */
@@ -2177,7 +2235,25 @@ export class SchedulerService {
             _collapsed: !task._collapsed
         });
         
-        this.render();
+        // Force immediate render to update visible data and cell states
+        // Clear hashes to ensure all cells update (especially name cell with collapse button)
+        if (this.grid) {
+            const tasks = this.taskStore.getVisibleTasks((id) => {
+                const t = this.taskStore.getById(id);
+                return t?._collapsed || false;
+            });
+            this.grid.setVisibleData(tasks);
+            this.grid.setSelection(this.selectedIds, this.focusedId);
+        }
+        
+        if (this.gantt) {
+            const tasks = this.taskStore.getVisibleTasks((id) => {
+                const t = this.taskStore.getById(id);
+                return t?._collapsed || false;
+            });
+            this.gantt.setData(tasks);
+            this.gantt.setSelection(this.selectedIds);
+        }
     }
 
     /**
@@ -2399,6 +2475,78 @@ export class SchedulerService {
         if (this.gantt) {
             this.gantt.setSelection(this.selectedIds);
         }
+        // Update header checkbox state
+        this._updateHeaderCheckboxState();
+    }
+
+    /**
+     * Update header checkbox state (checked/unchecked/indeterminate)
+     * @private
+     * @param checkbox - Optional checkbox element (if not provided, finds it)
+     */
+    private _updateHeaderCheckboxState(checkbox?: HTMLInputElement): void {
+        if (!checkbox) {
+            const headerCheckbox = document.querySelector('.header-checkbox-select-all') as HTMLInputElement | null;
+            if (!headerCheckbox) return;
+            checkbox = headerCheckbox;
+        }
+
+        // Get visible tasks (respecting collapse state)
+        const visibleTasks = this.taskStore.getVisibleTasks((id) => {
+            const task = this.taskStore.getById(id);
+            return task?._collapsed || false;
+        });
+
+        if (visibleTasks.length === 0) {
+            checkbox.checked = false;
+            checkbox.indeterminate = false;
+            return;
+        }
+
+        // Count how many visible tasks are selected
+        const selectedCount = visibleTasks.filter(t => this.selectedIds.has(t.id)).length;
+
+        if (selectedCount === 0) {
+            // None selected
+            checkbox.checked = false;
+            checkbox.indeterminate = false;
+        } else if (selectedCount === visibleTasks.length) {
+            // All selected
+            checkbox.checked = true;
+            checkbox.indeterminate = false;
+        } else {
+            // Some selected (indeterminate state)
+            checkbox.checked = false;
+            checkbox.indeterminate = true;
+        }
+    }
+
+    /**
+     * Handle select all checkbox click
+     * @private
+     * @param checkbox - The header checkbox element
+     */
+    private _handleSelectAllClick(checkbox: HTMLInputElement): void {
+        // Get visible tasks (respecting collapse state)
+        const visibleTasks = this.taskStore.getVisibleTasks((id) => {
+            const task = this.taskStore.getById(id);
+            return task?._collapsed || false;
+        });
+
+        if (checkbox.checked) {
+            // Select all visible tasks
+            visibleTasks.forEach(task => {
+                this.selectedIds.add(task.id);
+            });
+        } else {
+            // Deselect all visible tasks
+            visibleTasks.forEach(task => {
+                this.selectedIds.delete(task.id);
+            });
+        }
+
+        // Update selection state
+        this._updateSelection();
     }
 
     /**

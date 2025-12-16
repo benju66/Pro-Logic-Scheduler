@@ -38,6 +38,7 @@
 
 import type { Task, GridColumn, VirtualScrollGridOptions } from '../../types';
 import { getTaskFieldValue } from '../../types';
+import { createElement, Anchor, AlarmClock, Hourglass, Flag, Lock, Calendar } from 'lucide';
 
 /**
  * Editing cell state
@@ -152,6 +153,9 @@ export class VirtualScrollGrid {
     
     // Change detection: Store row hashes to skip unnecessary updates
     private _rowHashes = new WeakMap<HTMLElement, string>();  // Row element -> hash string
+    
+    // Cell-level change detection: Store cell hashes per row
+    private _cellHashes = new WeakMap<HTMLElement, Map<string, string>>();  // Row element -> Map<fieldName, hashString>
     
     // IntersectionObserver for visibility detection (supplements scroll-based logic)
     private _intersectionObserver: IntersectionObserver | null = null;
@@ -631,9 +635,19 @@ export class VirtualScrollGrid {
         const taskId = row.getAttribute('data-task-id');
         if (!taskId) return;
         
-        // Check for action button clicks
+        // Check for collapse toggle FIRST (before action buttons, since collapse button also has data-action)
+        const collapseBtn = target.closest('.vsg-collapse-btn') as HTMLElement | null;
+        if (collapseBtn) {
+            e.stopPropagation(); // Prevent event from bubbling to row click handler
+            if (this.options.onToggleCollapse) {
+                this.options.onToggleCollapse(taskId);
+            }
+            return;
+        }
+        
+        // Check for action button clicks (exclude collapse buttons which are handled above)
         const actionBtn = target.closest('[data-action]') as HTMLElement | null;
-        if (actionBtn) {
+        if (actionBtn && !actionBtn.classList.contains('vsg-collapse-btn')) {
             const action = actionBtn.getAttribute('data-action');
             if (action && this.options.onAction) {
                 this.options.onAction(taskId, action, e);
@@ -641,37 +655,20 @@ export class VirtualScrollGrid {
             return;
         }
         
-        // Check for collapse toggle
-        const collapseBtn = target.closest('.vsg-collapse-btn') as HTMLElement | null;
-        if (collapseBtn) {
-            if (this.options.onToggleCollapse) {
-                this.options.onToggleCollapse(taskId);
-            }
-            return;
-        }
-        
-        // Check for checkbox - toggle selection
+        // Check for checkbox - toggle selection (allow multiple selections)
         const checkbox = target.closest('.vsg-checkbox') as HTMLInputElement | null;
         if (checkbox) {
-            // If task is already selected, deselect it (toggle off)
-            // Otherwise, select it (single selection)
-            if (this.selectedIds.has(taskId)) {
-                // Deselect this task - simulate Ctrl+click to toggle off
-                if (this.options.onRowClick) {
-                    // Create synthetic event object with ctrlKey set for toggle behavior
-                    const toggleEvent = {
-                        ...e,
-                        ctrlKey: true,
-                        metaKey: false,
-                        shiftKey: false
-                    } as MouseEvent;
-                    this.options.onRowClick(taskId, toggleEvent);
-                }
-            } else {
-                // Select this task (single selection)
-                if (this.options.onRowClick) {
-                    this.options.onRowClick(taskId, e);
-                }
+            e.stopPropagation(); // Prevent row click handler
+            // Always toggle selection (like Ctrl+click) to allow multiple selections
+            if (this.options.onRowClick) {
+                // Create synthetic event object with ctrlKey set for toggle behavior
+                const toggleEvent = {
+                    ...e,
+                    ctrlKey: true,
+                    metaKey: false,
+                    shiftKey: false
+                } as MouseEvent;
+                this.options.onRowClick(taskId, toggleEvent);
             }
             return;
         }
@@ -1215,7 +1212,10 @@ export class VirtualScrollGrid {
             
             if (!task || !row) continue;
             
-            row.style.display = 'flex';
+            // Only set display if it's currently hidden (avoid unnecessary style recalculations)
+            if (row.style.display === 'none') {
+                row.style.display = 'flex';
+            }
             this._bindRowData(row, task, dataIndex);
         }
         
@@ -1249,19 +1249,107 @@ export class VirtualScrollGrid {
     }
 
     /**
+     * Generate a hash for a specific cell to detect changes
+     * Optimized: Includes only dependencies for this specific cell type
+     * @private
+     * @param task - The task data
+     * @param col - Column definition
+     * @param meta - Cell metadata
+     * @param isSelected - Whether task is selected
+     * @returns Hash string
+     */
+    private _getCellHash(
+        task: Task, 
+        col: GridColumn, 
+        meta: CellMeta, 
+        isSelected: boolean
+    ): string {
+        const field = col.field;
+        
+        // Special cells
+        if (field === 'checkbox') {
+            return String(isSelected);
+        }
+        
+        if (field === 'drag') {
+            return ''; // Never changes - static UI element
+        }
+        
+        if (field === 'rowNum') {
+            return String(meta.index);
+        }
+        
+        // Name cell - complex dependencies (indent, collapse button, value)
+        if (field === 'name') {
+            return `${task.name}|${meta.depth}|${meta.isParent}|${meta.isCollapsed}`;
+        }
+        
+        // Start/End cells - include constraint info (affects icon visibility)
+        if (field === 'start' || field === 'end') {
+            const value = getTaskFieldValue(task, field);
+            const readonly = col.editable === false || (col.readonlyForParent && meta.isParent);
+            return `${value}|${task.constraintType}|${task.constraintDate || ''}|${readonly}`;
+        }
+        
+        // Variance cells - include all source fields (computed values)
+        if (field === 'startVariance') {
+            return `${task.start}|${task.baselineStart || ''}|${task.actualStart || ''}`;
+        }
+        if (field === 'finishVariance') {
+            return `${task.end}|${task.baselineFinish || ''}|${task.actualFinish || ''}`;
+        }
+        
+        // Health cell - health object properties
+        if (field === '_health') {
+            const health = task._health;
+            return `${health?.status || ''}|${health?.icon || ''}|${health?.summary || ''}`;
+        }
+        
+        // Actions cell - CONSERVATIVE: include common fields
+        // (since showIf functions could check any task property)
+        // Include dependencies length for link icon color change
+        if (col.type === VirtualScrollGrid.COLUMN_TYPES.ACTIONS) {
+            const depCount = task.dependencies ? task.dependencies.length : 0;
+            return `${task.id}|${task.name}|${meta.isParent}|${meta.depth}|${meta.isCollapsed}|${depCount}`;
+        }
+        
+        // Duration field - no longer includes constraint info (icons removed from duration)
+        if (field === 'duration') {
+            const value = getTaskFieldValue(task, field);
+            const readonly = col.editable === false || (col.readonlyForParent && meta.isParent);
+            return `${value}|${readonly}`;
+        }
+        
+        // Custom renderer - CONSERVATIVE: include all common fields
+        // (renderer dependencies are unknown, so include all commonly used fields)
+        if (col.renderer) {
+            // Known renderers are handled above (rowNum, health, variance)
+            // For unknown renderers, be conservative
+            return `${task.id}|${task.name}|${task.start}|${task.end}|${task.duration}|${task.constraintType}|${task.constraintDate || ''}|${task._health?.status || ''}|${meta.index}|${meta.isParent}|${meta.depth}|${meta.isCollapsed}`;
+        }
+        
+        // Standard cells - field value + readonly state
+        const value = getTaskFieldValue(task, field);
+        const readonly = col.editable === false || (col.readonlyForParent && meta.isParent);
+        return `${value}|${readonly}`;
+    }
+
+    /**
      * Bind task data to a row element
      * Optimized: Uses change detection to skip unnecessary updates
+     * Optimized: Batches DOM reads and writes to prevent layout thrashing
      * @private
      * @param row - The row element
      * @param task - The task data
      * @param index - The data index
      */
     private _bindRowData(row: HTMLElement, task: Task, index: number): void {
-        // Get task metadata
+        // PHASE 1: Compute everything (reads only - no DOM access)
         const isParent = this.options.isParent ? this.options.isParent(task.id) : false;
         const depth = this.options.getDepth ? this.options.getDepth(task.id) : 0;
         const isCollapsed = task._collapsed || false;
         const isSelected = this.selectedIds.has(task.id);
+        const isCritical = task._isCritical || false;
         const meta: CellMeta = { isParent, depth, isCollapsed, index };
         
         // Change detection: Skip update if data hasn't changed and row is not being edited
@@ -1278,22 +1366,29 @@ export class VirtualScrollGrid {
             return; // Skip update - nothing changed
         }
         
-        // Update row attributes
-        row.setAttribute('data-task-id', task.id);
-        row.setAttribute('data-index', String(index));
+        // PHASE 2: All DOM writes together (single reflow)
+        // Use dataset instead of setAttribute for better performance
+        row.dataset.taskId = task.id;
+        row.dataset.index = String(index);
         
-        // Update selection state
-        row.classList.toggle('row-selected', isSelected);
+        // Build className string (more efficient than multiple toggle calls)
+        // This batches all class changes into a single DOM write
+        const classes = ['vsg-row', 'grid-row'];
+        if (isSelected) classes.push('row-selected');
+        if (isParent) classes.push('is-parent');
+        if (isCollapsed) classes.push('is-collapsed');
+        if (isCritical) classes.push('is-critical');
+        row.className = classes.join(' ');
         
-        const isCritical = task._isCritical || false;
-        
-        // Update row classes
-        row.classList.toggle('is-parent', isParent);
-        row.classList.toggle('is-collapsed', isCollapsed);
-        row.classList.toggle('is-critical', isCritical);
-        
-        // Update each cell using cached references (performance optimization)
+        // Update each cell using cached references with cell-level change detection
         const cache = (row as any).__cache as RowCache | undefined;
+        
+        // Get or create cell hash map for this row
+        let cellHashes = this._cellHashes.get(row);
+        if (!cellHashes) {
+            cellHashes = new Map();
+            this._cellHashes.set(row, cellHashes);
+        }
         
         this.options.columns?.forEach(col => {
             // Use cached cell reference if available, fallback to querySelector
@@ -1309,7 +1404,20 @@ export class VirtualScrollGrid {
             
             if (!cell) return;
             
-            this._bindCellData(cell, col, task, meta, cache);
+            // Cell-level change detection: Only update if hash changed or row is being edited
+            const cellHash = this._getCellHash(task, col, meta, isSelected);
+            const oldCellHash = cellHashes.get(col.field);
+            
+            // Always update if:
+            // 1. Hash doesn't match (data changed)
+            // 2. Row is being edited (must update to preserve editing state)
+            // 3. No hash exists (first render)
+            const shouldUpdateCell = cellHash !== oldCellHash || this.editingRows.has(task.id) || oldCellHash === undefined;
+            
+            if (shouldUpdateCell) {
+                this._bindCellData(cell, col, task, meta, cache);
+                cellHashes.set(col.field, cellHash);
+            }
         });
         
         // Store hash after successful update
@@ -1387,8 +1495,45 @@ export class VirtualScrollGrid {
             this._bindNameCell(cell, task, meta);
         }
         
-        // Handle constraint icons on date cells
-        if (col.showConstraintIcon && (col.field === 'start' || col.field === 'end')) {
+        // Handle date inputs - add Lucide calendar icon and hide native calendar picker
+        if (col.type === VirtualScrollGrid.COLUMN_TYPES.DATE && input && (input as HTMLInputElement).type === 'date') {
+            cell.style.position = 'relative'; // Required for absolute positioning of icons
+            
+            // Hide native browser calendar icon
+            (input as HTMLInputElement).style.setProperty('-webkit-appearance', 'none');
+            (input as HTMLInputElement).style.setProperty('appearance', 'none');
+            
+            // Check if constraint icon will be shown
+            const hasConstraintIcon = col.showConstraintIcon && (col.field === 'start' || col.field === 'end');
+            
+            // Add Lucide calendar icon (positioned based on whether constraint icon exists)
+            this._bindCalendarIcon(cell, input as HTMLInputElement, hasConstraintIcon);
+            
+            // Reserve padding space for icons
+            // Icon size: 12px (to match 13px date text)
+            // Icon margin: 4px from right edge
+            // Icon gap: 4px between icons
+            // With constraint: constraint (12px) + gap (4px) + calendar (12px) + margin (4px) = 32px
+            // Without constraint: calendar (12px) + margin (4px) = 16px
+            const iconSize = 12;
+            const iconGap = 4;
+            const iconMargin = 4;
+            
+            if (hasConstraintIcon) {
+                const totalPadding = iconMargin + iconSize + iconGap + iconSize;
+                (input as HTMLInputElement).style.paddingRight = `${totalPadding}px`;
+                this._bindConstraintIcon(cell, col, task, meta);
+            } else {
+                // Reserve space for calendar icon only
+                const totalPadding = iconMargin + iconSize;
+                (input as HTMLInputElement).style.paddingRight = `${totalPadding}px`;
+            }
+        }
+        
+        // Handle constraint icons on date cells (start and end only - duration removed)
+        // Note: This is now handled above, but keeping for backwards compatibility
+        if (col.showConstraintIcon && (col.field === 'start' || col.field === 'end') && col.type !== VirtualScrollGrid.COLUMN_TYPES.DATE) {
+            cell.style.position = 'relative';
             this._bindConstraintIcon(cell, col, task, meta);
         }
         
@@ -1494,6 +1639,70 @@ export class VirtualScrollGrid {
     }
 
     /**
+     * Bind calendar icon to date input cell
+     * @private
+     */
+    private _bindCalendarIcon(cell: HTMLElement, input: HTMLInputElement, hasConstraintIcon: boolean = false): void {
+        // Remove existing calendar icon if present
+        const existingIcon = cell.querySelector('.vsg-calendar-icon');
+        if (existingIcon) {
+            existingIcon.remove();
+        }
+        
+        // Create calendar icon using Lucide
+        const iconEl = document.createElement('span');
+        iconEl.className = 'vsg-calendar-icon';
+        
+        // Icon dimensions: 12px × 12px (to match 13px date text)
+        const iconSize = 12;
+        const iconGap = 4; // Gap between icons
+        const iconMargin = 4; // Margin from right edge
+        
+        // Position calendar icon:
+        // - Constraint icon is at right: 4px, width: 12px → spans from 4px to 16px from right
+        // - Calendar icon needs 4px gap from constraint icon
+        // - So calendar icon right edge = 16px (constraint left) + 4px (gap) = 20px
+        // - Without constraint: calendar icon at right: 4px (margin)
+        const rightPosition = hasConstraintIcon ? `${iconMargin + iconSize + iconGap}px` : `${iconMargin}px`;
+        
+        iconEl.style.cssText = `
+            position: absolute;
+            right: ${rightPosition};
+            top: 50%;
+            transform: translateY(-50%);
+            width: ${iconSize}px;
+            height: ${iconSize}px;
+            color: #94a3b8;
+            opacity: 0.6;
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1;
+            flex-shrink: 0;
+        `;
+        
+        // Create calendar icon using Lucide - 12px to match date text size (13px)
+        const svg = createElement(Calendar, {
+            size: iconSize,
+            strokeWidth: 1.5,
+            color: '#94a3b8'
+        });
+        
+        // Ensure SVG respects container size
+        if (svg instanceof SVGElement) {
+            svg.setAttribute('width', String(iconSize));
+            svg.setAttribute('height', String(iconSize));
+            svg.style.width = `${iconSize}px`;
+            svg.style.height = `${iconSize}px`;
+            svg.style.display = 'block';
+        }
+        
+        iconEl.appendChild(svg);
+        cell.appendChild(iconEl);
+    }
+
+    /**
      * Bind constraint icon to a date cell
      * @private
      */
@@ -1511,82 +1720,87 @@ export class VirtualScrollGrid {
         const constraintDate = task.constraintDate || '';
         
         // Determine which icon to show based on field and constraint type
-        let icon: string | null = null;
+        let iconComponent: typeof Anchor | typeof AlarmClock | typeof Hourglass | typeof Flag | typeof Lock | null = null;
         let color = '';
         let title = '';
         
         if (col.field === 'start') {
+            // Start field shows start constraints
             if (constraintType === 'snet') {
-                icon = '<path d="M12 8v8m0 0l-4-4m4 4l4-4"/><circle cx="12" cy="5" r="1"/>'; // Anchor-like
-                color = '#3b82f6'; // Blue
+                iconComponent = Anchor;
+                color = '#93c5fd'; // Lighter blue (#3b82f6 → #93c5fd)
                 title = `Start No Earlier Than ${constraintDate}`;
             } else if (constraintType === 'snlt') {
-                icon = '<circle cx="12" cy="12" r="10"/><polyline points="12,6 12,12 16,14"/>'; // Clock
-                color = '#f59e0b'; // Amber
+                iconComponent = AlarmClock;
+                color = '#fcd34d'; // Lighter amber (#f59e0b → #fcd34d)
                 title = `Start No Later Than ${constraintDate}`;
             }
         } else if (col.field === 'end') {
             if (constraintType === 'fnet') {
-                icon = '<path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 00-.586-1.414L12 12l-4.414 4.414A2 2 0 007 17.828V22"/><path d="M7 2v4.172a2 2 0 00.586 1.414L12 12l4.414-4.414A2 2 0 0017 6.172V2"/>'; // Hourglass
-                color = '#3b82f6'; // Blue
+                iconComponent = Hourglass;
+                color = '#93c5fd'; // Lighter blue (#3b82f6 → #93c5fd)
                 title = `Finish No Earlier Than ${constraintDate}`;
             } else if (constraintType === 'fnlt') {
-                icon = '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>'; // Flag
-                color = '#f59e0b'; // Amber
+                iconComponent = Flag;
+                color = '#fcd34d'; // Lighter amber (#f59e0b → #fcd34d)
                 title = `Finish No Later Than ${constraintDate}`;
             } else if (constraintType === 'mfo') {
-                icon = '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0110 0v4"/>'; // Lock
-                color = '#ef4444'; // Red
+                iconComponent = Lock;
+                color = '#fca5a5'; // Lighter red (#ef4444 → #fca5a5)
                 title = `Must Finish On ${constraintDate}`;
             }
         }
         
-        if (!icon) return;
+        if (!iconComponent) return;
         
-        // Create and insert icon element
+        // Create and insert icon element using Lucide
         const iconEl = document.createElement('span');
         iconEl.className = 'vsg-constraint-icon';
         iconEl.title = title;
+        
+        // Icon dimensions: 12px × 12px (to match 13px date text)
+        const iconSize = 12;
+        const iconMargin = 4; // Margin from right edge
+        
         iconEl.style.cssText = `
             position: absolute;
-            right: 4px;
+            right: ${iconMargin}px;
             top: 50%;
             transform: translateY(-50%);
+            width: ${iconSize}px;
+            height: ${iconSize}px;
             color: ${color};
+            opacity: 0.8;
             pointer-events: none;
             display: flex;
             align-items: center;
             justify-content: center;
+            z-index: 2;
+            flex-shrink: 0;
         `;
         
-        // Create SVG element using DOM APIs instead of innerHTML
-        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        svg.setAttribute('width', '14');
-        svg.setAttribute('height', '14');
-        svg.setAttribute('viewBox', '0 0 24 24');
-        svg.setAttribute('fill', 'none');
-        svg.setAttribute('stroke', 'currentColor');
-        svg.setAttribute('stroke-width', '2');
-        
-        // Parse and add path elements from icon string
-        // Icon string contains one or more <path> elements
-        const parser = new DOMParser();
-        const iconDoc = parser.parseFromString(`<svg>${icon}</svg>`, 'image/svg+xml');
-        const paths = iconDoc.querySelectorAll('path, circle, polyline, line, rect');
-        paths.forEach(path => {
-            const clonedPath = path.cloneNode(true);
-            svg.appendChild(clonedPath);
+        // Create icon using Lucide createElement
+        // Icon size: 12px to match date text size (13px)
+        const svg = createElement(iconComponent, {
+            size: iconSize,
+            strokeWidth: 1.5,
+            color: color
         });
         
+        // Ensure SVG respects container size
+        if (svg instanceof SVGElement) {
+            svg.setAttribute('width', String(iconSize));
+            svg.setAttribute('height', String(iconSize));
+            svg.style.width = `${iconSize}px`;
+            svg.style.height = `${iconSize}px`;
+            svg.style.display = 'block';
+        }
+        
         iconEl.appendChild(svg);
-        cell.style.position = 'relative';
+        // Note: cell.position is already set to 'relative' in _bindCellData() before calling this method
         cell.appendChild(iconEl);
         
-        // Add padding to input to avoid overlap with icon
-        const input = cell.querySelector('.vsg-input') as HTMLInputElement | null;
-        if (input) {
-            input.style.paddingRight = '22px';
-        }
+        // Note: padding is already set in _bindCellData() before calling this method
     }
 
     /**
@@ -1621,6 +1835,12 @@ export class VirtualScrollGrid {
             const actionName = action.name || action.id;
             const actionContent = action.icon || action.label || actionName;
             
+            // Determine color: purple for links if task has dependencies, otherwise use action color
+            let actionColor = action.color || '#64748b';
+            if (actionName === 'links' && task.dependencies && task.dependencies.length > 0) {
+                actionColor = '#9333ea'; // Purple for tasks with dependencies
+            }
+            
             // Create button element
             const btn = document.createElement('button');
             btn.setAttribute('data-action', actionName);
@@ -1632,7 +1852,7 @@ export class VirtualScrollGrid {
                 background: transparent;
                 cursor: pointer;
                 border-radius: 4px;
-                color: ${action.color || '#64748b'};
+                color: ${actionColor};
                 display: flex;
                 align-items: center;
                 justify-content: center;
@@ -1672,8 +1892,9 @@ export class VirtualScrollGrid {
     setData(tasks: Task[]): void {
         this.allData = tasks;
         this.data = tasks;
-        // Clear row hashes when data changes (invalidate change detection cache)
+        // Clear row and cell hashes when data changes (invalidate change detection cache)
         this._rowHashes = new WeakMap();
+        this._cellHashes = new WeakMap();
         this._measure();
         this._updateVisibleRows();
     }
@@ -1684,8 +1905,9 @@ export class VirtualScrollGrid {
      */
     setVisibleData(tasks: Task[]): void {
         this.data = tasks;
-        // Clear row hashes when data changes (invalidate change detection cache)
+        // Clear row and cell hashes when data changes (invalidate change detection cache)
         this._rowHashes = new WeakMap();
+        this._cellHashes = new WeakMap();
         this._measure();
         this._updateVisibleRows();
     }

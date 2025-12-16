@@ -15,6 +15,7 @@
  */
 
 import type { Task, ConstraintType } from '../../types';
+import { createElement, Anchor, AlarmClock, Hourglass, Flag, Lock } from 'lucide';
 
 /**
  * Side drawer options
@@ -40,6 +41,7 @@ interface SideDrawerDOM {
   constraintDate: HTMLInputElement;
   constraintDateGroup: HTMLElement;
   constraintDesc: HTMLElement;
+  constraintIcon: HTMLElement;
   notes: HTMLTextAreaElement;
   totalFloat: HTMLElement;
   freeFloat: HTMLElement;
@@ -230,7 +232,10 @@ export class SideDrawer {
                     <h4 class="form-section-title">Constraints & Logic</h4>
                     
                     <div class="form-group">
-                        <label class="form-label">Constraint Type</label>
+                        <label class="form-label">
+                            Constraint Type
+                            <span id="drawer-constraint-icon" class="drawer-constraint-icon"></span>
+                        </label>
                         <select id="drawer-constraintType" class="form-input form-select">
                             <option value="asap">As Soon As Possible (Default)</option>
                             <optgroup label="Start Constraints">
@@ -300,6 +305,7 @@ export class SideDrawer {
             constraintDate: getElement<HTMLInputElement>('drawer-constraintDate'),
             constraintDateGroup: getElement<HTMLElement>('drawer-constraint-date-group'),
             constraintDesc: getElement<HTMLElement>('drawer-constraint-desc'),
+            constraintIcon: getElement<HTMLElement>('drawer-constraint-icon'),
             notes: getElement<HTMLTextAreaElement>('drawer-notes'),
             totalFloat: getElement<HTMLElement>('drawer-total-float'),
             freeFloat: getElement<HTMLElement>('drawer-free-float'),
@@ -345,6 +351,13 @@ export class SideDrawer {
             const type = this.dom.constraintType.value as ConstraintType;
             this._updateConstraintDesc(type);
             this._handleChange('constraintType', type);
+        });
+        
+        // Constraint date change - update icon title if constraint type is set
+        this.dom.constraintDate.addEventListener('change', () => {
+            const type = this.dom.constraintType.value as ConstraintType;
+            const constraintDate = this.dom.constraintDate.value || '';
+            this._updateConstraintIcon(type, constraintDate);
         });
         
         // Constraint date change
@@ -414,6 +427,60 @@ export class SideDrawer {
     }
 
     /**
+     * Update constraint icon based on constraint type
+     * @private
+     */
+    private _updateConstraintIcon(type: ConstraintType, constraintDate: string = ''): void {
+        // Clear existing icon
+        this.dom.constraintIcon.innerHTML = '';
+        
+        // No icon for ASAP
+        if (type === 'asap') {
+            return;
+        }
+        
+        // Determine icon component and color based on constraint type
+        let iconComponent: typeof Anchor | typeof AlarmClock | typeof Hourglass | typeof Flag | typeof Lock | null = null;
+        let color = '';
+        let title = '';
+        
+        if (type === 'snet') {
+            iconComponent = Anchor;
+            color = '#3b82f6'; // Blue
+            title = `Start No Earlier Than ${constraintDate}`;
+        } else if (type === 'snlt') {
+            iconComponent = AlarmClock;
+            color = '#f59e0b'; // Amber
+            title = `Start No Later Than ${constraintDate}`;
+        } else if (type === 'fnet') {
+            iconComponent = Hourglass;
+            color = '#3b82f6'; // Blue
+            title = `Finish No Earlier Than ${constraintDate}`;
+        } else if (type === 'fnlt') {
+            iconComponent = Flag;
+            color = '#f59e0b'; // Amber
+            title = `Finish No Later Than ${constraintDate}`;
+        } else if (type === 'mfo') {
+            iconComponent = Lock;
+            color = '#ef4444'; // Red
+            title = `Must Finish On ${constraintDate}`;
+        }
+        
+        if (!iconComponent) return;
+        
+        // Create icon using Lucide createElement
+        const svg = createElement(iconComponent, {
+            size: 8,
+            strokeWidth: 1.5,
+            color: color
+        });
+        
+        // Set title attribute for tooltip
+        this.dom.constraintIcon.title = title;
+        this.dom.constraintIcon.appendChild(svg);
+    }
+
+    /**
      * Update constraint description text
      * @private
      */
@@ -426,6 +493,10 @@ export class SideDrawer {
         } else {
             this.dom.constraintDateGroup.style.display = 'block';
         }
+        
+        // Update constraint icon
+        const constraintDate = this.dom.constraintDate.value || '';
+        this._updateConstraintIcon(type, constraintDate);
     }
 
     /**
@@ -455,7 +526,7 @@ export class SideDrawer {
         this.dom.constraintDate.value = task.constraintDate || '';
         this.dom.notes.value = task.notes || '';
         
-        // Update constraint description
+        // Update constraint description and icon
         this._updateConstraintDesc(task.constraintType || 'asap');
         
         // Update CPM data
