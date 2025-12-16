@@ -101,7 +101,7 @@ export class VirtualScrollGrid {
         bufferRows: 3,             // Extra rows above/below viewport (reduced from 10 for better performance)
         scrollThrottle: 16,       // ~60fps throttle for scroll events
         editDebounce: 150,        // Debounce for input changes
-        scrollDebounce: 16,       // Debounce scroll updates (ms) - prevents updates during rapid scrolling
+        scrollDebounce: 8,        // Debounce scroll updates (ms) - reduced for better responsiveness
     };
 
     /** Column type renderers */
@@ -565,27 +565,43 @@ export class VirtualScrollGrid {
             cancelAnimationFrame(this._scrollRAF);
         }
         
-        // During rapid scrolling, use longer debounce to prevent layout shifts
-        // This prevents spacer height updates from interfering with scroll momentum
-        const baseDebounceDelay = this.options.scrollDebounce ?? VirtualScrollGrid.DEFAULTS.scrollDebounce ?? 16;
-        const debounceDelay = this._isRapidScrolling ? Math.max(baseDebounceDelay * 2, 50) : baseDebounceDelay;
+        // Optimized debounce for better responsiveness
+        // Use shorter delays and RAF for immediate feel during scroll
+        const baseDebounceDelay = this.options.scrollDebounce ?? VirtualScrollGrid.DEFAULTS.scrollDebounce ?? 8;
+        
+        // During rapid scrolling, use slightly longer debounce but still responsive
+        // Reduced from 2x/50ms to 1.5x/16ms for better user experience
+        const debounceDelay = this._isRapidScrolling ? Math.max(Math.ceil(baseDebounceDelay * 1.5), 16) : baseDebounceDelay;
         
         // Mark that we have a pending spacer update
         this._pendingSpacerUpdate = true;
         
-        this._scrollDebounceTimer = window.setTimeout(() => {
-            // Only update if scrolling has slowed down or enough time has passed
-            // This prevents DOM updates during active scroll momentum
-            if (this._isRapidScrolling && (performance.now() - this._lastScrollTime) < 100) {
-                // Still scrolling rapidly, defer update
-                this._scrollDebounceTimer = window.setTimeout(() => {
+        // Use RAF for immediate updates during normal scrolling
+        // Only use setTimeout debounce during rapid scrolling
+        if (!this._isRapidScrolling) {
+            // Normal scrolling - use RAF for immediate responsiveness
+            if (this._scrollRAF === null) {
+                this._scrollRAF = requestAnimationFrame(() => {
                     this._applyScrollUpdate();
-                }, 50);
-                return;
+                });
             }
-            
-            this._applyScrollUpdate();
-        }, debounceDelay);
+        } else {
+            // Rapid scrolling - use minimal debounce
+            this._scrollDebounceTimer = window.setTimeout(() => {
+                // Check if still scrolling rapidly
+                const timeSinceLastScroll = performance.now() - this._lastScrollTime;
+                if (timeSinceLastScroll < 50) {
+                    // Still scrolling rapidly, but update anyway for responsiveness
+                    // Reduced deferral from 50ms to 16ms
+                    this._scrollDebounceTimer = window.setTimeout(() => {
+                        this._applyScrollUpdate();
+                    }, 16);
+                    return;
+                }
+                
+                this._applyScrollUpdate();
+            }, debounceDelay);
+        }
     }
     
     /**
