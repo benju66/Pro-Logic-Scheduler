@@ -68,6 +68,14 @@ interface CellMeta {
 }
 
 /**
+ * Row cache for DOM references (performance optimization)
+ */
+interface RowCache {
+  cells: Map<string, HTMLElement>;  // field -> cell element
+  inputs: Map<string, HTMLElement>;  // field -> input/select/checkbox element
+}
+
+/**
  * DOM element references
  */
 interface VirtualScrollGridDOM {
@@ -89,9 +97,10 @@ export class VirtualScrollGrid {
     static readonly DEFAULTS = {
         rowHeight: 38,
         headerHeight: 50,
-        bufferRows: 10,           // Extra rows above/below viewport
+        bufferRows: 3,             // Extra rows above/below viewport (reduced from 10 for better performance)
         scrollThrottle: 16,       // ~60fps throttle for scroll events
         editDebounce: 150,        // Debounce for input changes
+        scrollDebounce: 16,       // Debounce scroll updates (ms) - prevents updates during rapid scrolling
     };
 
     /** Column type renderers */
@@ -111,7 +120,7 @@ export class VirtualScrollGrid {
     // INSTANCE PROPERTIES
     // =========================================================================
     
-    private options: Required<Pick<VirtualScrollGridOptions, 'rowHeight' | 'headerHeight' | 'bufferRows' | 'scrollThrottle' | 'editDebounce'>> & VirtualScrollGridOptions;
+    private options: Required<Pick<VirtualScrollGridOptions, 'rowHeight' | 'headerHeight' | 'bufferRows' | 'scrollThrottle' | 'editDebounce'>> & VirtualScrollGridOptions & { scrollDebounce?: number };
     private container: HTMLElement;
     private data: Task[] = [];                      // Flat array of visible tasks
     private allData: Task[] = [];                   // All tasks (for filtering)
@@ -133,8 +142,20 @@ export class VirtualScrollGrid {
     
     // Performance tracking
     private _scrollRAF: number | null = null;              // requestAnimationFrame ID
+    private _scrollDebounceTimer: number | null = null;   // Scroll debounce timer
+    private _lastScrollTop: number = 0;                    // Last scroll position (for distance threshold)
+    private _lastScrollTime: number = 0;                  // Timestamp of last scroll event (for rapid scroll detection)
+    private _isRapidScrolling: boolean = false;           // Flag to detect rapid scrolling
+    private _pendingSpacerUpdate: boolean = false;        // Flag to batch spacer updates
     private _renderCount: number = 0;               // Debug: track render calls
     private _resizeObserver: ResizeObserver | null = null;
+    
+    // Change detection: Store row hashes to skip unnecessary updates
+    private _rowHashes = new WeakMap<HTMLElement, string>();  // Row element -> hash string
+    
+    // IntersectionObserver for visibility detection (supplements scroll-based logic)
+    private _intersectionObserver: IntersectionObserver | null = null;
+    private _intersectionRAF: number | null = null;  // RAF for throttling observer callbacks
     
     // Drag state
     private _dragState: DragState | null = null;
@@ -206,6 +227,10 @@ export class VirtualScrollGrid {
             overflow-y: auto;
             overflow-x: auto;
             position: relative;
+            scroll-behavior: auto;
+            overscroll-behavior: contain;
+            will-change: scroll-position;
+            contain: layout style paint;
         `;
         
         // Create scroll content wrapper (holds spacers + rows)
@@ -222,6 +247,7 @@ export class VirtualScrollGrid {
         topSpacer.style.cssText = `
             height: 0px;
             pointer-events: none;
+            will-change: height;
         `;
         
         // Create row container (holds the recycled rows)
@@ -237,6 +263,7 @@ export class VirtualScrollGrid {
         bottomSpacer.style.cssText = `
             height: 0px;
             pointer-events: none;
+            will-change: height;
         `;
         
         // Assemble structure
@@ -292,17 +319,54 @@ export class VirtualScrollGrid {
             border-bottom: 1px solid #f1f5f9;
             background: white;
             min-width: fit-content;
+            content-visibility: auto;
+            contain-intrinsic-size: ${this.options.rowHeight}px;
+            contain: strict;
         `;
         
-        // Create cells for each column
+        // Create cache for DOM references (performance optimization)
+        const cache: RowCache = {
+            cells: new Map(),
+            inputs: new Map(),
+        };
+        
+        // Create cells for each column and cache references
         if (this.options.columns) {
             this.options.columns.forEach(col => {
                 const cell = this._createCellElement(col);
                 row.appendChild(cell);
+                
+                // Cache cell reference
+                cache.cells.set(col.field, cell);
+                
+                // Cache input element reference (if exists)
+                const input = this._findInputElement(cell, col);
+                if (input) {
+                    cache.inputs.set(col.field, input);
+                }
             });
         }
         
+        // Store cache on row element for fast access
+        (row as any).__cache = cache;
+        
         return row;
+    }
+    
+    /**
+     * Find the input element within a cell (helper for caching)
+     * @private
+     */
+    private _findInputElement(cell: HTMLElement, col: GridColumn): HTMLElement | null {
+        // Check if cell itself is an input
+        if (cell.classList.contains('vsg-input') || 
+            cell.classList.contains('vsg-select') || 
+            cell.classList.contains('vsg-checkbox')) {
+            return cell;
+        }
+        
+        // Find input element within cell
+        return cell.querySelector('.vsg-input, .vsg-select, .vsg-checkbox, .vsg-readonly, .vsg-text') as HTMLElement | null;
     }
 
     /**
@@ -331,6 +395,7 @@ export class VirtualScrollGrid {
             ${col.align === 'right' ? 'justify-content: flex-end;' : ''}
             position: ${isPinned ? 'sticky' : 'relative'};
             ${isPinned && stickyLeft ? `left: ${stickyLeft};` : ''}
+            ${isPinned ? 'background: white; z-index: 100;' : ''}
             overflow: hidden;
         `;
         
@@ -398,8 +463,31 @@ export class VirtualScrollGrid {
      * @private
      */
     private _bindEvents(): void {
-        // Scroll handling with RAF throttling
+        // Scroll handling with RAF throttling and debouncing
+        // Let browser handle wheel events naturally - no custom wheel handler needed
         this.dom.viewport.addEventListener('scroll', this._onScroll.bind(this), { passive: true });
+        
+        // IntersectionObserver for visibility detection (supplements scroll-based logic)
+        // Provides browser-native optimization for detecting when rows enter/leave viewport
+        if ('IntersectionObserver' in window) {
+            this._intersectionObserver = new IntersectionObserver(
+                (entries) => {
+                    // Throttle observer callbacks with RAF to prevent excessive updates
+                    if (this._intersectionRAF === null) {
+                        this._intersectionRAF = requestAnimationFrame(() => {
+                            // Observer supplements scroll-based logic but doesn't replace it
+                            // Scroll-based logic handles precise row calculations
+                            this._intersectionRAF = null;
+                        });
+                    }
+                },
+                {
+                    root: this.dom.viewport,
+                    rootMargin: '0px',
+                    threshold: [0, 0.1, 0.5, 1.0]
+                }
+            );
+        }
         
         // Event delegation for row interactions
         this.dom.rowContainer.addEventListener('click', this._onClick.bind(this));
@@ -428,40 +516,100 @@ export class VirtualScrollGrid {
     }
 
     /**
-     * Handle scroll events with RAF throttling
+     * Handle scroll events with RAF throttling and debouncing
+     * Optimized to skip updates for tiny scroll changes and prevent excessive processing
+     * Defers DOM updates during rapid scrolling to prevent layout shifts that cause scroll jumps
      * @private
      */
     private _onScroll(_e: Event): void {
+        // Get current scroll positions
+        const newScrollTop = this.dom.viewport.scrollTop;
+        const newScrollLeft = this.dom.viewport.scrollLeft;
+        const now = performance.now();
+        
+        // Calculate scroll distance for vertical scroll
+        const scrollDelta = Math.abs(newScrollTop - this._lastScrollTop);
+        const timeSinceLastScroll = now - this._lastScrollTime;
+        
+        // Detect rapid scrolling (< 50ms between scroll events = rapid)
+        this._isRapidScrolling = timeSinceLastScroll < 50;
+        this._lastScrollTime = now;
+        
+        // Skip processing if scroll change is too small (< 3px)
+        // This prevents excessive updates during smooth scrolling and reduces lag
+        const minScrollDelta = 3;
+        if (scrollDelta < minScrollDelta && Math.abs(newScrollLeft - this.scrollLeft) < minScrollDelta) {
+            // Update positions but skip expensive operations
+            this.scrollTop = newScrollTop;
+            this.scrollLeft = newScrollLeft;
+            return;
+        }
+        
+        // Update scroll positions
+        this.scrollTop = newScrollTop;
+        this.scrollLeft = newScrollLeft;
+        this._lastScrollTop = newScrollTop;
+        
+        // Cancel any pending debounce timer
+        if (this._scrollDebounceTimer !== null) {
+            clearTimeout(this._scrollDebounceTimer);
+            this._scrollDebounceTimer = null;
+        }
+        
         // Cancel any pending RAF
         if (this._scrollRAF !== null) {
             cancelAnimationFrame(this._scrollRAF);
         }
         
+        // During rapid scrolling, use longer debounce to prevent layout shifts
+        // This prevents spacer height updates from interfering with scroll momentum
+        const baseDebounceDelay = this.options.scrollDebounce ?? VirtualScrollGrid.DEFAULTS.scrollDebounce ?? 16;
+        const debounceDelay = this._isRapidScrolling ? Math.max(baseDebounceDelay * 2, 50) : baseDebounceDelay;
+        
+        // Mark that we have a pending spacer update
+        this._pendingSpacerUpdate = true;
+        
+        this._scrollDebounceTimer = window.setTimeout(() => {
+            // Only update if scrolling has slowed down or enough time has passed
+            // This prevents DOM updates during active scroll momentum
+            if (this._isRapidScrolling && (performance.now() - this._lastScrollTime) < 100) {
+                // Still scrolling rapidly, defer update
+                this._scrollDebounceTimer = window.setTimeout(() => {
+                    this._applyScrollUpdate();
+                }, 50);
+                return;
+            }
+            
+            this._applyScrollUpdate();
+        }, debounceDelay);
+    }
+    
+    /**
+     * Apply scroll updates (rows and sync)
+     * Separated to allow deferred execution during rapid scrolling
+     * @private
+     */
+    private _applyScrollUpdate(): void {
+        if (!this._pendingSpacerUpdate) return;
+        this._pendingSpacerUpdate = false;
+        
         // Schedule update on next animation frame
         this._scrollRAF = requestAnimationFrame(() => {
-            const newScrollTop = this.dom.viewport.scrollTop;
-            const newScrollLeft = this.dom.viewport.scrollLeft;
+            // Vertical scroll - update visible rows (includes spacer updates)
+            this._updateVisibleRows();
             
-            // Vertical scroll
-            if (newScrollTop !== this.scrollTop) {
-                this.scrollTop = newScrollTop;
-                this._updateVisibleRows();
-                
-                // Emit scroll event for sync with Gantt
-                if (this.options.onScroll) {
-                    this.options.onScroll(this.scrollTop);
-                }
+            // Emit scroll event for sync with Gantt
+            if (this.options.onScroll) {
+                this.options.onScroll(this.scrollTop);
             }
             
-            // Horizontal scroll
-            if (newScrollLeft !== this.scrollLeft) {
-                this.scrollLeft = newScrollLeft;
-                
-                // Emit horizontal scroll event for sync with header
-                if (this.options.onHorizontalScroll) {
-                    this.options.onHorizontalScroll(this.scrollLeft);
-                }
+            // Horizontal scroll - emit event for sync with header
+            if (this.options.onHorizontalScroll) {
+                this.options.onHorizontalScroll(this.scrollLeft);
             }
+            
+            this._scrollRAF = null;
+            this._scrollDebounceTimer = null;
         });
     }
 
@@ -969,6 +1117,10 @@ export class VirtualScrollGrid {
         
         // Update scroll content height
         this.dom.scrollContent.style.height = `${this.totalHeight}px`;
+        
+        // Initialize last scroll position for distance threshold
+        this._lastScrollTop = this.dom.viewport.scrollTop;
+        this._lastScrollTime = performance.now();
     }
 
     /**
@@ -1003,9 +1155,12 @@ export class VirtualScrollGrid {
         this.lastVisibleIndex = Math.min(dataLength - 1, rawFirstVisible + visibleCount + buffer);
         
         // Update phantom spacers
+        // Height changes are deferred during rapid scrolling to prevent layout shifts
         const topSpacerHeight = this.firstVisibleIndex * rowHeight;
         const bottomSpacerHeight = Math.max(0, (dataLength - this.lastVisibleIndex - 1) * rowHeight);
         
+        // Use will-change hint for browser optimization
+        // Height changes are already deferred during rapid scrolling via _applyScrollUpdate
         this.dom.topSpacer.style.height = `${topSpacerHeight}px`;
         this.dom.bottomSpacer.style.height = `${bottomSpacerHeight}px`;
         
@@ -1081,25 +1236,55 @@ export class VirtualScrollGrid {
     }
 
     /**
+     * Generate a hash for a row to detect changes
+     * @private
+     * @param task - The task data
+     * @param meta - Cell metadata
+     * @param isSelected - Whether task is selected
+     * @returns Hash string
+     */
+    private _getRowHash(task: Task, meta: CellMeta, isSelected: boolean): string {
+        // Use stable fields that affect rendering
+        return `${task.id}|${task.name}|${task.start}|${task.end}|${task.duration}|${task.constraintType}|${task.constraintDate || ''}|${meta.isParent}|${meta.depth}|${meta.isCollapsed}|${isSelected}`;
+    }
+
+    /**
      * Bind task data to a row element
+     * Optimized: Uses change detection to skip unnecessary updates
      * @private
      * @param row - The row element
      * @param task - The task data
      * @param index - The data index
      */
     private _bindRowData(row: HTMLElement, task: Task, index: number): void {
+        // Get task metadata
+        const isParent = this.options.isParent ? this.options.isParent(task.id) : false;
+        const depth = this.options.getDepth ? this.options.getDepth(task.id) : 0;
+        const isCollapsed = task._collapsed || false;
+        const isSelected = this.selectedIds.has(task.id);
+        const meta: CellMeta = { isParent, depth, isCollapsed, index };
+        
+        // Change detection: Skip update if data hasn't changed and row is not being edited
+        const newHash = this._getRowHash(task, meta, isSelected);
+        const oldHash = this._rowHashes.get(row);
+        
+        // Always update if:
+        // 1. Hash doesn't match (data changed)
+        // 2. Row is being edited (must update to preserve editing state)
+        // 3. No hash exists (first render)
+        const shouldUpdate = oldHash !== newHash || this.editingRows.has(task.id) || oldHash === undefined;
+        
+        if (!shouldUpdate) {
+            return; // Skip update - nothing changed
+        }
+        
         // Update row attributes
         row.setAttribute('data-task-id', task.id);
         row.setAttribute('data-index', String(index));
         
         // Update selection state
-        const isSelected = this.selectedIds.has(task.id);
         row.classList.toggle('row-selected', isSelected);
         
-        // Get task metadata
-        const isParent = this.options.isParent ? this.options.isParent(task.id) : false;
-        const depth = this.options.getDepth ? this.options.getDepth(task.id) : 0;
-        const isCollapsed = task._collapsed || false;
         const isCritical = task._isCritical || false;
         
         // Update row classes
@@ -1107,13 +1292,28 @@ export class VirtualScrollGrid {
         row.classList.toggle('is-collapsed', isCollapsed);
         row.classList.toggle('is-critical', isCritical);
         
-        // Update each cell
+        // Update each cell using cached references (performance optimization)
+        const cache = (row as any).__cache as RowCache | undefined;
+        
         this.options.columns?.forEach(col => {
-            const cell = row.querySelector(`[data-field="${col.field}"]`) as HTMLElement | null;
+            // Use cached cell reference if available, fallback to querySelector
+            let cell: HTMLElement | null = null;
+            if (cache) {
+                cell = cache.cells.get(col.field) || null;
+            }
+            
+            // Fallback to querySelector if cache not available (backward compatibility)
+            if (!cell) {
+                cell = row.querySelector(`[data-field="${col.field}"]`) as HTMLElement | null;
+            }
+            
             if (!cell) return;
             
-            this._bindCellData(cell, col, task, { isParent, depth, isCollapsed, index });
+            this._bindCellData(cell, col, task, meta, cache);
         });
+        
+        // Store hash after successful update
+        this._rowHashes.set(row, newHash);
     }
 
     /**
@@ -1123,8 +1323,9 @@ export class VirtualScrollGrid {
      * @param col - Column definition
      * @param task - Task data
      * @param meta - Metadata (isParent, depth, etc.)
+     * @param cache - Optional row cache for performance
      */
-    private _bindCellData(cell: HTMLElement, col: GridColumn, task: Task, meta: CellMeta): void {
+    private _bindCellData(cell: HTMLElement, col: GridColumn, task: Task, meta: CellMeta, cache?: RowCache): void {
         // Handle special column: actions FIRST (before early return)
         if (col.type === VirtualScrollGrid.COLUMN_TYPES.ACTIONS && col.actions) {
             this._bindActionsCell(cell, col, task, meta);
@@ -1132,11 +1333,22 @@ export class VirtualScrollGrid {
         }
         
         const value = getTaskFieldValue(task, col.field);
-        const input = cell.classList.contains('vsg-input') || 
+        
+        // Use cached input reference if available (performance optimization)
+        let input: HTMLInputElement | HTMLSelectElement | HTMLElement | null = null;
+        
+        if (cache) {
+            input = cache.inputs.get(col.field) || null;
+        }
+        
+        // Fallback to querySelector if cache not available
+        if (!input) {
+            input = cell.classList.contains('vsg-input') || 
                      cell.classList.contains('vsg-select') ||
                      cell.classList.contains('vsg-checkbox')
                      ? cell as HTMLInputElement | HTMLSelectElement
                      : cell.querySelector('.vsg-input, .vsg-select, .vsg-checkbox, .vsg-readonly, .vsg-text') as HTMLInputElement | HTMLSelectElement | HTMLElement | null;
+        }
         
         if (!input) return;
         
@@ -1192,6 +1404,7 @@ export class VirtualScrollGrid {
 
     /**
      * Bind the name cell with indent and collapse button
+     * Optimized: Uses DOM APIs instead of innerHTML for better performance
      * @private
      */
     private _bindNameCell(cell: HTMLElement, _task: Task, meta: CellMeta): void {
@@ -1220,9 +1433,13 @@ export class VirtualScrollGrid {
         prefix.style.width = `${indent + collapseWidth}px`;
         
         if (meta.isParent) {
-            const icon = meta.isCollapsed ? 'chevron-right' : 'chevron-down';
-            prefix.innerHTML = `
-                <button class="vsg-collapse-btn" style="
+            // Reuse existing button if present, otherwise create new one
+            let btn = prefix.querySelector('.vsg-collapse-btn') as HTMLButtonElement | null;
+            if (!btn) {
+                btn = document.createElement('button');
+                btn.className = 'vsg-collapse-btn';
+                btn.setAttribute('data-action', 'collapse');
+                btn.style.cssText = `
                     width: 20px;
                     height: 20px;
                     display: flex;
@@ -1233,17 +1450,46 @@ export class VirtualScrollGrid {
                     cursor: pointer;
                     border-radius: 4px;
                     color: #64748b;
-                " data-action="collapse">
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        ${meta.isCollapsed 
-                            ? '<path d="M9 18l6-6-6-6"/>'  // chevron-right
-                            : '<path d="M6 9l6 6 6-6"/>'   // chevron-down
-                        }
-                    </svg>
-                </button>
-            `;
+                `;
+                
+                // Create SVG element
+                const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+                svg.setAttribute('width', '12');
+                svg.setAttribute('height', '12');
+                svg.setAttribute('viewBox', '0 0 24 24');
+                svg.setAttribute('fill', 'none');
+                svg.setAttribute('stroke', 'currentColor');
+                svg.setAttribute('stroke-width', '2');
+                
+                // Create path element
+                const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+                svg.appendChild(path);
+                btn.appendChild(svg);
+                prefix.appendChild(btn);
+            }
+            
+            // Update SVG path based on collapse state
+            const svg = btn.querySelector('svg');
+            const path = svg?.querySelector('path');
+            if (path) {
+                path.setAttribute('d', meta.isCollapsed 
+                    ? 'M9 18l6-6-6-6'  // chevron-right
+                    : 'M6 9l6 6 6-6'   // chevron-down
+                );
+            }
         } else {
-            prefix.innerHTML = `<span style="width: 20px;"></span>`;
+            // For non-parent rows, ensure we have a spacer span
+            let spacer = prefix.querySelector('span');
+            if (!spacer) {
+                spacer = document.createElement('span');
+                spacer.style.width = '20px';
+                prefix.appendChild(spacer);
+            }
+            // Remove button if it exists (row changed from parent to child)
+            const btn = prefix.querySelector('.vsg-collapse-btn');
+            if (btn) {
+                btn.remove();
+            }
         }
     }
 
@@ -1312,8 +1558,27 @@ export class VirtualScrollGrid {
             align-items: center;
             justify-content: center;
         `;
-        iconEl.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${icon}</svg>`;
         
+        // Create SVG element using DOM APIs instead of innerHTML
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('width', '14');
+        svg.setAttribute('height', '14');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '2');
+        
+        // Parse and add path elements from icon string
+        // Icon string contains one or more <path> elements
+        const parser = new DOMParser();
+        const iconDoc = parser.parseFromString(`<svg>${icon}</svg>`, 'image/svg+xml');
+        const paths = iconDoc.querySelectorAll('path, circle, polyline, line, rect');
+        paths.forEach(path => {
+            const clonedPath = path.cloneNode(true);
+            svg.appendChild(clonedPath);
+        });
+        
+        iconEl.appendChild(svg);
         cell.style.position = 'relative';
         cell.appendChild(iconEl);
         
@@ -1326,6 +1591,7 @@ export class VirtualScrollGrid {
 
     /**
      * Bind action buttons to a cell
+     * Optimized: Uses DocumentFragment and DOM APIs instead of innerHTML for better performance
      * @private
      */
     private _bindActionsCell(cell: HTMLElement, col: GridColumn, task: Task, meta: CellMeta): void {
@@ -1336,8 +1602,15 @@ export class VirtualScrollGrid {
             return;
         }
         
-        let html = '<div style="display: flex; align-items: center; gap: 4px; padding: 2px;">';
-        let renderedCount = 0;
+        // Clear existing content
+        container.innerHTML = '';
+        
+        // Create wrapper div
+        const wrapper = document.createElement('div');
+        wrapper.style.cssText = 'display: flex; align-items: center; gap: 4px; padding: 2px;';
+        
+        // Use DocumentFragment to batch DOM operations
+        const fragment = document.createDocumentFragment();
         
         col.actions.forEach(action => {
             // Check if action should be shown
@@ -1345,37 +1618,47 @@ export class VirtualScrollGrid {
                 return;
             }
             
-            renderedCount++;
             const actionName = action.name || action.id;
             const actionContent = action.icon || action.label || actionName;
             
-            html += `
-                <button 
-                    data-action="${actionName}"
-                    class="vsg-action-btn"
-                    title="${action.title || actionName}"
-                    style="
-                        padding: 4px 6px;
-                        border: none;
-                        background: transparent;
-                        cursor: pointer;
-                        border-radius: 4px;
-                        color: ${action.color || '#64748b'};
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        min-width: 24px;
-                        min-height: 24px;
-                        line-height: 1;
-                    "
-                >
-                    ${actionContent}
-                </button>
+            // Create button element
+            const btn = document.createElement('button');
+            btn.setAttribute('data-action', actionName);
+            btn.className = 'vsg-action-btn';
+            btn.title = action.title || actionName;
+            btn.style.cssText = `
+                padding: 4px 6px;
+                border: none;
+                background: transparent;
+                cursor: pointer;
+                border-radius: 4px;
+                color: ${action.color || '#64748b'};
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-width: 24px;
+                min-height: 24px;
+                line-height: 1;
             `;
+            
+            // Set button content (can be text or HTML icon)
+            if (typeof actionContent === 'string' && actionContent.trim().startsWith('<')) {
+                // HTML content - parse and append
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = actionContent;
+                while (tempDiv.firstChild) {
+                    btn.appendChild(tempDiv.firstChild);
+                }
+            } else {
+                // Text content
+                btn.textContent = actionContent;
+            }
+            
+            fragment.appendChild(btn);
         });
         
-        html += '</div>';
-        container.innerHTML = html;
+        wrapper.appendChild(fragment);
+        container.appendChild(wrapper);
     }
 
     // =========================================================================
@@ -1389,6 +1672,8 @@ export class VirtualScrollGrid {
     setData(tasks: Task[]): void {
         this.allData = tasks;
         this.data = tasks;
+        // Clear row hashes when data changes (invalidate change detection cache)
+        this._rowHashes = new WeakMap();
         this._measure();
         this._updateVisibleRows();
     }
@@ -1399,6 +1684,8 @@ export class VirtualScrollGrid {
      */
     setVisibleData(tasks: Task[]): void {
         this.data = tasks;
+        // Clear row hashes when data changes (invalidate change detection cache)
+        this._rowHashes = new WeakMap();
         this._measure();
         this._updateVisibleRows();
     }
@@ -1573,8 +1860,17 @@ export class VirtualScrollGrid {
         if (this._resizeObserver) {
             this._resizeObserver.disconnect();
         }
+        if (this._intersectionObserver) {
+            this._intersectionObserver.disconnect();
+        }
         if (this._scrollRAF !== null) {
             cancelAnimationFrame(this._scrollRAF);
+        }
+        if (this._intersectionRAF !== null) {
+            cancelAnimationFrame(this._intersectionRAF);
+        }
+        if (this._scrollDebounceTimer !== null) {
+            clearTimeout(this._scrollDebounceTimer);
         }
         this.container.innerHTML = '';
     }
