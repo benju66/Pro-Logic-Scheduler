@@ -430,6 +430,27 @@
             overflow: hidden;
         }
         
+        .gantt-pane.hidden {
+            display: none;
+        }
+        
+        .resizer.hidden {
+            display: none;
+        }
+        
+        .grid-pane.gantt-hidden {
+            width: 100% !important;
+            border-right: none;
+        }
+        
+        #gantt-toggle-btn.gantt-off {
+            opacity: 0.6;
+        }
+        
+        #gantt-toggle-btn.gantt-off svg {
+            opacity: 0.5;
+        }
+        
         /* ============================================================
            GRID STYLES (Virtual Scroll Grid)
            ============================================================ */
@@ -449,6 +470,11 @@
         
         .vsg-row.is-parent {
             background: #f8fafc;
+        }
+        
+        .vsg-row.is-parent .vsg-input[data-field="name"] {
+            font-weight: 600;
+            color: #1e293b;
         }
         
         .vsg-cell {
@@ -1699,15 +1725,14 @@
         
         <div class="header-right">
             <button class="btn btn-success" data-action="generate-1000">+ 1,000 Tasks</button>
-            <button class="btn btn-success" data-action="generate-5000">+ 5,000 Tasks</button>
             <div class="divider"></div>
             <button class="btn btn-secondary" data-action="clear-tasks">Clear All</button>
-            <button class="btn btn-secondary" data-action="copy-console" title="Copy console output">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+            <button class="btn btn-secondary" data-action="toggle-gantt" id="gantt-toggle-btn" title="Toggle Gantt Chart">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="gantt-toggle-icon">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                    <circle cx="12" cy="12" r="3"/>
                 </svg>
-                Copy Console
+                Gantt
             </button>
             <button class="btn btn-secondary" data-action="show-stats">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

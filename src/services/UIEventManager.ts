@@ -49,6 +49,8 @@ export class UIEventManager {
     this.initFileShortcuts();
     this.initColumnResizers();
     this.initButtonHandlers();
+    // Restore Gantt visibility preference
+    this._restoreGanttVisibility();
   }
 
   /**
@@ -589,9 +591,6 @@ export class UIEventManager {
         case 'generate-1000':
           this.generate1000Tasks();
           break;
-        case 'generate-5000':
-          this.generate5000Tasks();
-          break;
         case 'clear-tasks':
           this.clearTasks();
           break;
@@ -601,14 +600,14 @@ export class UIEventManager {
         case 'popout-gantt':
           this.popoutGantt();
           break;
-        case 'copy-console':
-          this.copyConsoleOutput();
-          break;
         case 'save-baseline':
           this.handleSaveBaseline();
           break;
         case 'clear-baseline':
           this.handleClearBaseline();
+          break;
+        case 'toggle-gantt':
+          this._toggleGantt();
           break;
         default:
           // Don't warn for grid actions or modal actions
@@ -938,5 +937,55 @@ To copy console output:
     }
     
     scheduler.clearBaseline();
+  }
+
+  /**
+   * Toggle Gantt chart visibility
+   * @private
+   */
+  private _toggleGantt(): void {
+    const ganttPane = document.getElementById('gantt-pane');
+    const resizer = document.getElementById('resizer');
+    const gridPane = document.querySelector('.grid-pane') as HTMLElement;
+    const toggleBtn = document.getElementById('gantt-toggle-btn');
+    
+    if (!ganttPane || !resizer || !gridPane) return;
+    
+    const isCurrentlyVisible = !ganttPane.classList.contains('hidden');
+    
+    if (isCurrentlyVisible) {
+      // Hide Gantt
+      ganttPane.classList.add('hidden');
+      resizer.classList.add('hidden');
+      gridPane.classList.add('gantt-hidden');
+      toggleBtn?.classList.add('gantt-off');
+      toggleBtn?.setAttribute('title', 'Show Gantt Chart');
+      localStorage.setItem('pro_scheduler_gantt_visible', 'false');
+    } else {
+      // Show Gantt
+      ganttPane.classList.remove('hidden');
+      resizer.classList.remove('hidden');
+      gridPane.classList.remove('gantt-hidden');
+      toggleBtn?.classList.remove('gantt-off');
+      toggleBtn?.setAttribute('title', 'Hide Gantt Chart');
+      localStorage.setItem('pro_scheduler_gantt_visible', 'true');
+    }
+    
+    // Refresh grid after layout change
+    const scheduler = this.getScheduler();
+    if (scheduler?.grid) {
+      scheduler.grid.refresh();
+    }
+  }
+
+  /**
+   * Restore Gantt visibility from localStorage
+   * @private
+   */
+  private _restoreGanttVisibility(): void {
+    const saved = localStorage.getItem('pro_scheduler_gantt_visible');
+    if (saved === 'false') {
+      this._toggleGantt();
+    }
   }
 }
