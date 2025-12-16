@@ -248,6 +248,25 @@ export class CPM {
     }
 
     /**
+     * Get duration offset for CPM date calculations
+     * 
+     * Implements the standard CPM formula: EF = ES + Duration - 1
+     * Returns 0 for milestones (duration=0) to ensure start === end
+     * 
+     * @param duration - Task duration in work days
+     * @returns Offset value: (duration - 1) for normal tasks, 0 for milestones or negative durations
+     * @example
+     * // 5-day task: offset = 4 (finishes 4 work days after start)
+     * // 1-day task: offset = 0 (finishes same day as start)
+     * // Milestone: offset = 0 (start === end)
+     * @private
+     */
+    private static _getDurationOffset(duration: number): number {
+        if (duration <= 0) return 0;
+        return duration - 1;
+    }
+
+    /**
      * Forward pass - calculate Early Start (ES) and Early Finish (EF)
      * 
      * Process tasks iteratively until no changes occur.
@@ -297,10 +316,10 @@ export class CPM {
                                 depStart = DateUtils.addWorkDays(pred.start, lag, calendar);
                                 break;
                             case 'FF': // Finish-to-Finish
-                                depStart = DateUtils.addWorkDays(pred.end, lag - task.duration + 1, calendar);
+                                depStart = DateUtils.addWorkDays(pred.end, lag - CPM._getDurationOffset(task.duration), calendar);
                                 break;
                             case 'SF': // Start-to-Finish
-                                depStart = DateUtils.addWorkDays(pred.start, lag - task.duration + 1, calendar);
+                                depStart = DateUtils.addWorkDays(pred.start, lag - CPM._getDurationOffset(task.duration), calendar);
                                 break;
                             default:
                                 depStart = DateUtils.addWorkDays(pred.end, 1 + lag, calendar);
@@ -346,7 +365,7 @@ export class CPM {
                         break;
                     case 'fnet': // Finish No Earlier Than
                         if (constDate) {
-                            const impliedStart = DateUtils.addWorkDays(constDate, -(task.duration - 1), calendar);
+                            const impliedStart = DateUtils.addWorkDays(constDate, -CPM._getDurationOffset(task.duration), calendar);
                             if (finalStart === null || finalStart === undefined) {
                                 finalStart = impliedStart;
                             } else {
@@ -366,7 +385,7 @@ export class CPM {
                     case 'mfo': // Must Finish On
                         if (constDate) {
                             task.end = constDate;
-                            task.start = DateUtils.addWorkDays(constDate, -(task.duration - 1), calendar);
+                            task.start = DateUtils.addWorkDays(constDate, -CPM._getDurationOffset(task.duration), calendar);
                             return; // Skip normal calculation
                         }
                         break;
@@ -388,7 +407,7 @@ export class CPM {
                 
                 // Calculate end date (Early Finish)
                 if (task.start && task.duration >= 0) {
-                    const newEnd = DateUtils.addWorkDays(task.start, task.duration - 1, calendar);
+                    const newEnd = DateUtils.addWorkDays(task.start, CPM._getDurationOffset(task.duration), calendar);
                     if (task.end !== newEnd) {
                         task.end = newEnd;
                         changed = true;
@@ -491,7 +510,7 @@ export class CPM {
                 }
                 
                 task.lateFinish = lateFinish;
-                task.lateStart = DateUtils.addWorkDays(task.lateFinish, -(task.duration - 1), calendar);
+                task.lateStart = DateUtils.addWorkDays(task.lateFinish, -CPM._getDurationOffset(task.duration), calendar);
             } else {
                 // Will be calculated in iteration
                 task.lateFinish = null;
@@ -537,13 +556,13 @@ export class CPM {
                             constrainedFinish = DateUtils.addWorkDays(succTask.lateStart!, -1 - lag, calendar);
                             break;
                         case 'SS': // Start-to-Start
-                            constrainedFinish = DateUtils.addWorkDays(succTask.lateStart!, task.duration - 1 - lag, calendar);
+                            constrainedFinish = DateUtils.addWorkDays(succTask.lateStart!, CPM._getDurationOffset(task.duration) - lag, calendar);
                             break;
                         case 'FF': // Finish-to-Finish
                             constrainedFinish = DateUtils.addWorkDays(succTask.lateFinish!, -lag, calendar);
                             break;
                         case 'SF': // Start-to-Finish
-                            constrainedFinish = DateUtils.addWorkDays(succTask.lateFinish!, task.duration - 1 - lag, calendar);
+                            constrainedFinish = DateUtils.addWorkDays(succTask.lateFinish!, CPM._getDurationOffset(task.duration) - lag, calendar);
                             break;
                         default:
                             constrainedFinish = DateUtils.addWorkDays(succTask.lateStart!, -1 - lag, calendar);
@@ -557,10 +576,13 @@ export class CPM {
                 
                 // Apply FNLT (Finish No Later Than) constraint
                 // FNLT sets the latest allowable finish date (deadline)
-                if (task.constraintType === 'fnlt' && task.constraintDate && minLateFinish !== null) {
+                if (task.constraintType === 'fnlt' && task.constraintDate) {
                     // If constraint date is earlier than successor-driven late finish,
                     // use the constraint date as the deadline
-                    if (task.constraintDate < minLateFinish) {
+                    if (minLateFinish !== null && task.constraintDate < minLateFinish) {
+                        minLateFinish = task.constraintDate;
+                    } else if (minLateFinish === null) {
+                        // If no successor constraints, use constraint date directly
                         minLateFinish = task.constraintDate;
                     }
                 }
@@ -569,7 +591,7 @@ export class CPM {
                 if (minLateFinish !== null) {
                     if (task.lateFinish !== minLateFinish) {
                         task.lateFinish = minLateFinish;
-                        task.lateStart = DateUtils.addWorkDays(minLateFinish, -(task.duration - 1), calendar);
+                        task.lateStart = DateUtils.addWorkDays(minLateFinish, -CPM._getDurationOffset(task.duration), calendar);
                         changed = true;
                     }
                 } else if (!allSuccessorsCalculated) {
@@ -593,7 +615,7 @@ export class CPM {
                 }
                 
                 task.lateFinish = lateFinish;
-                task.lateStart = DateUtils.addWorkDays(lateFinish, -(task.duration - 1), calendar);
+                task.lateStart = DateUtils.addWorkDays(lateFinish, -CPM._getDurationOffset(task.duration), calendar);
             }
         });
         
