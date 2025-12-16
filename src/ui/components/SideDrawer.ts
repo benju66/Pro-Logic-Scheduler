@@ -354,15 +354,11 @@ export class SideDrawer {
         
         // Actual dates change handlers
         this.dom.actualStart.addEventListener('change', () => {
-            if (this.activeTaskId) {
-                this.options.onUpdate(this.activeTaskId, 'actualStart', this.dom.actualStart.value || null);
-            }
+            this._handleChange('actualStart', this.dom.actualStart.value || null);
         });
         
         this.dom.actualFinish.addEventListener('change', () => {
-            if (this.activeTaskId) {
-                this.options.onUpdate(this.activeTaskId, 'actualFinish', this.dom.actualFinish.value || null);
-            }
+            this._handleChange('actualFinish', this.dom.actualFinish.value || null);
         });
         
         // Delete button
@@ -398,6 +394,23 @@ export class SideDrawer {
         if (this.options.onUpdate) {
             this.options.onUpdate(this.activeTaskId, field, value);
         }
+    }
+
+    /**
+     * Format a date string for display
+     * @param dateStr - ISO date string (YYYY-MM-DD) or null/undefined
+     * @returns Formatted date string or '-'
+     * @private
+     */
+    private _formatDateForDisplay(dateStr: string | null | undefined): string {
+        if (!dateStr) return '-';
+        
+        const date = new Date(dateStr + 'T12:00:00'); // Noon to avoid timezone issues
+        return date.toLocaleDateString(undefined, { 
+            month: 'numeric', 
+            day: 'numeric', 
+            year: 'numeric' 
+        });
     }
 
     /**
@@ -479,10 +492,10 @@ export class SideDrawer {
                 
                 // Populate baseline fields (readonly display)
                 if (this.dom.baselineStart) {
-                    this.dom.baselineStart.value = task.baselineStart || '-';
+                    this.dom.baselineStart.value = this._formatDateForDisplay(task.baselineStart);
                 }
                 if (this.dom.baselineFinish) {
-                    this.dom.baselineFinish.value = task.baselineFinish || '-';
+                    this.dom.baselineFinish.value = this._formatDateForDisplay(task.baselineFinish);
                 }
                 
                 // Populate actual fields (editable)
@@ -507,6 +520,8 @@ export class SideDrawer {
         this.dom.end.disabled = isParent;
         this.dom.constraintType.disabled = isParent;
         this.dom.constraintDate.disabled = isParent;
+        this.dom.actualStart.disabled = isParent;
+        this.dom.actualFinish.disabled = isParent;
         this.dom.linksBtn.style.display = isParent ? 'none' : 'flex';
         
         // Add visual styling for disabled state
@@ -514,10 +529,28 @@ export class SideDrawer {
             this.dom.duration.classList.add('form-input-readonly');
             this.dom.start.classList.add('form-input-readonly');
             this.dom.end.classList.add('form-input-readonly');
+            this.dom.actualStart.classList.add('form-input-readonly');
+            this.dom.actualFinish.classList.add('form-input-readonly');
         } else {
             this.dom.duration.classList.remove('form-input-readonly');
             this.dom.start.classList.remove('form-input-readonly');
             this.dom.end.classList.remove('form-input-readonly');
+            this.dom.actualStart.classList.remove('form-input-readonly');
+            this.dom.actualFinish.classList.remove('form-input-readonly');
+        }
+        
+        // Update hints for parent tasks
+        const startHint = this.element.querySelector('#drawer-start')?.nextElementSibling as HTMLElement;
+        const endHint = this.element.querySelector('#drawer-end')?.nextElementSibling as HTMLElement;
+        
+        if (startHint && endHint) {
+            if (isParent) {
+                startHint.textContent = 'Parent dates roll up from children';
+                endHint.textContent = 'Parent dates roll up from children';
+            } else {
+                startHint.textContent = 'Editing applies SNET constraint';
+                endHint.textContent = 'Editing applies FNLT deadline';
+            }
         }
         
         // Show drawer
@@ -539,20 +572,23 @@ export class SideDrawer {
             this.dom.totalFloat.className = 'cpm-value' + (task.totalFloat <= 0 ? ' critical' : '');
         } else {
             this.dom.totalFloat.textContent = '-';
+            this.dom.totalFloat.className = 'cpm-value';
         }
         
         // Free Float
         if (task.freeFloat !== undefined && task.freeFloat !== null) {
             this.dom.freeFloat.textContent = `${task.freeFloat} days`;
+            this.dom.freeFloat.className = 'cpm-value' + (task.freeFloat === 0 ? ' critical' : '');
         } else {
             this.dom.freeFloat.textContent = '-';
+            this.dom.freeFloat.className = 'cpm-value';
         }
         
         // Late Start
-        this.dom.lateStart.textContent = task.lateStart || '-';
+        this.dom.lateStart.textContent = this._formatDateForDisplay(task.lateStart);
         
         // Late Finish
-        this.dom.lateFinish.textContent = task.lateFinish || '-';
+        this.dom.lateFinish.textContent = this._formatDateForDisplay(task.lateFinish);
         
         // Critical badge
         if (task._isCritical) {
@@ -570,7 +606,7 @@ export class SideDrawer {
      * @private
      */
     private _updateVarianceDisplay(task: Task): void {
-        // Try to use scheduler's variance calculation if available (uses work days)
+        // Use scheduler's variance calculation (uses work days)
         if (this.options.getScheduler) {
             const scheduler = this.options.getScheduler();
             if (scheduler && scheduler.calculateVariance) {
@@ -580,12 +616,13 @@ export class SideDrawer {
                 if (this.dom.startVariance) {
                     if (variance.start !== null) {
                         const startVar = variance.start;
+                        // Positive = ahead of schedule (early), Negative = behind schedule (late)
                         if (startVar > 0) {
-                            this.dom.startVariance.value = `${startVar}d late`;
-                            this.dom.startVariance.style.color = '#ef4444'; // Red
+                            this.dom.startVariance.value = `${startVar}d early`;
+                            this.dom.startVariance.style.color = '#22c55e'; // Green - ahead of schedule
                         } else if (startVar < 0) {
-                            this.dom.startVariance.value = `${Math.abs(startVar)}d early`;
-                            this.dom.startVariance.style.color = '#22c55e'; // Green
+                            this.dom.startVariance.value = `${Math.abs(startVar)}d late`;
+                            this.dom.startVariance.style.color = '#ef4444'; // Red - behind schedule
                         } else {
                             this.dom.startVariance.value = 'On time';
                             this.dom.startVariance.style.color = '#22c55e'; // Green
@@ -603,12 +640,13 @@ export class SideDrawer {
                 if (this.dom.finishVariance) {
                     if (variance.finish !== null) {
                         const finishVar = variance.finish;
+                        // Positive = ahead of schedule (early), Negative = behind schedule (late)
                         if (finishVar > 0) {
-                            this.dom.finishVariance.value = `${finishVar}d late`;
-                            this.dom.finishVariance.style.color = '#ef4444'; // Red
+                            this.dom.finishVariance.value = `${finishVar}d early`;
+                            this.dom.finishVariance.style.color = '#22c55e'; // Green - ahead of schedule
                         } else if (finishVar < 0) {
-                            this.dom.finishVariance.value = `${Math.abs(finishVar)}d early`;
-                            this.dom.finishVariance.style.color = '#22c55e'; // Green
+                            this.dom.finishVariance.value = `${Math.abs(finishVar)}d late`;
+                            this.dom.finishVariance.style.color = '#ef4444'; // Red - behind schedule
                         } else {
                             this.dom.finishVariance.value = 'On time';
                             this.dom.finishVariance.style.color = '#22c55e'; // Green
@@ -625,59 +663,14 @@ export class SideDrawer {
             }
         }
         
-        // Fallback: Simple calendar day calculation if scheduler not available
-        // Start Variance: actualStart vs baselineStart
+        // If scheduler not available, show '-' for variance fields
         if (this.dom.startVariance) {
-            if (task.actualStart && task.baselineStart) {
-                const actualDate = new Date(task.actualStart);
-                const baselineDate = new Date(task.baselineStart);
-                const diffTime = actualDate.getTime() - baselineDate.getTime();
-                const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
-                
-                if (diffDays > 0) {
-                    this.dom.startVariance.value = `${diffDays}d late`;
-                    this.dom.startVariance.style.color = '#ef4444'; // Red
-                } else if (diffDays < 0) {
-                    this.dom.startVariance.value = `${Math.abs(diffDays)}d early`;
-                    this.dom.startVariance.style.color = '#22c55e'; // Green
-                } else {
-                    this.dom.startVariance.value = 'On time';
-                    this.dom.startVariance.style.color = '#22c55e'; // Green
-                }
-            } else if (task.baselineStart && !task.actualStart) {
-                this.dom.startVariance.value = 'Not started';
-                this.dom.startVariance.style.color = '#94a3b8'; // Gray
-            } else {
-                this.dom.startVariance.value = '-';
-                this.dom.startVariance.style.color = '#94a3b8';
-            }
+            this.dom.startVariance.value = '-';
+            this.dom.startVariance.style.color = '#94a3b8';
         }
-        
-        // Finish Variance: actualFinish vs baselineFinish
         if (this.dom.finishVariance) {
-            if (task.actualFinish && task.baselineFinish) {
-                const actualDate = new Date(task.actualFinish);
-                const baselineDate = new Date(task.baselineFinish);
-                const diffTime = actualDate.getTime() - baselineDate.getTime();
-                const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
-                
-                if (diffDays > 0) {
-                    this.dom.finishVariance.value = `${diffDays}d late`;
-                    this.dom.finishVariance.style.color = '#ef4444'; // Red
-                } else if (diffDays < 0) {
-                    this.dom.finishVariance.value = `${Math.abs(diffDays)}d early`;
-                    this.dom.finishVariance.style.color = '#22c55e'; // Green
-                } else {
-                    this.dom.finishVariance.value = 'On time';
-                    this.dom.finishVariance.style.color = '#22c55e'; // Green
-                }
-            } else if (task.baselineFinish && !task.actualFinish) {
-                this.dom.finishVariance.value = 'In progress';
-                this.dom.finishVariance.style.color = '#94a3b8'; // Gray
-            } else {
-                this.dom.finishVariance.value = '-';
-                this.dom.finishVariance.style.color = '#94a3b8';
-            }
+            this.dom.finishVariance.value = '-';
+            this.dom.finishVariance.style.color = '#94a3b8';
         }
     }
 
@@ -732,10 +725,10 @@ export class SideDrawer {
                 
                 // Update baseline fields
                 if (this.dom.baselineStart) {
-                    this.dom.baselineStart.value = task.baselineStart || '-';
+                    this.dom.baselineStart.value = this._formatDateForDisplay(task.baselineStart);
                 }
                 if (this.dom.baselineFinish) {
-                    this.dom.baselineFinish.value = task.baselineFinish || '-';
+                    this.dom.baselineFinish.value = this._formatDateForDisplay(task.baselineFinish);
                 }
                 
                 // Update actual fields

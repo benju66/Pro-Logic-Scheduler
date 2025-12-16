@@ -609,6 +609,9 @@ export class UIEventManager {
         case 'toggle-gantt':
           this._toggleGantt();
           break;
+        case 'column-settings':
+          this._openColumnSettings();
+          break;
         default:
           // Don't warn for grid actions or modal actions
           const gridActions = ['collapse', 'indent', 'outdent', 'links', 'delete'];
@@ -644,6 +647,17 @@ export class UIEventManager {
         }, 3000);
       }
     }
+  }
+
+  /**
+   * Open column settings modal
+   * @private
+   */
+  private _openColumnSettings(): void {
+    const scheduler = this.getScheduler();
+    if (!scheduler) return;
+    
+    scheduler.openColumnSettings();
   }
 
   // =========================================================================

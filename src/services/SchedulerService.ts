@@ -34,6 +34,7 @@ import { CanvasGantt } from '../ui/components/CanvasGantt';
 import { SideDrawer } from '../ui/components/SideDrawer';
 import { DependenciesModal } from '../ui/components/DependenciesModal';
 import { CalendarModal } from '../ui/components/CalendarModal';
+import { ColumnSettingsModal } from '../ui/components/ColumnSettingsModal';
 import type { 
     Task, 
     Calendar, 
@@ -41,7 +42,8 @@ import type {
     SchedulerServiceOptions,
     ViewMode,
     LinkType,
-    ConstraintType
+    ConstraintType,
+    ColumnPreferences
 } from '../types';
 
 /**
@@ -93,6 +95,7 @@ export class SchedulerService {
     private drawer: SideDrawer | null = null;
     private dependenciesModal: DependenciesModal | null = null;
     private calendarModal: CalendarModal | null = null;
+    private columnSettingsModal: ColumnSettingsModal | null = null;
 
     // Selection state (managed here, not in store - UI concern)
     public selectedIds: Set<string> = new Set();  // Public for access from UIEventManager
@@ -249,6 +252,13 @@ export class SchedulerService {
             onSave: (calendar) => this._handleCalendarSave(calendar),
         });
 
+        this.columnSettingsModal = new ColumnSettingsModal({
+            container: modalsContainer,
+            onSave: (preferences) => this.updateColumnPreferences(preferences),
+            getColumns: () => this._getBaseColumnDefinitions(),
+            getPreferences: () => this._getColumnPreferences(),
+        });
+
         // Note: Keyboard shortcuts are initialized after init() completes
         // See main.ts - they're attached after scheduler initialization
 
@@ -380,12 +390,12 @@ export class SchedulerService {
     }
 
     /**
-     * Get column definitions for the grid (internal)
+     * Get base column definitions (without preferences applied)
      * Conditionally includes actual/variance columns when baseline exists
      * @private
-     * @returns Column definitions
+     * @returns Base column definitions
      */
-    private _getColumnDefinitions(): GridColumn[] {
+    private _getBaseColumnDefinitions(): GridColumn[] {
         const hasBaseline = this.hasBaseline();
         const columns: GridColumn[] = [
             {
@@ -670,6 +680,152 @@ export class SchedulerService {
     }
 
     /**
+     * Get column definitions with preferences applied
+     * @private
+     */
+    private _getColumnDefinitions(): GridColumn[] {
+        const baseColumns = this._getBaseColumnDefinitions();
+        return this._applyColumnPreferences(baseColumns);
+    }
+
+    /**
+     * Apply column preferences (visibility, order, pinning) to base columns
+     * @private
+     */
+    private _applyColumnPreferences(columns: GridColumn[]): GridColumn[] {
+        const prefs = this._getColumnPreferences();
+        
+        // Filter by visibility (merge with dynamic visibility)
+        const visible = columns.filter(col => {
+            const prefVisible = prefs.visible[col.id] !== false;
+            // Also respect existing col.visible property (for baseline columns)
+            if (col.visible !== undefined) {
+                const dynamicVisible = typeof col.visible === 'function' 
+                    ? col.visible() 
+                    : col.visible;
+                return prefVisible && dynamicVisible;
+            }
+            return prefVisible;
+        });
+        
+        // Sort by order preference
+        const ordered = visible.sort((a, b) => {
+            const aIndex = prefs.order.indexOf(a.id);
+            const bIndex = prefs.order.indexOf(b.id);
+            
+            // If not in preferences, maintain original order (new columns)
+            if (aIndex === -1 && bIndex === -1) return 0;
+            if (aIndex === -1) return 1; // New columns go to end
+            if (bIndex === -1) return -1;
+            
+            return aIndex - bIndex;
+        });
+        
+        // Apply pinned state via classes and calculate sticky left offset
+        return ordered.map((col, index) => {
+            const newCol = { ...col };
+            if (prefs.pinned.includes(col.id)) {
+                newCol.headerClass = (newCol.headerClass || '') + (newCol.headerClass ? ' ' : '') + 'pinned';
+                newCol.cellClass = (newCol.cellClass || '') + (newCol.cellClass ? ' ' : '') + 'pinned';
+                
+                // Calculate left offset for sticky positioning
+                const pinnedIndex = ordered.slice(0, index).filter(c => prefs.pinned.includes(c.id)).length;
+                const leftOffset = this._calculateStickyLeft(pinnedIndex, ordered);
+                // Store in a custom property that VirtualScrollGrid can use
+                (newCol as any).stickyLeft = leftOffset;
+            }
+            return newCol;
+        });
+    }
+
+    /**
+     * Get column preferences from localStorage
+     * @private
+     */
+    private _getColumnPreferences(): ColumnPreferences {
+        try {
+            const saved = localStorage.getItem('pro_scheduler_column_preferences');
+            if (saved) {
+                const parsed = JSON.parse(saved) as ColumnPreferences;
+                // Validate structure
+                if (parsed.visible && parsed.order && Array.isArray(parsed.order) && 
+                    parsed.pinned && Array.isArray(parsed.pinned)) {
+                    return parsed;
+                }
+            }
+        } catch (err) {
+            console.warn('[SchedulerService] Failed to load column preferences:', err);
+        }
+        
+        // Return defaults
+        return this._getDefaultColumnPreferences();
+    }
+
+    /**
+     * Get default column preferences
+     * @private
+     */
+    private _getDefaultColumnPreferences(): ColumnPreferences {
+        const baseColumns = this._getBaseColumnDefinitions();
+        return {
+            visible: Object.fromEntries(baseColumns.map(col => [col.id, true])),
+            order: baseColumns.map(col => col.id),
+            pinned: []
+        };
+    }
+
+    /**
+     * Save column preferences to localStorage
+     * @private
+     */
+    private _saveColumnPreferences(prefs: ColumnPreferences): void {
+        try {
+            localStorage.setItem('pro_scheduler_column_preferences', JSON.stringify(prefs));
+        } catch (err) {
+            console.warn('[SchedulerService] Failed to save column preferences:', err);
+        }
+    }
+
+    /**
+     * Update column preferences and rebuild grid
+     * @param preferences - New column preferences
+     */
+    updateColumnPreferences(preferences: ColumnPreferences): void {
+        // Validate: at least one column must be visible
+        const visibleCount = Object.values(preferences.visible).filter(v => v).length;
+        if (visibleCount === 0) {
+            this.toastService?.show('At least one column must be visible', 'error');
+            return;
+        }
+        
+        // Validate: order must contain all visible columns
+        const visibleIds = Object.keys(preferences.visible).filter(id => preferences.visible[id]);
+        const orderSet = new Set(preferences.order);
+        const missingInOrder = visibleIds.filter(id => !orderSet.has(id));
+        if (missingInOrder.length > 0) {
+            // Add missing columns to end of order
+            preferences.order.push(...missingInOrder);
+        }
+        
+        // Save preferences
+        this._saveColumnPreferences(preferences);
+        
+        // Rebuild grid with new preferences
+        this._rebuildGridColumns();
+        
+        // Re-initialize column resizers (columns may have changed)
+        // Note: UIEventManager will handle this, but we trigger it here
+        setTimeout(() => {
+            const uiEventManager = (window as any).uiEventManager;
+            if (uiEventManager?.initColumnResizers) {
+                uiEventManager.initColumnResizers();
+            }
+        }, 100);
+        
+        this.toastService?.show('Column preferences saved', 'success');
+    }
+
+    /**
      * Build the grid header dynamically from column definitions
      * @private
      */
@@ -716,22 +872,29 @@ export class SchedulerService {
             }
 
             // Build header content based on column type
-            let content = '';
-            
             if (col.type === 'drag') {
-                content = `
+                headerCell.innerHTML = `
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.4">
                         <circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/>
                         <circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/>
                     </svg>
                 `;
             } else if (col.type === 'checkbox') {
-                content = '☑';
+                headerCell.innerHTML = '☑';
             } else {
-                content = col.label;
+                // Text columns: wrap in span for truncation
+                const textSpan = document.createElement('span');
+                textSpan.className = 'grid-header-cell-text';
+                textSpan.textContent = col.label;
+                headerCell.appendChild(textSpan);
+                
+                // Check truncation after render and add tooltip if needed
+                requestAnimationFrame(() => {
+                    if (textSpan.scrollWidth > textSpan.clientWidth) {
+                        headerCell.setAttribute('title', col.label);
+                    }
+                });
             }
-
-            headerCell.innerHTML = content;
 
             // Add resizer if column is resizable
             const isResizable = col.resizable !== undefined ? col.resizable : (col.type !== 'drag' && col.type !== 'checkbox');
@@ -742,6 +905,14 @@ export class SchedulerService {
                 headerCell.appendChild(resizer);
             }
 
+            // Apply sticky positioning for pinned columns
+            if (col.headerClass?.includes('pinned')) {
+                const pinnedIndex = columns.slice(0, columns.indexOf(col))
+                    .filter(c => c.headerClass?.includes('pinned')).length;
+                const leftOffset = this._calculateStickyLeft(pinnedIndex, columns);
+                headerCell.style.left = leftOffset;
+            }
+
             headerContent.appendChild(headerCell);
         });
 
@@ -749,6 +920,21 @@ export class SchedulerService {
         
         // Set up bidirectional scroll sync: header → grid
         this._initHeaderScrollSync();
+    }
+
+    /**
+     * Calculate left offset for sticky column
+     * @private
+     */
+    private _calculateStickyLeft(pinnedIndex: number, columns: GridColumn[]): string {
+        const prefs = this._getColumnPreferences();
+        const pinnedColumns = columns.filter(c => prefs.pinned.includes(c.id)).slice(0, pinnedIndex);
+        
+        if (pinnedColumns.length === 0) return '0px';
+        
+        // Build calc() expression using CSS variables
+        const widths = pinnedColumns.map(col => `var(--w-${col.field}, ${col.width || 100}px)`);
+        return `calc(${widths.join(' + ')})`;
     }
 
     /**
@@ -772,9 +958,15 @@ export class SchedulerService {
             // Skip if we're currently syncing from grid to header (prevent loops)
             if (this._isSyncingHeader) return;
             
+            // Calculate pinned width
+            const pinnedWidth = this._calculatePinnedColumnsWidth();
+            
+            // Adjust scroll position: header scroll + pinned width = grid scroll
+            const gridScrollLeft = header.scrollLeft + pinnedWidth;
+            
             // Sync header scroll to grid body
-            if (Math.abs(viewport.scrollLeft - header.scrollLeft) > 1) {
-                viewport.scrollLeft = header.scrollLeft;
+            if (Math.abs(viewport.scrollLeft - gridScrollLeft) > 1) {
+                viewport.scrollLeft = gridScrollLeft;
             }
         }, { passive: true });
     }
@@ -1763,10 +1955,19 @@ export class SchedulerService {
      */
     private _syncHeaderScroll(scrollLeft: number): void {
         const header = document.getElementById('grid-header');
-        if (header && Math.abs(header.scrollLeft - scrollLeft) > 1) {
+        if (!header) return;
+        
+        // Calculate pinned width
+        const pinnedWidth = this._calculatePinnedColumnsWidth();
+        
+        // Adjust scroll position for pinned columns
+        // When grid scrolls, header should scroll by the same amount minus pinned width
+        const adjustedScrollLeft = Math.max(0, scrollLeft - pinnedWidth);
+        
+        if (Math.abs(header.scrollLeft - adjustedScrollLeft) > 1) {
             // Prevent scroll event from triggering sync back to grid
             this._isSyncingHeader = true;
-            header.scrollLeft = scrollLeft;
+            header.scrollLeft = adjustedScrollLeft;
             // Reset flag after a short delay to allow scroll event to process
             requestAnimationFrame(() => {
                 this._isSyncingHeader = false;
@@ -2456,6 +2657,14 @@ export class SchedulerService {
     openCalendar(): void {
         if (!this.calendarModal) return;
         this.calendarModal.open(this.calendarStore.get());
+    }
+
+    /**
+     * Open column settings modal
+     */
+    openColumnSettings(): void {
+        if (!this.columnSettingsModal) return;
+        this.columnSettingsModal.open();
     }
 
     // =========================================================================

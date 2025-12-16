@@ -345,6 +345,18 @@ export interface SchedulerServiceOptions {
   isTauri?: boolean;
 }
 
+/**
+ * Column preferences for visibility, order, and pinning
+ */
+export interface ColumnPreferences {
+  /** Column visibility: columnId -> visible */
+  visible: Record<string, boolean>;
+  /** Column order: array of column IDs */
+  order: string[];
+  /** Pinned column IDs (sticky columns) */
+  pinned: string[];
+}
+
 // =============================================================================
 // UTILITY TYPES
 // =============================================================================

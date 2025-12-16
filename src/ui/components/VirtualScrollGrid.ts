@@ -315,6 +315,11 @@ export class VirtualScrollGrid {
         const cell = document.createElement('div');
         cell.className = `vsg-cell col-cell`;
         cell.setAttribute('data-field', col.field);
+        
+        // Check if column has sticky positioning
+        const stickyLeft = (col as any).stickyLeft;
+        const isPinned = col.cellClass?.includes('pinned');
+        
         cell.style.cssText = `
             width: var(--w-${col.field}, ${col.width || 100}px);
             flex-shrink: 0;
@@ -324,7 +329,8 @@ export class VirtualScrollGrid {
             border-right: 1px solid #e2e8f0;
             ${col.align === 'center' ? 'justify-content: center;' : ''}
             ${col.align === 'right' ? 'justify-content: flex-end;' : ''}
-            position: relative;
+            position: ${isPinned ? 'sticky' : 'relative'};
+            ${isPinned && stickyLeft ? `left: ${stickyLeft};` : ''}
             overflow: hidden;
         `;
         
