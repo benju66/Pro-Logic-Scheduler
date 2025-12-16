@@ -163,8 +163,8 @@ export interface CalendarException {
 export interface Calendar {
   /** Working days (0=Sunday, 1=Monday, ..., 6=Saturday) */
   workingDays: number[];
-  /** Date-specific exceptions */
-  exceptions: Record<string, CalendarException>;
+  /** Date-specific exceptions - can be CalendarException object or string (legacy format) */
+  exceptions: Record<string, CalendarException | string>;
 }
 
 /**
@@ -183,6 +183,8 @@ export interface CPMResult {
     criticalCount: number;
     /** Project end date */
     projectEnd: string;
+    /** Project duration in work days */
+    duration: number;
     /** Error message if calculation failed */
     error?: string;
   };

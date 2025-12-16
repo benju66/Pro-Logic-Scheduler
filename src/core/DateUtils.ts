@@ -42,16 +42,25 @@ export class DateUtils {
      * DateUtils.isWorkDay(new Date("2025-12-21"), calendar); // false (Sunday)
      */
     static isWorkDay(date: Date, calendar: Calendar = DateUtils.DEFAULT_CALENDAR): boolean {
+        // Normalize to noon UTC to avoid timezone issues
+        // Extract date string first, then create date at noon UTC (same pattern as addWorkDays)
         const dateStr = date.toISOString().split('T')[0];
+        const normalizedDate = new Date(dateStr + 'T12:00:00');
         
-        // Check exceptions first - if an exception exists, use its working value directly
+        // Check exceptions first
         const exception = calendar.exceptions[dateStr];
         if (exception) {
+            // Handle string format for backward compatibility
+            // String exceptions (e.g., "Christmas") are non-working days
+            if (typeof exception === 'string') {
+                return false;
+            }
+            // Object format uses the working property
             return exception.working;
         }
         
         // Check working days (0=Sunday, 1=Monday, etc.)
-        const dayOfWeek = date.getDay();
+        const dayOfWeek = normalizedDate.getUTCDay();
         return calendar.workingDays.includes(dayOfWeek);
     }
 

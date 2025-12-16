@@ -112,6 +112,7 @@ export class CPM {
                     taskCount: 0,
                     criticalCount: 0,
                     projectEnd: '',
+                    duration: 0,
                     error: 'Invalid tasks array' 
                 } 
             };
@@ -124,7 +125,8 @@ export class CPM {
                     calcTime: 0,
                     taskCount: 0,
                     criticalCount: 0,
-                    projectEnd: ''
+                    projectEnd: '',
+                    duration: 0
                 } 
             };
         }
@@ -184,6 +186,18 @@ export class CPM {
                 .reverse();
             const projectEnd = validEnds.length > 0 ? validEnds[0] : '';
             
+            // Calculate project duration in work days
+            // Note: ISO date strings (YYYY-MM-DD) sort correctly as strings
+            const leafTasks = tasksCopy.filter(t => t.start && !isParent(t.id));
+            const projectStart = leafTasks
+                .map(t => t.start!)  // Non-null assertion: filtered above
+                .sort()
+                .shift() || '';
+            
+            const duration = projectStart && projectEnd 
+                ? DateUtils.calcWorkDays(projectStart, projectEnd, calendar)
+                : 0;
+            
             return {
                 tasks: ctx.tasks,
                 stats: {
@@ -191,6 +205,7 @@ export class CPM {
                     taskCount: tasks.length,
                     criticalCount: tasksCopy.filter(t => t._isCritical && !isParent(t.id)).length,
                     projectEnd,
+                    duration,
                 },
             };
         } catch (error) {
@@ -204,6 +219,7 @@ export class CPM {
                     taskCount: tasks.length,
                     criticalCount: 0,
                     projectEnd: '',
+                    duration: 0,
                     error: err.message,
                 },
             };
@@ -577,13 +593,17 @@ export class CPM {
                 // Apply FNLT (Finish No Later Than) constraint
                 // FNLT sets the latest allowable finish date (deadline)
                 if (task.constraintType === 'fnlt' && task.constraintDate) {
+                    const constraintDate: string = task.constraintDate; // Type assertion
                     // If constraint date is earlier than successor-driven late finish,
                     // use the constraint date as the deadline
-                    if (minLateFinish !== null && task.constraintDate < minLateFinish) {
-                        minLateFinish = task.constraintDate;
-                    } else if (minLateFinish === null) {
+                    if (minLateFinish !== null) {
+                        const currentMinLateFinish: string = minLateFinish; // Type assertion for comparison
+                        if (constraintDate < currentMinLateFinish) {
+                            minLateFinish = constraintDate;
+                        }
+                    } else {
                         // If no successor constraints, use constraint date directly
-                        minLateFinish = task.constraintDate;
+                        minLateFinish = constraintDate;
                     }
                 }
                 
@@ -683,10 +703,14 @@ export class CPM {
                         .filter(c => c.totalFloat !== undefined)
                         .map(c => c.totalFloat!);
                     task.totalFloat = childFloats.length > 0 ? Math.min(...childFloats) : 0;
+                    task._totalFloat = task.totalFloat;  // Backward compatibility
                     task.freeFloat = 0;
+                    task._freeFloat = task.freeFloat;    // Backward compatibility
                 } else {
                     task.totalFloat = 0;
+                    task._totalFloat = 0;    // Backward compatibility
                     task.freeFloat = 0;
+                    task._freeFloat = 0;     // Backward compatibility
                 }
                 return;
             }
@@ -697,6 +721,7 @@ export class CPM {
             } else {
                 task.totalFloat = 0;
             }
+            task._totalFloat = task.totalFloat;  // Backward compatibility
             
             // Free Float calculation
             const successors = successorMap.get(task.id) || [];
@@ -704,6 +729,7 @@ export class CPM {
             if (successors.length === 0) {
                 // No successors - free float equals total float
                 task.freeFloat = task.totalFloat;
+                task._freeFloat = task.freeFloat;  // Backward compatibility
             } else {
                 let minFreeFloat: number | null = null;
                 
@@ -741,6 +767,7 @@ export class CPM {
                 task.freeFloat = minFreeFloat !== null 
                     ? Math.max(0, Math.min(minFreeFloat, task.totalFloat || 0))
                     : (task.totalFloat || 0);
+                task._freeFloat = task.freeFloat;  // Backward compatibility
             }
         });
     }
