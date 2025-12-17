@@ -3217,25 +3217,31 @@ export class SchedulerService {
     /**
      * Load data from localStorage
      */
+    /**
+     * Load data from localStorage
+     */
     loadData(): void {
-        console.log('[SchedulerService] 🔍 loadData() called', {
-            isInitialized: this.isInitialized,
-            stackTrace: new Error().stack
-        });
+        console.log('[SchedulerService] 🔍 loadData() called');
         
         try {
             const saved = localStorage.getItem(SchedulerService.STORAGE_KEY);
             if (saved) {
-                const parsed = JSON.parse(saved) as { tasks?: Task[]; calendar?: Calendar; savedAt?: string };
-                const taskCount = parsed.tasks ? parsed.tasks.length : 0;
-                console.log('[SchedulerService] 🔍 Loading data from localStorage', {
-                    taskCount,
+                const parsed = JSON.parse(saved) as { 
+                    tasks?: Task[]; 
+                    calendar?: Calendar; 
+                    savedAt?: string;
+                    version?: string;
+                };
+                
+                console.log('[SchedulerService] Loading data', {
+                    taskCount: parsed.tasks?.length ?? 0,
                     hasCalendar: !!parsed.calendar,
-                    savedAt: parsed.savedAt
+                    savedAt: parsed.savedAt,
+                    version: parsed.version
                 });
                 
-                if (parsed.tasks) {
-                    // Assign sortKeys to loaded tasks if they don't have them
+                if (parsed.tasks && parsed.tasks.length > 0) {
+                    // Migrate tasks to have sortKey
                     const tasksWithSortKeys = this._assignSortKeysToImportedTasks(parsed.tasks);
                     
                     // Temporarily disable onChange to prevent recursion during load
@@ -3243,27 +3249,22 @@ export class SchedulerService {
                     this.taskStore.setAll(tasksWithSortKeys);
                     restoreNotifications();
                     
-                    console.log('[SchedulerService] ✅ Loaded', tasksWithSortKeys.length, 'tasks from localStorage');
+                    console.log('[SchedulerService] ✅ Loaded', tasksWithSortKeys.length, 'tasks');
                 }
+                
                 if (parsed.calendar) {
                     this.calendarStore.set(parsed.calendar);
                 }
             } else {
-                console.log('[SchedulerService] 🔍 No saved data found - creating sample data');
-                // Create sample data for first-time users
+                console.log('[SchedulerService] No saved data found - creating sample data');
                 this._createSampleData();
             }
         } catch (err) {
             console.error('[SchedulerService] Load data failed:', err);
-            // Don't create sample data if load failed - might cause more errors
-            // Just start with empty tasks
-            // @ts-expect-error - Accessing private property for recursion prevention
-            const originalOnChange = this.taskStore.options.onChange;
-            // @ts-expect-error - Accessing private property for recursion prevention
-            this.taskStore.options.onChange = undefined;
-            this.taskStore.setAll([]);
-            // @ts-expect-error - Accessing private property for recursion prevention
-            this.taskStore.options.onChange = originalOnChange;
+            // Clear corrupted data and start fresh
+            console.log('[SchedulerService] Clearing corrupted localStorage data');
+            localStorage.removeItem(SchedulerService.STORAGE_KEY);
+            this._createSampleData();
         }
     }
 
@@ -3276,6 +3277,7 @@ export class SchedulerService {
                 tasks: this.taskStore.getAll(),
                 calendar: this.calendarStore.get(),
                 savedAt: new Date().toISOString(),
+                version: '2.1.0'  // Track data format version
             };
             localStorage.setItem(SchedulerService.STORAGE_KEY, JSON.stringify(data));
         } catch (err) {
@@ -3342,42 +3344,145 @@ export class SchedulerService {
     }
 
     /**
-     * Assign sortKeys to imported tasks
-     * Groups tasks by parentId and assigns sequential sortKeys
-     * @private
+     * Assign sortKeys to tasks that don't have them, preserving original order.
+     * 
+     * This is the CRITICAL migration function that converts:
+     * - Legacy tasks with displayOrder → tasks with sortKey
+     * - Imported tasks without sortKey → tasks with sortKey
+     * - Tasks from localStorage → properly ordered tasks
+     * 
+     * The key insight: sortKey must be assigned based on INTENDED display order,
+     * which is determined by:
+     * 1. Existing sortKey (if present) - highest priority
+     * 2. displayOrder field (legacy) - second priority  
+     * 3. Original array position - fallback
+     * 
+     * @param tasks - Tasks to migrate
+     * @returns Tasks with sortKey assigned, preserving intended order
      */
     private _assignSortKeysToImportedTasks(tasks: Task[]): Task[] {
-        // Group tasks by parentId
-        const tasksByParent = new Map<string | null, Task[]>();
+        // Guard: empty or null input
+        if (!tasks || tasks.length === 0) {
+            return tasks;
+        }
         
-        tasks.forEach(task => {
-            const parentId = task.parentId ?? null;
+        // Check if migration is needed
+        const needsMigration = tasks.some(t => !t.sortKey);
+        if (!needsMigration) {
+            console.log('[SchedulerService] All tasks have sortKey, no migration needed');
+            return tasks;
+        }
+        
+        console.log('[SchedulerService] Migrating tasks to sortKey...', {
+            total: tasks.length,
+            withSortKey: tasks.filter(t => t.sortKey).length,
+            withDisplayOrder: tasks.filter(t => (t as any).displayOrder !== undefined).length
+        });
+        
+        // Step 1: Create a tracking structure that preserves all ordering info
+        interface TaskWithMeta {
+            task: Task;
+            originalIndex: number;
+            displayOrder: number;
+            hasSortKey: boolean;
+        }
+        
+        const tasksWithMeta: TaskWithMeta[] = tasks.map((task, index) => ({
+            task,
+            originalIndex: index,
+            displayOrder: (task as any).displayOrder ?? Number.MAX_SAFE_INTEGER,
+            hasSortKey: !!task.sortKey
+        }));
+        
+        // Step 2: Group by parentId
+        const tasksByParent = new Map<string | null, TaskWithMeta[]>();
+        
+        tasksWithMeta.forEach(item => {
+            const parentId = item.task.parentId ?? null;
             if (!tasksByParent.has(parentId)) {
                 tasksByParent.set(parentId, []);
             }
-            tasksByParent.get(parentId)!.push(task);
+            tasksByParent.get(parentId)!.push(item);
         });
         
-        // Assign sort keys to each group
-        const result: Task[] = [];
-        
-        tasksByParent.forEach((groupTasks, parentId) => {
-            // Get existing last key for this parent (if merging with existing data)
-            const existingLastKey = this.taskStore.getLastSortKey(parentId);
-            
-            // Generate keys for all tasks in this group
-            const sortKeys = OrderingService.generateBulkKeys(
-                existingLastKey,
-                null,
-                groupTasks.length
-            );
-            
-            groupTasks.forEach((task, index) => {
-                result.push({
-                    ...task,
-                    sortKey: sortKeys[index]
-                });
+        // Step 3: Sort each group by intended display order
+        // Priority: existing sortKey > displayOrder > original array index
+        tasksByParent.forEach((group) => {
+            group.sort((a, b) => {
+                // If both have sortKey, use string comparison
+                if (a.hasSortKey && b.hasSortKey) {
+                    const keyA = a.task.sortKey || '';
+                    const keyB = b.task.sortKey || '';
+                    if (keyA < keyB) return -1;
+                    if (keyA > keyB) return 1;
+                    return 0;
+                }
+                
+                // If only one has sortKey, it comes first (preserve existing order)
+                if (a.hasSortKey && !b.hasSortKey) return -1;
+                if (!a.hasSortKey && b.hasSortKey) return 1;
+                
+                // Neither has sortKey - use displayOrder if available
+                if (a.displayOrder !== b.displayOrder) {
+                    return a.displayOrder - b.displayOrder;
+                }
+                
+                // Fallback: original array position
+                return a.originalIndex - b.originalIndex;
             });
+        });
+        
+        // Step 4: Assign sortKeys to each group
+        // Tasks that already have sortKey keep them (unless they conflict)
+        tasksByParent.forEach((group, parentId) => {
+            // Check if we need to regenerate all sortKeys for this group
+            // (necessary if some have sortKey and some don't, to ensure consistency)
+            const hasMissingSortKeys = group.some(item => !item.hasSortKey);
+            
+            if (hasMissingSortKeys) {
+                // Generate fresh sortKeys for entire group to ensure consistency
+                const sortKeys = OrderingService.generateBulkKeys(null, null, group.length);
+                
+                group.forEach((item, index) => {
+                    item.task = {
+                        ...item.task,
+                        sortKey: sortKeys[index]
+                    };
+                    item.hasSortKey = true;
+                });
+                
+                console.log(`[SchedulerService] Assigned sortKeys to ${group.length} tasks with parentId: ${parentId}`);
+            }
+            // If all have sortKey, keep them as-is (they're already sorted correctly)
+        });
+        
+        // Step 5: Reconstruct result array maintaining original positions
+        // This ensures the array structure matches what was saved
+        const result: Task[] = new Array(tasks.length);
+        
+        tasksByParent.forEach((group) => {
+            group.forEach((item) => {
+                result[item.originalIndex] = item.task;
+            });
+        });
+        
+        // Verify no undefined slots (defensive)
+        const undefinedCount = result.filter(t => t === undefined).length;
+        if (undefinedCount > 0) {
+            console.error('[SchedulerService] Migration error: undefined slots in result', {
+                undefinedCount,
+                totalTasks: tasks.length
+            });
+            // Fallback: return original with simple sequential sortKeys
+            return tasks.map((task, index) => ({
+                ...task,
+                sortKey: task.sortKey || OrderingService.generateBulkKeys(null, null, tasks.length)[index]
+            }));
+        }
+        
+        console.log('[SchedulerService] ✅ Migration complete', {
+            totalMigrated: result.length,
+            sampleSortKeys: result.slice(0, 5).map(t => ({ id: t.id, sortKey: t.sortKey }))
         });
         
         return result;
@@ -3561,6 +3666,29 @@ export class SchedulerService {
             tasks: this.taskStore.getAll(),
             calendar: this.calendarStore.get(),
         });
+    }
+
+    /**
+     * Clear all saved data and start fresh
+     * Use when data is corrupted or user wants to reset
+     */
+    clearAllData(): void {
+        if (!confirm('This will delete all your tasks and settings. Continue?')) {
+            return;
+        }
+        
+        localStorage.removeItem(SchedulerService.STORAGE_KEY);
+        localStorage.removeItem('pro_scheduler_column_widths');
+        localStorage.removeItem('pro_scheduler_column_preferences');
+        
+        this.taskStore.setAll([]);
+        this._createSampleData();
+        
+        this.recalculateAll();
+        this.saveData();
+        this.render();
+        
+        this.toastService.success('All data cleared - starting fresh');
     }
 
     // =========================================================================
