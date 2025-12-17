@@ -98,8 +98,12 @@ export interface Task {
   /** Progress percentage (0-100) */
   progress: number;
   
-  /** Display order - controls visual order of tasks (lower = appears first) */
-  displayOrder?: number;
+  /**
+   * Sort key for ordering within siblings (tasks with same parentId)
+   * Uses fractional indexing - string-based keys that allow infinite subdivision
+   * Example values: "a0", "a1", "a0V", "Zz"
+   */
+  sortKey: string;
   
   // === Calculated fields (set by CPM engine) ===
   

@@ -4,6 +4,7 @@
  */
 
 import type { Task, Callback } from '../types';
+import { OrderingService } from '../services/OrderingService';
 
 /**
  * Task store options
@@ -103,30 +104,20 @@ export class TaskStore {
   }
 
   /**
-   * Get tasks by parent ID
-   * @param parentId - Parent task ID
-   * @returns Child tasks sorted by displayOrder
+   * Get children of a parent task, sorted by sortKey
+   * @param parentId - Parent task ID (null for root tasks)
+   * @returns Array of child tasks sorted by sortKey
    */
   getChildren(parentId: string | null): Task[] {
-    const children = this.tasks.filter(t => t.parentId === parentId);
+    const children = this.tasks.filter(t => (t.parentId ?? null) === parentId);
     
-    // Create a map of task ID to array index for stable secondary sorting
-    const indexMap = new Map<string, number>();
-    this.tasks.forEach((task, index) => {
-      indexMap.set(task.id, index);
-    });
-    
-    // Sort by displayOrder (lower = first), then by original array index for stable sort
+    // Sort by sortKey using proper string comparison
     return children.sort((a, b) => {
-      const orderA = a.displayOrder ?? Number.MAX_SAFE_INTEGER;
-      const orderB = b.displayOrder ?? Number.MAX_SAFE_INTEGER;
-      if (orderA !== orderB) {
-        return orderA - orderB;
-      }
-      // Fallback to original array index for stable, deterministic sort
-      const indexA = indexMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
-      const indexB = indexMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
-      return indexA - indexB;
+      const keyA = a.sortKey ?? '';
+      const keyB = b.sortKey ?? '';
+      if (keyA < keyB) return -1;
+      if (keyA > keyB) return 1;
+      return 0;
     });
   }
 
@@ -153,8 +144,9 @@ export class TaskStore {
 
   /**
    * Get flat list of visible tasks (respecting collapse state)
+   * Tasks are sorted by sortKey within each parent level
    * @param isCollapsed - Function to check if task is collapsed
-   * @returns Flat list of visible tasks sorted by displayOrder
+   * @returns Flat list of visible tasks in display order
    */
   getVisibleTasks(isCollapsed: (id: string) => boolean = () => false): Task[] {
     const result: Task[] = [];
@@ -162,32 +154,53 @@ export class TaskStore {
     const addTask = (task: Task): void => {
       result.push(task);
       if (!isCollapsed(task.id) && this.isParent(task.id)) {
-        // getChildren already sorts by displayOrder
+        // getChildren() already returns sorted children
         this.getChildren(task.id).forEach(child => addTask(child));
       }
     };
-
-    // Create a map of task ID to array index for stable secondary sorting
-    const indexMap = new Map<string, number>();
-    this.tasks.forEach((task, index) => {
-      indexMap.set(task.id, index);
-    });
-
-    // Get root tasks sorted by displayOrder
-    const rootTasks = this.tasks.filter(t => !t.parentId).sort((a, b) => {
-      const orderA = a.displayOrder ?? Number.MAX_SAFE_INTEGER;
-      const orderB = b.displayOrder ?? Number.MAX_SAFE_INTEGER;
-      if (orderA !== orderB) {
-        return orderA - orderB;
-      }
-      // Fallback to original array index for stable, deterministic sort
-      const indexA = indexMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
-      const indexB = indexMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
-      return indexA - indexB;
-    });
-
+    
+    // Get root tasks (parentId is null) - getChildren handles sorting
+    const rootTasks = this.getChildren(null);
     rootTasks.forEach(root => addTask(root));
+    
     return result;
+  }
+
+  /**
+   * Get the last (highest) sort key among siblings
+   * Used when appending new tasks
+   * @param parentId - Parent ID to check siblings for
+   * @returns Last sort key or null if no siblings
+   */
+  getLastSortKey(parentId: string | null): string | null {
+    const siblings = this.getChildren(parentId);
+    if (siblings.length === 0) return null;
+    return siblings[siblings.length - 1].sortKey ?? null;
+  }
+
+  /**
+   * Get the first (lowest) sort key among siblings
+   * Used when prepending new tasks
+   * @param parentId - Parent ID to check siblings for
+   * @returns First sort key or null if no siblings
+   */
+  getFirstSortKey(parentId: string | null): string | null {
+    const siblings = this.getChildren(parentId);
+    if (siblings.length === 0) return null;
+    return siblings[0].sortKey ?? null;
+  }
+
+  /**
+   * Update a single task's sortKey
+   * @param taskId - Task ID to update
+   * @param sortKey - New sort key
+   */
+  updateSortKey(taskId: string, sortKey: string): void {
+    const task = this.tasks.find(t => t.id === taskId);
+    if (task) {
+      task.sortKey = sortKey;
+      this._notifyChange();
+    }
   }
 
   /**
