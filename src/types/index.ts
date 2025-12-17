@@ -207,7 +207,7 @@ export interface GridColumn {
   /** Options for select type */
   options?: string[];
   /** Field name on Task object (or computed field name) */
-  field: keyof Task | 'checkbox' | 'startVariance' | 'finishVariance';
+  field: keyof Task | 'checkbox' | 'startVariance' | 'finishVariance' | 'drag' | 'rowNum' | 'actions';
   /** Alignment */
   align?: 'left' | 'center' | 'right';
   /** Is column readonly for parent tasks? */

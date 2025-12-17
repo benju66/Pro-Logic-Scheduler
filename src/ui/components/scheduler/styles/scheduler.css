@@ -1,0 +1,380 @@
+/**
+ * @fileoverview BEM-scoped styles for Unified Scheduler V2
+ * @module ui/components/scheduler/styles/scheduler
+ */
+
+/* =============================================================================
+   Main Viewport
+   ============================================================================= */
+
+.scheduler-viewport {
+    position: relative;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+}
+
+/* =============================================================================
+   Scroll Container (Vertical Scroll Only)
+   ============================================================================= */
+
+.scheduler-scroll-container {
+    position: relative;
+    overflow-y: auto;
+    overflow-x: hidden;
+    height: 100%;
+    width: 100%;
+    will-change: scroll-position;
+    contain: strict; /* Critical for performance */
+}
+
+/* =============================================================================
+   Scroll Content Wrapper
+   ============================================================================= */
+
+.scheduler-scroll-content {
+    position: relative;
+    width: 100%;
+}
+
+/* =============================================================================
+   Grid Pane (Horizontal Scroll Independent)
+   ============================================================================= */
+
+.scheduler-grid-pane {
+    position: absolute;
+    left: 0;
+    width: var(--grid-width, 400px);
+    overflow-x: auto;
+    overflow-y: hidden;
+    height: 100%;
+}
+
+/* =============================================================================
+   Gantt Pane (Horizontal Scroll Independent)
+   ============================================================================= */
+
+.scheduler-gantt-pane {
+    position: absolute;
+    left: var(--grid-width, 400px);
+    right: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    height: 100%;
+}
+
+/* =============================================================================
+   Row Container (Transform-Based Positioning)
+   ============================================================================= */
+
+.vsg-row-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    will-change: transform;
+}
+
+/* =============================================================================
+   Row
+   ============================================================================= */
+
+.vsg-row {
+    display: flex;
+    align-items: center;
+    height: 38px; /* Must match ROW_HEIGHT constant */
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+    background: var(--row-bg, #ffffff);
+    position: relative; /* For absolute positioning of children */
+}
+
+.vsg-row:hover {
+    background: var(--row-hover-bg, #f8fafc);
+}
+
+.vsg-row.row-selected {
+    background: var(--row-selected-bg, #eff6ff);
+}
+
+.vsg-row.is-critical {
+    background: var(--row-critical-bg, #fef2f2);
+}
+
+.vsg-row.is-blocked {
+    opacity: 0.6;
+}
+
+.vsg-row.is-parent {
+    font-weight: 600;
+}
+
+.vsg-row.is-collapsed {
+    /* Visual indicator for collapsed state */
+}
+
+/* =============================================================================
+   Hidden Rows
+   ============================================================================= */
+
+.vsg-hidden {
+    display: none !important;
+}
+
+/* =============================================================================
+   Cell
+   ============================================================================= */
+
+.vsg-cell {
+    position: relative;
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+/* =============================================================================
+   Input
+   ============================================================================= */
+
+.vsg-input,
+.vsg-select {
+    width: 100%;
+    height: 24px;
+    padding: 0 4px;
+    border: 1px solid transparent;
+    background: transparent;
+    font-size: 13px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+.vsg-input:focus,
+.vsg-select:focus {
+    outline: none;
+    border-color: var(--focus-ring, #3b82f6);
+    background: var(--input-bg, #ffffff);
+}
+
+.vsg-input:disabled,
+.vsg-select:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* =============================================================================
+   Text
+   ============================================================================= */
+
+.vsg-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+}
+
+/* =============================================================================
+   Readonly
+   ============================================================================= */
+
+.vsg-readonly {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    color: var(--text-color, #64748b);
+}
+
+/* =============================================================================
+   Checkbox
+   ============================================================================= */
+
+.vsg-checkbox {
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+    margin: 0;
+}
+
+/* =============================================================================
+   Collapse Button
+   ============================================================================= */
+
+.vsg-collapse-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-radius: 4px;
+    color: var(--icon-color, #64748b);
+    flex-shrink: 0;
+}
+
+.vsg-collapse-btn:hover {
+    background: var(--hover-bg, #f1f5f9);
+}
+
+.vsg-collapse-btn:focus {
+    outline: 2px solid var(--focus-ring, #3b82f6);
+    outline-offset: 2px;
+}
+
+/* =============================================================================
+   Action Buttons
+   ============================================================================= */
+
+.vsg-action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-radius: 4px;
+    color: var(--icon-color, #64748b);
+    flex-shrink: 0;
+}
+
+.vsg-action-btn:hover {
+    background: var(--hover-bg, #f1f5f9);
+}
+
+.vsg-action-btn:focus {
+    outline: 2px solid var(--focus-ring, #3b82f6);
+    outline-offset: 2px;
+}
+
+/* =============================================================================
+   Actions Container
+   ============================================================================= */
+
+.vsg-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px;
+}
+
+/* =============================================================================
+   Name Prefix (Indent + Collapse)
+   ============================================================================= */
+
+.vsg-name-prefix {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+/* =============================================================================
+   Drag Handle
+   ============================================================================= */
+
+.vsg-drag-handle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    cursor: grab;
+    color: var(--icon-color, #94a3b8);
+    flex-shrink: 0;
+}
+
+.vsg-drag-handle:active {
+    cursor: grabbing;
+}
+
+/* =============================================================================
+   Calendar Icon
+   ============================================================================= */
+
+.vsg-calendar-icon {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 12px;
+    height: 12px;
+    color: var(--icon-color, #94a3b8);
+    opacity: 0.6;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1;
+    flex-shrink: 0;
+}
+
+/* =============================================================================
+   Constraint Icon
+   ============================================================================= */
+
+.vsg-constraint-icon {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 12px;
+    height: 12px;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+    flex-shrink: 0;
+}
+
+/* =============================================================================
+   Gantt Canvas
+   ============================================================================= */
+
+.cg-container {
+    position: relative;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+}
+
+.cg-wrapper {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.cg-header-wrapper {
+    position: relative;
+    flex-shrink: 0;
+    overflow: hidden;
+}
+
+.cg-header-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+.cg-scroll-container {
+    flex: 1;
+    overflow: auto;
+    position: relative;
+}
+
+.cg-scroll-content {
+    position: relative;
+}
+
+.cg-main-canvas {
+    position: sticky;
+    top: 0;
+    left: 0;
+}
+

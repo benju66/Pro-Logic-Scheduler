@@ -31,7 +31,11 @@ import { KeyboardService } from '../ui/services/KeyboardService';
 import { SyncService } from './SyncService';
 import { VirtualScrollGrid } from '../ui/components/VirtualScrollGrid';
 import { CanvasGantt } from '../ui/components/CanvasGantt';
+import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport';
+import { GridRenderer } from '../ui/components/scheduler/GridRenderer';
+import { GanttRenderer } from '../ui/components/scheduler/GanttRenderer';
 import { SideDrawer } from '../ui/components/SideDrawer';
+import type { GridRendererOptions, GanttRendererOptions, SchedulerViewportOptions } from '../ui/components/scheduler/types';
 import { DependenciesModal } from '../ui/components/DependenciesModal';
 import { CalendarModal } from '../ui/components/CalendarModal';
 import { ColumnSettingsModal } from '../ui/components/ColumnSettingsModal';
@@ -185,46 +189,83 @@ export class SchedulerService {
         // Build grid header dynamically from column definitions
         this._buildGridHeader();
 
-        // Create grid component
-        this.grid = new VirtualScrollGrid(gridContainer, {
+        // Find parent container (the one that holds both grid and gantt)
+        const parentContainer = gridContainer.parentElement?.parentElement || document.querySelector('.main') as HTMLElement;
+        if (!parentContainer) {
+            throw new Error('Could not find parent container for scheduler viewport');
+        }
+
+        // Create unified scheduler viewport
+        const viewportOptions: SchedulerViewportOptions = {
             rowHeight: 38,
-            columns: this._getColumnDefinitions(),
-            isParent: (id) => this.taskStore.isParent(id),
-            getDepth: (id) => this.taskStore.getDepth(id),
+            headerHeight: 60,
+            bufferRows: 5,
             onRowClick: (taskId, e) => this._handleRowClick(taskId, e),
             onRowDoubleClick: (taskId, e) => this._handleRowDoubleClick(taskId, e),
             onCellChange: (taskId, field, value) => this._handleCellChange(taskId, field, value),
             onAction: (taskId, action, e) => this._handleAction(taskId, action, e),
             onToggleCollapse: (taskId) => this.toggleCollapse(taskId),
-            onScroll: (scrollTop) => this._syncScrollToGantt(scrollTop),
-            onHorizontalScroll: (scrollLeft) => this._syncHeaderScroll(scrollLeft),
+            onSelectionChange: (selectedIds) => this._handleSelectionChange(selectedIds),
             onRowMove: (taskIds, targetId, position) => this._handleRowMove(taskIds, targetId, position),
-        });
-
-        // Create Gantt component
-        this.gantt = new CanvasGantt(ganttContainer, {
-            container: ganttContainer,
-            rowHeight: 38,
-            isParent: (id) => this.taskStore.isParent(id),
             onBarClick: (taskId, e) => this._handleRowClick(taskId, e),
             onBarDoubleClick: (taskId, e) => this._handleRowDoubleClick(taskId, e),
             onBarDrag: (task, start, end) => this._handleBarDrag(task, start, end),
-            onScroll: (scrollTop) => this._syncScrollToGrid(scrollTop),
-        });
+            isParent: (id) => this.taskStore.isParent(id),
+            getDepth: (id) => this.taskStore.getDepth(id),
+        };
 
-        // Create sync service
-        this.syncService = new SyncService({
-            grid: this.grid ? {
-                setScrollTop: (scrollTop: number) => {
-                    this.grid!.setScrollTop(scrollTop);
-                }
-            } : undefined,
-            gantt: this.gantt ? {
-                setScrollTop: (scrollTop: number) => {
-                    this.gantt!.setScrollTop(scrollTop);
-                }
-            } : undefined
-        });
+        // Use the parent container that holds both grid and gantt
+        // The viewport will create its own panes inside
+        const viewportContainer = parentContainer;
+
+        const viewport = new SchedulerViewport(viewportContainer, viewportOptions);
+
+        // Initialize Grid renderer
+        // Note: viewport will create its own grid pane, but we need to pass a container
+        // The viewport's initGrid will use its internal grid pane
+        const gridOptions: GridRendererOptions = {
+            container: gridContainer, // Temporary - viewport will use its own pane
+            rowHeight: 38,
+            bufferRows: 5,
+            columns: this._getColumnDefinitions(),
+            onCellChange: (taskId, field, value) => this._handleCellChange(taskId, field, value),
+            onRowClick: (taskId, e) => this._handleRowClick(taskId, e),
+            onRowDoubleClick: (taskId, e) => this._handleRowDoubleClick(taskId, e),
+            onAction: (taskId, action, e) => this._handleAction(taskId, action, e),
+            onToggleCollapse: (taskId) => this.toggleCollapse(taskId),
+            onSelectionChange: (selectedIds) => this._handleSelectionChange(selectedIds),
+            onRowMove: (taskIds, targetId, position) => this._handleRowMove(taskIds, targetId, position),
+            isParent: (id) => this.taskStore.isParent(id),
+            getDepth: (id) => this.taskStore.getDepth(id),
+        };
+        viewport.initGrid(gridOptions);
+
+        // Initialize Gantt renderer
+        // Note: viewport will create its own gantt pane, but we need to pass a container
+        // The viewport's initGantt will use its internal gantt pane
+        const ganttOptions: GanttRendererOptions = {
+            container: ganttContainer, // Temporary - viewport will use its own pane
+            rowHeight: 38,
+            headerHeight: 60,
+            onBarClick: (taskId, e) => this._handleRowClick(taskId, e),
+            onBarDoubleClick: (taskId, e) => this._handleRowDoubleClick(taskId, e),
+            onBarDrag: (task, start, end) => this._handleBarDrag(task, start, end),
+            isParent: (id) => this.taskStore.isParent(id),
+        };
+        viewport.initGantt(ganttOptions);
+
+        // Start the viewport
+        viewport.start();
+
+        // Store viewport reference (for backward compatibility, also store as grid/gantt)
+        (this as any).viewport = viewport;
+        
+        // Create facade wrappers for backward compatibility
+        this.grid = this._createGridFacade(viewport);
+        this.gantt = this._createGanttFacade(viewport);
+
+        // Sync service is no longer needed (viewport handles sync internally)
+        this.syncService = null;
 
         // Create side drawer
         if (drawerContainer) {
@@ -270,74 +311,95 @@ export class SchedulerService {
             this.loadData();
             
             const taskCountAfterLoad = this.taskStore.getAll().length;
-            console.log('[SchedulerService] ✅ Data loaded - task count:', taskCountAfterLoad, '(was', taskCountBeforeLoad + ')');
-            
-            // After loading data, check if baseline exists and rebuild columns if needed
-            const hadBaselineBefore = this._hasBaseline;
-            this._hasBaseline = this.hasBaseline();
-            
-            // If baseline state changed (or was just detected), rebuild columns
-            if (this._hasBaseline && !hadBaselineBefore) {
-                console.log('[SchedulerService] 🔍 Baseline detected after load - rebuilding columns');
-                this._rebuildGridColumns();
-            }
-            
-            // Update baseline button visibility after data load
-            this._updateBaselineButtonVisibility();
+            console.log('[SchedulerService] ✅ After loadData() - task count:', taskCountAfterLoad);
         } catch (error) {
-            console.error('[SchedulerService] Error loading data:', error);
-            // Continue anyway - start with empty tasks
-        }
-
-        // Initial render (with error handling)
-        try {
-            this.recalculateAll();
-            console.log('[SchedulerService] Initial recalculation complete');
-        } catch (error) {
-            console.error('[SchedulerService] Error in initial recalculation:', error);
-            // Continue anyway - scheduler can work without CPM calculation
+            console.error('[SchedulerService] Error loading persisted data:', error);
         }
         
-        try {
-            this.render();
-            console.log('[SchedulerService] Initial render complete');
-        } catch (error) {
-            console.error('[SchedulerService] Error in initial render:', error);
-            // Continue anyway - UI might still work
-        }
-
-        // Mark as initialized - keyboard handlers will be attached after this completes
-        const taskCountBeforeInit = this.taskStore.getAll().length;
-        const selectedCountBeforeInit = this.selectedIds.size;
-        const focusedIdBeforeInit = this.focusedId;
-        
-        console.log('[SchedulerService] 🔍 About to mark as initialized', {
-            taskCount: taskCountBeforeInit,
-            selectedCount: selectedCountBeforeInit,
-            focusedId: focusedIdBeforeInit
-        });
-        
-        // Initialize isInitialized flag (keyboard handlers attached separately after init completes)
+        // Mark initialization as complete
         this.isInitialized = true;
-        
-        const taskCountAfterInit = this.taskStore.getAll().length;
-        const selectedCountAfterInit = this.selectedIds.size;
-        const focusedIdAfterInit = this.focusedId;
-        
-        console.log('[SchedulerService] ✅ Marked as initialized', {
-            taskCountBefore: taskCountBeforeInit,
-            taskCountAfter: taskCountAfterInit,
-            taskCountChanged: taskCountAfterInit !== taskCountBeforeInit,
-            selectedCountBefore: selectedCountBeforeInit,
-            selectedCountAfter: selectedCountAfterInit,
-            focusedIdBefore: focusedIdBeforeInit,
-            focusedIdAfter: focusedIdAfterInit,
-            timestamp: new Date().toISOString()
-        });
-
-        console.log('[SchedulerService] Initialized - VS Code of Scheduling Tools');
+        console.log('[SchedulerService] ✅ Initialization complete - isInitialized set to true');
     }
 
+    /**
+     * Create facade wrapper for VirtualScrollGrid API compatibility
+     */
+    private _createGridFacade(viewport: SchedulerViewport): VirtualScrollGrid {
+        // Return a facade object that implements VirtualScrollGrid interface
+        return {
+            setData: (tasks: Task[]) => viewport.setData(tasks),
+            setVisibleData: (tasks: Task[]) => viewport.setVisibleData(tasks),
+            setSelection: (selectedIds: Set<string>, focusedId?: string | null) => {
+                viewport.setSelection([...selectedIds]);
+            },
+            scrollToTask: (taskId: string) => viewport.scrollToTask(taskId),
+            focusCell: (taskId: string, field: string) => {
+                // Delegate to grid renderer if available
+                const gridRenderer = (viewport as any).gridRenderer as GridRenderer | null;
+                if (gridRenderer) {
+                    gridRenderer.focusCell(taskId, field);
+                }
+            },
+            refresh: () => viewport.refresh(),
+            updateColumns: (columns: GridColumn[]) => viewport.updateGridColumns(columns),
+            updateRow: (taskId: string) => viewport.updateRow(taskId),
+            setScrollTop: (scrollTop: number) => viewport.setScrollTop(scrollTop),
+            getScrollTop: () => viewport.getScrollTop(),
+            getStats: () => ({
+                totalTasks: viewport.getData().length,
+                visibleRange: '0-0',
+                renderedRows: 0,
+                poolSize: 0,
+                renderCount: 0,
+            }),
+            destroy: () => viewport.destroy(),
+        } as VirtualScrollGrid;
+    }
+
+    /**
+     * Create facade wrapper for CanvasGantt API compatibility
+     */
+    private _createGanttFacade(viewport: SchedulerViewport): CanvasGantt {
+        // Return a facade object that implements CanvasGantt interface
+        return {
+            setData: (tasks: Task[]) => viewport.setData(tasks),
+            setSelection: (selectedIds: Set<string>) => {
+                viewport.setSelection([...selectedIds]);
+            },
+            setViewMode: (mode: string) => {
+                const ganttRenderer = (viewport as any).ganttRenderer as GanttRenderer | null;
+                if (ganttRenderer) {
+                    ganttRenderer.setViewMode(mode);
+                }
+            },
+            setScrollTop: (scrollTop: number) => viewport.setScrollTop(scrollTop),
+            getScrollTop: () => viewport.getScrollTop(),
+            scrollToTask: (taskId: string) => viewport.scrollToTask(taskId),
+            refresh: () => viewport.refresh(),
+            getStats: () => ({
+                totalTasks: viewport.getData().length,
+                visibleRange: '0-0',
+                renderedRows: 0,
+                poolSize: 0,
+                renderCount: 0,
+            }),
+            destroy: () => viewport.destroy(),
+        } as unknown as CanvasGantt;
+    }
+
+    /**
+     * Handle selection change
+     */
+    private _handleSelectionChange(selectedIds: string[]): void {
+        const selectedSet = new Set(selectedIds);
+        this.selectedIds = selectedSet;
+        // Update other components that depend on selection
+    }
+
+    /**
+     * Initialize keyboard shortcuts
+     * Called after initialization completes to ensure handlers are only attached when ready
+     */
     /**
      * Initialize keyboard shortcuts
      * Called after initialization completes to ensure handlers are only attached when ready
@@ -969,28 +1031,22 @@ export class SchedulerService {
         const gridContainer = document.getElementById('grid-container');
         if (!header || !gridContainer) return;
         
-        // Find the viewport element (first scrollable child of grid-container)
-        const viewport = gridContainer.querySelector('.vsg-viewport') as HTMLElement | null;
-        if (!viewport) {
-            console.warn('[SchedulerService] Grid viewport not found for header scroll sync');
-            return;
-        }
+        // Sync header horizontal scroll with grid-container horizontal scroll
+        // The grid-container now handles its own horizontal scrolling
+        let isSyncing = false;
         
-        // Listen for header scroll events and sync to grid
+        gridContainer.addEventListener('scroll', () => {
+            if (isSyncing) return;
+            isSyncing = true;
+            header.scrollLeft = gridContainer.scrollLeft;
+            isSyncing = false;
+        }, { passive: true });
+        
         header.addEventListener('scroll', () => {
-            // Skip if we're currently syncing from grid to header (prevent loops)
-            if (this._isSyncingHeader) return;
-            
-            // Calculate pinned width
-            const pinnedWidth = this._calculatePinnedColumnsWidth();
-            
-            // Adjust scroll position: header scroll + pinned width = grid scroll
-            const gridScrollLeft = header.scrollLeft + pinnedWidth;
-            
-            // Sync header scroll to grid body
-            if (Math.abs(viewport.scrollLeft - gridScrollLeft) > 1) {
-                viewport.scrollLeft = gridScrollLeft;
-            }
+            if (isSyncing) return;
+            isSyncing = true;
+            gridContainer.scrollLeft = header.scrollLeft;
+            isSyncing = false;
         }, { passive: true });
     }
 
@@ -1273,6 +1329,8 @@ export class SchedulerService {
      */
     set tasks(tasks: Task[]) {
         this.taskStore.setAll(tasks);
+        // Trigger render to update viewport with new data
+        this.render();
     }
 
     /**
@@ -2050,6 +2108,104 @@ export class SchedulerService {
         }
     }
 
+    /**
+     * Robustly scroll to task and focus cell
+     * Waits for task to be available in viewport data before scrolling
+     * @private
+     * @param taskId - Task ID to scroll to
+     * @param field - Field to focus (default: 'name')
+     * @param maxRetries - Maximum retry attempts (default: 10)
+     * @param retryDelay - Delay between retries in ms (default: 50)
+     */
+    private _scrollToTaskAndFocus(taskId: string, field: string = 'name', maxRetries: number = 10, retryDelay: number = 50): void {
+        if (!this.grid) {
+            console.warn('[SchedulerService] Cannot scroll to task - grid not available');
+            return;
+        }
+
+        // Verify task exists in store first
+        const task = this.taskStore.getById(taskId);
+        if (!task) {
+            console.warn('[SchedulerService] Cannot scroll to task - task not found in store:', taskId);
+            return;
+        }
+
+        // Check if task's parent is collapsed (task won't be visible)
+        if (task.parentId) {
+            const parent = this.taskStore.getById(task.parentId);
+            if (parent?._collapsed) {
+                console.log('[SchedulerService] Task parent is collapsed - task will not be visible until parent is expanded:', taskId);
+                // Still try to scroll - the viewport might handle this
+            }
+        }
+
+        let attempts = 0;
+        const checkAndScroll = (): void => {
+            attempts++;
+            
+            // Get current visible tasks from viewport
+            const visibleTasks = this.taskStore.getVisibleTasks((id) => {
+                const t = this.taskStore.getById(id);
+                return t?._collapsed || false;
+            });
+            
+            // Check if task exists in visible tasks
+            const taskIndex = visibleTasks.findIndex(t => t.id === taskId);
+            const taskExists = taskIndex !== -1;
+            
+            if (taskExists) {
+                // Task is in visible list - safe to scroll
+                if (!this.grid) {
+                    console.warn('[SchedulerService] Grid not available for scrolling');
+                    return;
+                }
+                
+                try {
+                    this.grid.scrollToTask(taskId);
+                    
+                    // Focus cell after scroll completes
+                    requestAnimationFrame(() => {
+                        setTimeout(() => {
+                            if (this.grid) {
+                                this.grid.focusCell(taskId, field);
+                            }
+                        }, 100);
+                    });
+                } catch (error) {
+                    console.error('[SchedulerService] Error scrolling to task:', error);
+                }
+                return; // Success - exit
+            }
+            
+            // Task not found yet
+            if (attempts >= maxRetries) {
+                console.warn(`[SchedulerService] Failed to scroll to task after ${maxRetries} attempts:`, taskId);
+                console.warn('[SchedulerService] Task exists in store but not in visible tasks. Parent may be collapsed.');
+                
+                // Last attempt: try scrolling anyway (might work if viewport handles it)
+                if (this.grid) {
+                    try {
+                        this.grid.scrollToTask(taskId);
+                    } catch (error) {
+                        console.error('[SchedulerService] Final scroll attempt failed:', error);
+                    }
+                }
+                return;
+            }
+            
+            // Retry after delay
+            setTimeout(checkAndScroll, retryDelay);
+        };
+        
+        // Start checking after initial render cycle completes
+        // Use double RAF to ensure render() has processed
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                checkAndScroll();
+            });
+        });
+    }
+
     // =========================================================================
     // TASK OPERATIONS
     // =========================================================================
@@ -2129,8 +2285,66 @@ export class SchedulerService {
             } as Task;
 
             console.log('[SchedulerService] Adding task:', task);
-            this.taskStore.add(task);
-            console.log('[SchedulerService] Task added to store. Total tasks:', this.taskStore.getAll().length);
+            
+            // Determine where to insert the task (after focused task in display order)
+            const tasks = this.taskStore.getAll();
+            let insertIndex = tasks.length; // Default: add at end
+            
+            if (this.focusedId) {
+                const focusedTask = this.taskStore.getById(this.focusedId);
+                if (focusedTask) {
+                    // Set parentId to match focused task's parent (same hierarchy level)
+                    task.parentId = taskData.parentId ?? focusedTask.parentId ?? null;
+                    
+                    // Use flat list to find where to insert (maintains display order)
+                    const flatList = this._getFlatList();
+                    const focusedFlatIndex = flatList.findIndex(t => t.id === this.focusedId);
+                    
+                    if (focusedFlatIndex !== -1) {
+                        // Find the next task after focused task in display order
+                        // (could be sibling, or next task at parent level)
+                        let nextTaskInDisplay: Task | null = null;
+                        for (let i = focusedFlatIndex + 1; i < flatList.length; i++) {
+                            const candidate = flatList[i];
+                            // Check if this is still a descendant of focused task
+                            let isDescendant = false;
+                            let checkId = candidate.parentId;
+                            while (checkId) {
+                                if (checkId === this.focusedId) {
+                                    isDescendant = true;
+                                    break;
+                                }
+                                const parent = this.taskStore.getById(checkId);
+                                checkId = parent?.parentId ?? null;
+                            }
+                            
+                            // If not a descendant, this is the next task we want to insert before
+                            if (!isDescendant) {
+                                nextTaskInDisplay = candidate;
+                                break;
+                            }
+                        }
+                        
+                        // Find the array index of the next task (or end if none)
+                        if (nextTaskInDisplay) {
+                            const nextIndex = tasks.findIndex(t => t.id === nextTaskInDisplay!.id);
+                            if (nextIndex !== -1) {
+                                insertIndex = nextIndex;
+                            }
+                        }
+                        // If no next task found, insertIndex stays at tasks.length (end)
+                    }
+                }
+            } else {
+                // No focused task - use provided parentId or null
+                task.parentId = taskData.parentId ?? null;
+            }
+            
+            // Insert task at the determined position
+            tasks.splice(insertIndex, 0, task);
+            this.taskStore.setAll(tasks);
+            
+            console.log('[SchedulerService] Task inserted at index', insertIndex, '. Total tasks:', tasks.length);
             
             this.recalculateAll();
             this.saveData();
@@ -2144,16 +2358,8 @@ export class SchedulerService {
             // Render and scroll to new task
             this.render();
             
-            // Scroll to task after render completes
-            requestAnimationFrame(() => {
-                if (this.grid) {
-                    this.grid.scrollToTask(task.id);
-                    // Focus the name cell for immediate editing
-                    setTimeout(() => {
-                        this.grid!.focusCell(task.id, 'name');
-                    }, 100);
-                }
-            });
+            // Robustly wait for task to be available in viewport, then scroll and focus
+            this._scrollToTaskAndFocus(task.id);
             
             this.toastService.success('Task added');
             
@@ -2393,15 +2599,8 @@ export class SchedulerService {
         // Render and scroll to new task
         this.render();
         
-        if (this.grid) {
-            requestAnimationFrame(() => {
-                this.grid!.scrollToTask(newTask.id);
-                // Focus the name cell for immediate editing
-                setTimeout(() => {
-                    this.grid!.focusCell(newTask.id, 'name');
-                }, 100);
-            });
-        }
+        // Robustly wait for task to be available in viewport, then scroll and focus
+        this._scrollToTaskAndFocus(newTask.id);
     }
 
     /**

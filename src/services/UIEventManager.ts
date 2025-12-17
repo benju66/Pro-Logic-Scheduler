@@ -792,10 +792,19 @@ export class UIEventManager {
       return;
     }
     if (!confirm('Clear all tasks?')) return;
+    
+    // Clear tasks
     scheduler.tasks = [];
     scheduler.selectedIds.clear();
+    scheduler.focusedId = null;
+    
+    // Save and render
     scheduler.saveData();
     scheduler.render();
+    
+    // Also trigger recalculation to reset CPM state
+    scheduler.recalculateAll();
+    
     this._showToast('All tasks cleared', 'info');
   }
 

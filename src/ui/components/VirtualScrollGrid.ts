@@ -1,44 +1,18 @@
 /**
- * @fileoverview High-performance virtualized grid component
+ * @fileoverview Virtual Scroll Grid - Facade for Unified Scheduler V2
  * @module ui/components/VirtualScrollGrid
  * 
- * A high-performance virtualized grid component that renders only visible rows.
- * Designed to handle 10,000+ tasks at 60 FPS using DOM recycling.
- * 
- * ARCHITECTURE:
- * ┌─────────────────────────────────────────┐
- * │  Container (viewport - fixed height)    │
- * │  ┌───────────────────────────────────┐  │
- * │  │  Scroll Content                   │  │
- * │  │  ┌─────────────────────────────┐  │  │
- * │  │  │  Phantom Spacer (top)       │  │  │
- * │  │  │  height = scrollTop offset  │  │  │
- * │  │  └─────────────────────────────┘  │  │
- * │  │  ┌─────────────────────────────┐  │  │
- * │  │  │  Row Pool (visible rows)    │  │  │
- * │  │  │  ~40 recycled DOM nodes     │  │  │
- * │  │  └─────────────────────────────┘  │  │
- * │  │  ┌─────────────────────────────┐  │  │
- * │  │  │  Phantom Spacer (bottom)    │  │  │
- * │  │  │  height = remaining space   │  │  │
- * │  │  └─────────────────────────────┘  │  │
- * │  └───────────────────────────────────┘  │
- * └─────────────────────────────────────────┘
- * 
- * PERFORMANCE TECHNIQUES:
- * 1. DOM Recycling - Reuse row elements instead of creating/destroying
- * 2. Phantom Spacers - Fake scroll height without rendering all rows
- * 3. Buffer Zones - Pre-render rows above/below viewport for smooth scroll
- * 4. RAF Throttling - Batch scroll updates to animation frames
- * 5. Event Delegation - Single listener on container, not per-row
+ * FACADE PATTERN: Maintains exact API compatibility while delegating to SchedulerViewport.
+ * This allows SchedulerService to work without changes.
  * 
  * @author Pro Logic Scheduler
- * @version 2.0.0 - Ferrari Engine
+ * @version 2.2.0 - Unified Architecture
  */
 
 import type { Task, GridColumn, VirtualScrollGridOptions } from '../../types';
-import { getTaskFieldValue } from '../../types';
-import { createElement, Anchor, AlarmClock, Hourglass, Flag, Lock, Calendar } from 'lucide';
+import { SchedulerViewport } from './scheduler/SchedulerViewport';
+import { getViewport, setViewport } from './scheduler/viewportRegistry';
+import type { GridRendererOptions } from './scheduler/types';
 
 /**
  * Editing cell state
