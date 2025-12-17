@@ -29,10 +29,10 @@ export class TaskStore {
 
   /**
    * Get all tasks
-   * @returns All tasks
+   * @returns Defensive copy of all tasks
    */
   getAll(): Task[] {
-    return this.tasks;
+    return [...this.tasks];
   }
 
   /**
@@ -105,10 +105,20 @@ export class TaskStore {
   /**
    * Get tasks by parent ID
    * @param parentId - Parent task ID
-   * @returns Child tasks
+   * @returns Child tasks sorted by displayOrder
    */
   getChildren(parentId: string | null): Task[] {
-    return this.tasks.filter(t => t.parentId === parentId);
+    const children = this.tasks.filter(t => t.parentId === parentId);
+    // Sort by displayOrder (lower = first), then by insertion order (id as fallback)
+    return children.sort((a, b) => {
+      const orderA = a.displayOrder ?? Number.MAX_SAFE_INTEGER;
+      const orderB = b.displayOrder ?? Number.MAX_SAFE_INTEGER;
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
+      // Fallback to ID comparison for stable sort
+      return a.id.localeCompare(b.id);
+    });
   }
 
   /**
@@ -135,7 +145,7 @@ export class TaskStore {
   /**
    * Get flat list of visible tasks (respecting collapse state)
    * @param isCollapsed - Function to check if task is collapsed
-   * @returns Flat list of visible tasks
+   * @returns Flat list of visible tasks sorted by displayOrder
    */
   getVisibleTasks(isCollapsed: (id: string) => boolean = () => false): Task[] {
     const result: Task[] = [];
@@ -143,11 +153,22 @@ export class TaskStore {
     const addTask = (task: Task): void => {
       result.push(task);
       if (!isCollapsed(task.id) && this.isParent(task.id)) {
+        // getChildren already sorts by displayOrder
         this.getChildren(task.id).forEach(child => addTask(child));
       }
     };
 
-    this.tasks.filter(t => !t.parentId).forEach(root => addTask(root));
+    // Get root tasks sorted by displayOrder
+    const rootTasks = this.tasks.filter(t => !t.parentId).sort((a, b) => {
+      const orderA = a.displayOrder ?? Number.MAX_SAFE_INTEGER;
+      const orderB = b.displayOrder ?? Number.MAX_SAFE_INTEGER;
+      if (orderA !== orderB) {
+        return orderA - orderB;
+      }
+      return a.id.localeCompare(b.id);
+    });
+
+    rootTasks.forEach(root => addTask(root));
     return result;
   }
 

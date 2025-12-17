@@ -348,6 +348,10 @@ export class GanttRenderer {
         const ctx = this.dom.mainCtx;
         if (!ctx) return;
 
+        // Always render header first (timeline at top)
+        // Header renders independently of task data - only needs timelineStart
+        this._renderHeader();
+
         // Clear canvas
         const width = this.dom.mainCanvas.width / (window.devicePixelRatio || 1);
         const height = this.dom.mainCanvas.height / (window.devicePixelRatio || 1);
@@ -364,7 +368,8 @@ export class GanttRenderer {
         end = Math.max(start, Math.min(end, dataLength - 1));
         
         // Ensure we have a valid range
-        if (start > end || start >= dataLength) {
+        if (start > end || start >= dataLength || dataLength === 0) {
+            // Header already rendered above, just log warning
             console.warn('[GanttRenderer] Invalid visible range:', { start, end, dataLength });
             return;
         }

@@ -98,6 +98,9 @@ export interface Task {
   /** Progress percentage (0-100) */
   progress: number;
   
+  /** Display order - controls visual order of tasks (lower = appears first) */
+  displayOrder?: number;
+  
   // === Calculated fields (set by CPM engine) ===
   
   /** Is this task on the critical path? */

@@ -56,9 +56,13 @@ export class SchedulerViewport {
 
     // Error handling
     private errorCount: number = 0;
+    private errorRecoveryTimeoutId: ReturnType<typeof setTimeout> | null = null;
 
     // Resize observer
     private resizeObserver: ResizeObserver | null = null;
+
+    // Destroy state
+    private isDestroyed: boolean = false;
 
     // Initialization state
     private gridReady: boolean = false;
@@ -125,13 +129,13 @@ export class SchedulerViewport {
         // Create scroll content wrappers that define the scroll height
         // These will be inserted AFTER renderers build their DOM
         // Store references so we can update their height later
+        // CRITICAL: Must be position: relative (not absolute) to contribute to scroll height
         this.scrollContent = document.createElement('div');
         this.scrollContent.className = 'scheduler-scroll-content';
         this.scrollContent.style.cssText = `
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
+            position: relative;
+            width: 100%;
+            min-height: 0;
             pointer-events: none;
             z-index: 0;
         `;
@@ -187,7 +191,11 @@ export class SchedulerViewport {
         
         // Try immediately, and also after a short delay in case GanttRenderer hasn't initialized yet
         checkAndSetup();
-        setTimeout(checkAndSetup, 100);
+        setTimeout(() => {
+            // Guard: Don't setup if destroyed
+            if (this.isDestroyed) return;
+            checkAndSetup();
+        }, 100);
     }
 
     /**
@@ -257,6 +265,8 @@ export class SchedulerViewport {
      */
     private _setupResizeObserver(): void {
         this.resizeObserver = new ResizeObserver(() => {
+            // Guard: Don't process resize if destroyed
+            if (this.isDestroyed) return;
             this._measure();
             this._scheduleRender();
         });
@@ -300,6 +310,9 @@ export class SchedulerViewport {
      * Handle scroll events
      */
     private _onScroll(): void {
+        // Guard: Don't process scroll if destroyed
+        if (this.isDestroyed) return;
+
         if (!this.scrollElement) return;
 
         const newScrollTop = this.scrollElement.scrollTop;
@@ -325,6 +338,9 @@ export class SchedulerViewport {
      * Schedule render (RAF)
      */
     private _scheduleRender(): void {
+        // Guard: Don't schedule if destroyed
+        if (this.isDestroyed) return;
+
         if (this.dirty) return;
 
         this.dirty = true;
@@ -340,28 +356,42 @@ export class SchedulerViewport {
     private _renderLoop(): void {
         this.rafId = null;
 
+        // Guard 1: Early exit if destroyed (prevents post-destroy execution)
+        if (this.isDestroyed) return;
+
         if (!this.dirty) return;
         this.dirty = false;
 
+        // Guard 2: Capture renderer references atomically (prevents mid-render nullification)
+        const grid = this.gridRenderer;
+        const gantt = this.ganttRenderer;
+
+        // Guard 3: Both renderers must exist for synchronized rendering
+        // Critical for MS Project-style apps - both views must update together
+        if (!grid || !gantt) {
+            // Don't render if either is missing (prevents desync)
+            return;
+        }
+
+        // Guard 4: Double-check destroy state after capturing references
+        // Handles race condition where destroy() called between guards
+        if (this.isDestroyed) return;
+
         const startTime = performance.now();
 
-        // Calculate state ONCE
+        // Calculate state ONCE (shared by both renderers)
         const state = this._calculateViewportState();
 
-        // Render both in same frame
+        // Render both in same frame with captured references (atomic)
         try {
-            if (this.gridRenderer) {
-                this.gridRenderer.render(state);
-            }
+            grid.render(state);
         } catch (e) {
             console.error('[SchedulerViewport] Grid render error:', e);
             this._handleError('grid', e);
         }
 
         try {
-            if (this.ganttRenderer) {
-                this.ganttRenderer.render(state);
-            }
+            gantt.render(state);
         } catch (e) {
             console.error('[SchedulerViewport] Gantt render error:', e);
             this._handleError('gantt', e);
@@ -428,8 +458,18 @@ export class SchedulerViewport {
                 this.options.onError(source, error);
             }
 
+            // Clear any existing error recovery timeout
+            if (this.errorRecoveryTimeoutId !== null) {
+                clearTimeout(this.errorRecoveryTimeoutId);
+                this.errorRecoveryTimeoutId = null;
+            }
+
             // Reset error count after interval
-            setTimeout(() => {
+            // Store timeout ID for cleanup in destroy()
+            this.errorRecoveryTimeoutId = setTimeout(() => {
+                // Guard: Don't re-enable if destroyed
+                if (this.isDestroyed) return;
+
                 this.errorCount = 0;
                 console.log('[SchedulerViewport] Error count reset, re-enabling render loop');
                 this._scheduleRender();
@@ -452,16 +492,21 @@ export class SchedulerViewport {
      * Set task data
      */
     setData(tasks: Task[]): void {
+        // Guard: Don't process data if destroyed
+        if (this.isDestroyed) return;
+
         this.tasks = tasks;
         this.dataLength = tasks.length;
 
-        // Update scroll content height in both containers
-        if (this.gridPane && this.ganttPane) {
+        // Update scroll content height in grid container
+        // Note: GanttRenderer manages its own scroll content (cg-scroll-content), so we don't update gantt here
+        if (this.gridPane) {
             const height = `${Math.max(0, this.dataLength * this.rowHeight)}px`;
             const gridScrollContent = this.gridPane.querySelector('.scheduler-scroll-content') as HTMLElement;
-            const ganttScrollContent = this.ganttPane.querySelector('.scheduler-scroll-content') as HTMLElement;
-            if (gridScrollContent) gridScrollContent.style.height = height;
-            if (ganttScrollContent) ganttScrollContent.style.height = height;
+            if (gridScrollContent) {
+                gridScrollContent.style.height = height;
+                gridScrollContent.style.minHeight = height; // Ensure minimum height for scroll calculation
+            }
             
             // Reset scroll position if tasks are cleared
             if (this.dataLength === 0 && this.scrollElement) {
@@ -539,6 +584,9 @@ export class SchedulerViewport {
      * Set selection state
      */
     setSelection(taskIds: string[]): void {
+        // Guard: Don't process selection if destroyed
+        if (this.isDestroyed) return;
+
         this.selectedIds = new Set(taskIds);
 
         // Update both renderers
@@ -576,6 +624,9 @@ export class SchedulerViewport {
      * Refresh (force re-render)
      */
     refresh(): void {
+        // Guard: Don't refresh if destroyed
+        if (this.isDestroyed) return;
+
         this._measure();
         this._scheduleRender();
     }
@@ -584,6 +635,9 @@ export class SchedulerViewport {
      * Update a single row
      */
     updateRow(taskId: string): void {
+        // Guard: Don't update if destroyed
+        if (this.isDestroyed) return;
+
         if (this.gridRenderer) {
             this.gridRenderer.updateRow(taskId);
         }
@@ -594,6 +648,9 @@ export class SchedulerViewport {
      * Update grid columns
      */
     updateGridColumns(columns: GridColumn[]): void {
+        // Guard: Don't update if destroyed
+        if (this.isDestroyed) return;
+
         if (this.gridRenderer) {
             this.gridRenderer.updateColumns(columns);
         }
@@ -616,18 +673,32 @@ export class SchedulerViewport {
 
     /**
      * Destroy the viewport
+     * Sets isDestroyed flag FIRST to prevent all new operations
+     * Then cleans up all resources in proper order
      */
     destroy(): void {
+        // Set flag FIRST (prevents all new operations and queued callbacks)
+        this.isDestroyed = true;
+
+        // Clear error recovery timeout (prevents post-destroy render scheduling)
+        if (this.errorRecoveryTimeoutId !== null) {
+            clearTimeout(this.errorRecoveryTimeoutId);
+            this.errorRecoveryTimeoutId = null;
+        }
+
+        // Cancel pending RAF (prevents queued render callbacks)
         if (this.rafId !== null) {
             cancelAnimationFrame(this.rafId);
             this.rafId = null;
         }
 
+        // Disconnect observers (callbacks will check isDestroyed flag)
         if (this.resizeObserver) {
             this.resizeObserver.disconnect();
             this.resizeObserver = null;
         }
 
+        // Destroy renderers (cleanup their resources)
         if (this.gridRenderer) {
             this.gridRenderer.destroy();
             this.gridRenderer = null;
@@ -638,6 +709,7 @@ export class SchedulerViewport {
             this.ganttRenderer = null;
         }
 
+        // Clear DOM last (ensures no render can access DOM after this point)
         this.container.innerHTML = '';
     }
 }
