@@ -10,6 +10,7 @@
  */
 
 import type { Task, GridColumn, VirtualScrollGridOptions } from '../../types';
+import { getTaskFieldValue } from '../../types';
 import { SchedulerViewport } from './scheduler/SchedulerViewport';
 import { getViewport, setViewport } from './scheduler/viewportRegistry';
 import type { GridRendererOptions } from './scheduler/types';

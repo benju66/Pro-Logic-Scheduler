@@ -91,11 +91,11 @@ export class GridRenderer {
         // The container should already have proper styling from HTML/CSS
         
         // Ensure container has proper overflow
-        // Vertical scroll is handled by SchedulerViewport, but we need overflow-y: auto for it to work
+        // Vertical scroll is handled by SchedulerViewport, but we need overflow-y: hidden to hide the scrollbar
         // Horizontal scroll is independent
         this.container.style.cssText = `
             overflow-x: auto;
-            overflow-y: auto;
+            overflow-y: hidden;
             height: 100%;
             position: relative;
         `;

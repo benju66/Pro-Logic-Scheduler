@@ -109,7 +109,7 @@ export class SchedulerViewport {
         // Make both containers scrollable vertically
         // They will be synced by the viewport
         gridContainer.style.cssText = `
-            overflow-y: auto;
+            overflow-y: hidden;
             overflow-x: auto;
             height: 100%;
             position: relative;
@@ -146,11 +146,14 @@ export class SchedulerViewport {
         ganttScrollContent.className = 'scheduler-scroll-content';
         ganttContainer.appendChild(ganttScrollContent);
 
-        // Use grid-container as the primary scroll element (we'll sync gantt to it)
-        this.scrollElement = gridContainer;
-
-        // Bind scroll listener on grid-container (passive)
-        this.scrollElement.addEventListener('scroll', () => this._onScroll(), { passive: true });
+        // Grid wheel event listener to support vertical scrolling without scrollbar
+        gridContainer.addEventListener('wheel', (e) => {
+            if (this.scrollElement) {
+                // Forward wheel event to the master scroll element (Gantt)
+                this.scrollElement.scrollTop += e.deltaY;
+                // Note: We don't preventDefault here to allow native horizontal scrolling if needed
+            }
+        }, { passive: true });
 
         // Sync gantt scroll to grid scroll
         this._syncGanttScroll();
@@ -160,27 +163,22 @@ export class SchedulerViewport {
      * Sync gantt container scroll to grid container scroll
      */
     private _syncGanttScroll(): void {
-        if (!this.scrollElement || !this.ganttPane) return;
+        if (!this.ganttPane) return;
 
-        let isSyncing = false;
-
-        // Sync gantt -> grid (vertical only)
         // Check if gantt has an inner scroll container (created by GanttRenderer)
         // The inner scroll container handles vertical scroll
         // Note: This will be set after GanttRenderer is initialized
-        // We'll set up the listener after initGantt is called
         const checkAndSetup = () => {
             const ganttScrollContainer = (this.ganttPane as any)?.__ganttScrollContainer as HTMLElement | undefined;
             const ganttScrollTarget = ganttScrollContainer || this.ganttPane;
             
             if (ganttScrollTarget) {
-                ganttScrollTarget.addEventListener('scroll', () => {
-                    if (isSyncing) return;
-                    isSyncing = true;
-                    this.scrollElement.scrollTop = (ganttScrollTarget as HTMLElement).scrollTop;
-                    // Trigger render since scroll changed
+                // DESIGNATE GANTT AS MASTER SCROLL ELEMENT
+                this.scrollElement = ganttScrollTarget as HTMLElement;
+
+                // Bind listener to the new master
+                this.scrollElement.addEventListener('scroll', () => {
                     this._onScroll();
-                    isSyncing = false;
                 }, { passive: true });
             }
         };
@@ -307,15 +305,9 @@ export class SchedulerViewport {
 
         this.scrollTop = newScrollTop;
         
-        // Sync gantt scroll to grid scroll (vertical only)
-        // Check if gantt has an inner scroll container (created by GanttRenderer)
-        const ganttScrollContainer = (this.ganttPane as any)?.__ganttScrollContainer as HTMLElement | undefined;
-        const ganttScrollTarget = ganttScrollContainer || this.ganttPane;
-        
-        if (ganttScrollTarget && ganttScrollTarget instanceof HTMLElement) {
-            if (Math.abs(ganttScrollTarget.scrollTop - newScrollTop) > 1) {
-                ganttScrollTarget.scrollTop = newScrollTop;
-            }
+        // Sync Grid scroll to Gantt (Master) scroll
+        if (this.gridPane) {
+            this.gridPane.scrollTop = newScrollTop;
         }
         
         this._scheduleRender();
