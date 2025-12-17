@@ -109,15 +109,24 @@ export class TaskStore {
    */
   getChildren(parentId: string | null): Task[] {
     const children = this.tasks.filter(t => t.parentId === parentId);
-    // Sort by displayOrder (lower = first), then by insertion order (id as fallback)
+    
+    // Create a map of task ID to array index for stable secondary sorting
+    const indexMap = new Map<string, number>();
+    this.tasks.forEach((task, index) => {
+      indexMap.set(task.id, index);
+    });
+    
+    // Sort by displayOrder (lower = first), then by original array index for stable sort
     return children.sort((a, b) => {
       const orderA = a.displayOrder ?? Number.MAX_SAFE_INTEGER;
       const orderB = b.displayOrder ?? Number.MAX_SAFE_INTEGER;
       if (orderA !== orderB) {
         return orderA - orderB;
       }
-      // Fallback to ID comparison for stable sort
-      return a.id.localeCompare(b.id);
+      // Fallback to original array index for stable, deterministic sort
+      const indexA = indexMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+      const indexB = indexMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+      return indexA - indexB;
     });
   }
 
@@ -158,6 +167,12 @@ export class TaskStore {
       }
     };
 
+    // Create a map of task ID to array index for stable secondary sorting
+    const indexMap = new Map<string, number>();
+    this.tasks.forEach((task, index) => {
+      indexMap.set(task.id, index);
+    });
+
     // Get root tasks sorted by displayOrder
     const rootTasks = this.tasks.filter(t => !t.parentId).sort((a, b) => {
       const orderA = a.displayOrder ?? Number.MAX_SAFE_INTEGER;
@@ -165,7 +180,10 @@ export class TaskStore {
       if (orderA !== orderB) {
         return orderA - orderB;
       }
-      return a.id.localeCompare(b.id);
+      // Fallback to original array index for stable, deterministic sort
+      const indexA = indexMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+      const indexB = indexMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+      return indexA - indexB;
     });
 
     rootTasks.forEach(root => addTask(root));

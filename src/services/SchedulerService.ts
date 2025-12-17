@@ -495,7 +495,7 @@ export class SchedulerService {
                 align: 'center',
                 editable: false,
                 minWidth: 30,
-                renderer: (_task, meta) => `<span style="color: #94a3b8; font-size: 11px;">${meta.index + 1}</span>`,
+                renderer: (task, meta) => `<span style="color: #94a3b8; font-size: 11px;">${task.displayOrder ?? meta.index + 1}</span>`,
             },
             {
                 id: 'name',
@@ -1870,38 +1870,74 @@ export class SchedulerService {
     }
 
     /**
+     * Migrate displayOrder for all tasks based on their physical array position
+     * Groups tasks by parentId and assigns sequential displayOrder (1, 2, 3...)
+     * based on their current position in the array. Preserves existing displayOrder
+     * if present and valid (> 0).
+     * @private
+     * @param tasks - Tasks to migrate
+     * @returns Tasks with displayOrder assigned based on array position
+     */
+    private _migrateDisplayOrderForAllTasks(tasks: Task[]): Task[] {
+        if (!tasks || tasks.length === 0) {
+            return tasks;
+        }
+
+        // Create a map to track original array indices
+        const taskIndexMap = new Map<string, number>();
+        tasks.forEach((task, index) => {
+            taskIndexMap.set(task.id, index);
+        });
+
+        // Group tasks by parentId, preserving original array order within each group
+        const tasksByParent = new Map<string | null, Array<{ task: Task; originalIndex: number }>>();
+        tasks.forEach((task, index) => {
+            const parentId = task.parentId ?? null;
+            if (!tasksByParent.has(parentId)) {
+                tasksByParent.set(parentId, []);
+            }
+            tasksByParent.get(parentId)!.push({ task, originalIndex: index });
+        });
+
+        // Sort each group by original array index to preserve physical order
+        tasksByParent.forEach((group) => {
+            group.sort((a, b) => a.originalIndex - b.originalIndex);
+        });
+
+        // Assign displayOrder based on position within each group
+        // ALWAYS normalize - don't preserve existing displayOrder to ensure correctness
+        const updatedTasks = tasks.map(task => {
+            const parentId = task.parentId ?? null;
+            const siblings = tasksByParent.get(parentId) || [];
+            const siblingIndex = siblings.findIndex(item => item.task.id === task.id);
+            
+            if (siblingIndex >= 0) {
+                return {
+                    ...task,
+                    displayOrder: siblingIndex + 1
+                };
+            }
+
+            // Fallback: shouldn't happen, but assign based on total position
+            return {
+                ...task,
+                displayOrder: (taskIndexMap.get(task.id) ?? 0) + 1
+            };
+        });
+
+        return updatedTasks;
+    }
+
+    /**
      * Assign displayOrder to tasks that don't have it
      * This ensures consistent ordering for imported or existing tasks
+     * @deprecated Use _migrateDisplayOrderForAllTasks instead
      * @private
      * @param tasks - Tasks to assign displayOrder to
      * @returns Tasks with displayOrder assigned
      */
     private _assignDisplayOrderToTasks(tasks: Task[]): Task[] {
-        // Group tasks by parentId
-        const tasksByParent = new Map<string | null, Task[]>();
-        tasks.forEach(task => {
-            const parentId = task.parentId ?? null;
-            if (!tasksByParent.has(parentId)) {
-                tasksByParent.set(parentId, []);
-            }
-            tasksByParent.get(parentId)!.push(task);
-        });
-        
-        // Assign displayOrder to each group
-        const updatedTasks = tasks.map(task => {
-            if (task.displayOrder !== undefined && task.displayOrder > 0) {
-                return task; // Already has displayOrder
-            }
-            
-            const siblings = tasksByParent.get(task.parentId ?? null) || [];
-            const siblingIndex = siblings.findIndex(t => t.id === task.id);
-            return {
-                ...task,
-                displayOrder: siblingIndex >= 0 ? siblingIndex + 1 : tasks.length + 1
-            };
-        });
-        
-        return updatedTasks;
+        return this._migrateDisplayOrderForAllTasks(tasks);
     }
 
     /**
@@ -1979,7 +2015,54 @@ export class SchedulerService {
             this.taskStore.update(task.id, { parentId: newParentId });
         });
         
-        // 4. Update store and render
+        // 4. Normalize displayOrder for affected parent groups
+        // When tasks change parent, their displayOrder needs to be recalculated
+        // Get fresh copy after updates
+        const updatedTasks = this.taskStore.getAll();
+        const affectedParents = new Set<string | null>();
+        affectedParents.add(newParentId);
+        topLevelSelected.forEach(task => {
+            if (task.parentId) {
+                affectedParents.add(task.parentId); // Old parent group also needs normalization
+            }
+        });
+        
+        // Normalize displayOrder for each affected parent group
+        const taskIndexMap = new Map<string, number>();
+        updatedTasks.forEach((task, index) => {
+            taskIndexMap.set(task.id, index);
+        });
+        
+        const normalizedTasks = updatedTasks.map(task => {
+            const pid = task.parentId ?? null;
+            if (!affectedParents.has(pid)) {
+                return task; // Not affected, keep as-is
+            }
+            
+            // Get siblings for this parent
+            const siblings = allTasks.filter(t => (t.parentId ?? null) === pid);
+            const sortedSiblings = [...siblings].sort((a, b) => {
+                const indexA = taskIndexMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+                const indexB = taskIndexMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+                return indexA - indexB;
+            });
+            
+            const position = sortedSiblings.findIndex(s => s.id === task.id);
+            if (position >= 0) {
+                return {
+                    ...task,
+                    displayOrder: position + 1
+                };
+            }
+            return task;
+        });
+        
+        // Update store with normalized tasks
+        const restoreNotifications = this.taskStore.disableNotifications();
+        this.taskStore.setAll(normalizedTasks);
+        restoreNotifications();
+        
+        // 5. Update store and render
         this.recalculateAll();
         this.saveData();
         this.render();
@@ -2313,113 +2396,48 @@ export class SchedulerService {
                     parentId = taskData.parentId ?? null;
                 }
                 
-                // Get all tasks to calculate displayOrder (defensive copy)
+                // BULLETPROOF APPROACH: Always normalize displayOrder to match physical array position
+                // This ensures new tasks ALWAYS append to bottom, regardless of existing displayOrder values
                 const allTasks = this.taskStore.getAll();
                 
-                // Calculate displayOrder: find max displayOrder for tasks with same parentId, then add 1
-                // Important: We need to ensure new tasks always appear at the bottom
-                // So we assign displayOrder to any existing siblings that don't have it first
+                // Get siblings for the target parent
                 const siblings = allTasks.filter(t => t.parentId === parentId);
                 
-                // Check if any siblings need displayOrder assigned (migration for existing tasks)
-                const siblingsNeedingOrder = siblings.filter(t => t.displayOrder === undefined || t.displayOrder === 0);
-                if (siblingsNeedingOrder.length > 0) {
-                    // Get max displayOrder from siblings that already have it
-                    const existingMaxOrder = siblings
-                        .map(t => t.displayOrder ?? 0)
-                        .filter(order => order > 0)
-                        .reduce((max, order) => Math.max(max, order), 0);
-                    
-                    // Assign sequential displayOrder to tasks that need it
-                    // Preserve their current order in the array by using their index
-                    const updatedTasks = allTasks.map(task => {
-                        if (siblingsNeedingOrder.some(t => t.id === task.id)) {
-                            const index = siblingsNeedingOrder.findIndex(t => t.id === task.id);
-                            return {
-                                ...task,
-                                displayOrder: existingMaxOrder + index + 1
-                            };
-                        }
-                        return task;
+                // Create map of task ID to physical array index
+                const taskIndexMap = new Map<string, number>();
+                allTasks.forEach((task, index) => {
+                    taskIndexMap.set(task.id, index);
+                });
+                
+                // CRITICAL: Sort siblings by PHYSICAL ARRAY POSITION, not by displayOrder
+                // This ensures we normalize displayOrder to match where tasks actually are in the array
+                const sortedSiblings = [...siblings].sort((a, b) => {
+                    const indexA = taskIndexMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+                    const indexB = taskIndexMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+                    return indexA - indexB;
+                });
+                
+                // Reassign displayOrder sequentially (1, 2, 3...) based on PHYSICAL POSITION
+                // This ensures displayOrder always matches array position
+                const normalizedSiblingsMap = new Map<string, Task>();
+                sortedSiblings.forEach((task, index) => {
+                    normalizedSiblingsMap.set(task.id, {
+                        ...task,
+                        displayOrder: index + 1
                     });
-                    
-                    // Update store with migrated displayOrder values (this triggers onChange)
-                    // Use disableNotifications to prevent double-trigger during migration
-                    const restoreNotifications = this.taskStore.disableNotifications();
-                    this.taskStore.setAll(updatedTasks);
-                    restoreNotifications();
-                    
-                    // Calculate displayOrder for new task using migrated tasks
-                    const migratedSiblings = updatedTasks.filter(t => t.parentId === parentId);
-                    const maxDisplayOrder = migratedSiblings.length > 0
-                        ? Math.max(...migratedSiblings.map(t => t.displayOrder ?? 0))
-                        : 0;
-                    const displayOrder = maxDisplayOrder + 1;
-                    
-                    const task: Task = {
-                        id: `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                        name: taskData.name || 'New Task',
-                        start: taskData.start || today,
-                        end: taskData.end || today,
-                        duration: taskData.duration || 1,
-                        parentId: parentId,
-                        dependencies: taskData.dependencies || [],
-                        progress: taskData.progress || 0,
-                        constraintType: taskData.constraintType || 'asap',
-                        constraintDate: taskData.constraintDate || null,
-                        notes: taskData.notes || '',
-                        level: taskData.level || 0,
-                        displayOrder: displayOrder,
-                        _collapsed: false,
-                        // Initialize baseline/actual fields to null
-                        baselineStart: taskData.baselineStart ?? null,
-                        baselineFinish: taskData.baselineFinish ?? null,
-                        baselineDuration: taskData.baselineDuration,
-                        actualStart: taskData.actualStart ?? null,
-                        actualFinish: taskData.actualFinish ?? null,
-                        remainingDuration: taskData.remainingDuration,
-                        ...taskData
-                    } as Task;
-
-                    console.log('[SchedulerService] Adding task:', task, 'displayOrder:', displayOrder, '(after migrating', siblingsNeedingOrder.length, 'tasks)');
-                    
-                    // Use immutable operation: create new array with task appended (always at bottom)
-                    const finalTasks = [...updatedTasks, task];
-                    this.taskStore.setAll(finalTasks);
-                    
-                    // Note: recalculateAll() and render() will be triggered automatically by _onTasksChanged()
-                    // via the TaskStore onChange callback, so we don't need to call them here
+                });
                 
-                    this.saveData();
-                    
-                    // Select and focus the new task
-                    this.selectedIds.clear();
-                    this.selectedIds.add(task.id);
-                    this.focusedId = task.id;
-                    this._updateSelection();
-                    
-                    // Scroll to new task (render will happen automatically via _onTasksChanged)
-                    // Use setTimeout to ensure render has completed
-                    setTimeout(() => {
-                        this._scrollToTaskAndFocus(task.id);
-                    }, 0);
-                    
-                    this.toastService.success('Task added');
-                    
+                // Update all tasks: replace siblings with normalized versions, keep others as-is
+                const updatedTasks = allTasks.map(task => {
+                    if (task.parentId === parentId) {
+                        return normalizedSiblingsMap.get(task.id) || task;
+                    }
                     return task;
-                }
+                });
                 
-                // All siblings already have displayOrder - proceed normally
-                let maxDisplayOrder = 0;
-                if (siblings.length > 0) {
-                    const displayOrders = siblings
-                        .map(t => t.displayOrder ?? 0)
-                        .filter(order => order > 0);
-                    maxDisplayOrder = displayOrders.length > 0 
-                        ? Math.max(...displayOrders) 
-                        : siblings.length;
-                }
-                const displayOrder = maxDisplayOrder + 1;
+                // Calculate displayOrder for new task - always siblingCount + 1
+                // Since we normalized siblings, this will always be the maximum + 1
+                const displayOrder = siblings.length + 1;
                 
                 const task: Task = {
                     id: `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -2446,14 +2464,44 @@ export class SchedulerService {
                     ...taskData
                 } as Task;
 
-                console.log('[SchedulerService] Adding task:', task, 'displayOrder:', displayOrder);
+                console.log('[SchedulerService] Adding task:', task, 'displayOrder:', displayOrder, 'siblingCount:', siblings.length);
                 
-                // Use immutable operation: create new array with task appended (always at bottom)
-                const updatedTasks = [...allTasks, task];
-                this.taskStore.setAll(updatedTasks);
+                // Append new task to end of array
+                const tasksWithNewTask = [...updatedTasks, task];
                 
-                // Note: recalculateAll() and render() will be triggered automatically by _onTasksChanged()
-                // via the TaskStore onChange callback, so we don't need to call them here
+                // CRITICAL: Sort FIRST by current displayOrder (or array position if missing)
+                // This ensures tasks are in the correct order before normalization
+                const sortedTasks = tasksWithNewTask.sort((a, b) => {
+                    // Sort by parentId first (group siblings together)
+                    const parentA = a.parentId ?? '';
+                    const parentB = b.parentId ?? '';
+                    if (parentA !== parentB) {
+                        return parentA.localeCompare(parentB);
+                    }
+                    // Within same parent, sort by displayOrder (or array position as fallback)
+                    const orderA = a.displayOrder ?? Number.MAX_SAFE_INTEGER;
+                    const orderB = b.displayOrder ?? Number.MAX_SAFE_INTEGER;
+                    if (orderA !== orderB) {
+                        return orderA - orderB;
+                    }
+                    // Fallback: use array position for stable sort
+                    const indexA = tasksWithNewTask.indexOf(a);
+                    const indexB = tasksWithNewTask.indexOf(b);
+                    return indexA - indexB;
+                });
+                
+                // CRITICAL: After sorting, normalize ALL tasks to ensure sequential displayOrder (1, 2, 3...)
+                // This ensures displayOrder matches the sorted physical array position
+                const finalNormalizedTasks = this._migrateDisplayOrderForAllTasks(sortedTasks);
+                
+                // Single atomic update - disable notifications to prevent double-trigger during normalization
+                const restoreNotifications = this.taskStore.disableNotifications();
+                this.taskStore.setAll(finalNormalizedTasks);
+                restoreNotifications();
+                
+                // Manually trigger update since we disabled notifications during setAll()
+                // This ensures the grid and gantt views are updated with the new task
+                this._onTasksChanged();
             
                 this.saveData();
                 
@@ -2463,11 +2511,10 @@ export class SchedulerService {
                 this.focusedId = task.id;
                 this._updateSelection();
                 
-                // Scroll to new task (render will happen automatically via _onTasksChanged)
-                // Use setTimeout to ensure render has completed
-                setTimeout(() => {
+                // Scroll to new task - use requestAnimationFrame to ensure Virtual Scroll Grid has rendered
+                requestAnimationFrame(() => {
                     this._scrollToTaskAndFocus(task.id);
-                }, 0);
+                });
                 
                 this.toastService.success('Task added');
                 
@@ -2634,8 +2681,44 @@ export class SchedulerService {
         // Get parent's parent (or null if parent is root)
         const parent = this.taskStore.getById(task.parentId);
         const newParentId = parent ? parent.parentId : null;
+        const oldParentId = task.parentId;
         
         this.taskStore.update(taskId, { parentId: newParentId });
+
+        // Normalize displayOrder for both old and new parent groups
+        const allTasks = this.taskStore.getAll();
+        const taskIndexMap = new Map<string, number>();
+        allTasks.forEach((t, index) => {
+            taskIndexMap.set(t.id, index);
+        });
+        
+        const normalizedTasks = allTasks.map(t => {
+            const pid = t.parentId ?? null;
+            // Normalize if in old or new parent group
+            if (pid !== oldParentId && pid !== newParentId) {
+                return t; // Not affected
+            }
+            
+            const siblings = allTasks.filter(s => (s.parentId ?? null) === pid);
+            const sortedSiblings = [...siblings].sort((a, b) => {
+                const indexA = taskIndexMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+                const indexB = taskIndexMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+                return indexA - indexB;
+            });
+            
+            const position = sortedSiblings.findIndex(s => s.id === t.id);
+            if (position >= 0) {
+                return {
+                    ...t,
+                    displayOrder: position + 1
+                };
+            }
+            return t;
+        });
+        
+        const restoreNotifications = this.taskStore.disableNotifications();
+        this.taskStore.setAll(normalizedTasks);
+        restoreNotifications();
 
         this.recalculateAll();
         this.saveData();
@@ -2671,27 +2754,43 @@ export class SchedulerService {
             try {
                 this.saveCheckpoint();
                 
-                const allTasks = this.taskStore.getAll();
+                let allTasks = this.taskStore.getAll();
+                
+                // Ensure all tasks have displayOrder (migrate if needed)
+                const needsMigration = allTasks.some(t => t.displayOrder === undefined || t.displayOrder === 0);
+                if (needsMigration) {
+                    const restoreNotifications = this.taskStore.disableNotifications();
+                    allTasks = this._migrateDisplayOrderForAllTasks(allTasks);
+                    this.taskStore.setAll(allTasks);
+                    restoreNotifications();
+                }
+                
                 const focusedTask = allTasks.find(t => t.id === this.focusedId);
                 if (!focusedTask) return;
                 
                 const today = DateUtils.today();
                 
-                // Calculate displayOrder: insert before focused task
-                // Get all siblings with same parentId
-                const siblings = allTasks.filter(t => t.parentId === focusedTask.parentId);
-                const focusedDisplayOrder = focusedTask.displayOrder ?? Number.MAX_SAFE_INTEGER;
+                // Get all siblings with same parentId, sorted by displayOrder
+                const siblings = allTasks
+                    .filter(t => t.parentId === focusedTask.parentId)
+                    .sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
                 
-                // Find the displayOrder to use (should be less than focused task's order)
-                // If focused task has no displayOrder, assign one based on its position
+                const focusedIndex = siblings.findIndex(t => t.id === focusedTask.id);
+                if (focusedIndex === -1) return;
+                
+                // Calculate displayOrder: insert before focused task
                 let newDisplayOrder: number;
-                if (focusedTask.displayOrder === undefined) {
-                    // Focused task has no displayOrder - assign based on position
-                    const focusedIndex = siblings.findIndex(t => t.id === focusedTask.id);
-                    newDisplayOrder = Math.max(1, focusedIndex);
+                if (focusedIndex === 0) {
+                    // Insert at the very beginning - use half of focused task's displayOrder
+                    const focusedOrder = focusedTask.displayOrder ?? 1;
+                    newDisplayOrder = focusedOrder / 2;
                 } else {
-                    // Insert before focused task - use its displayOrder minus 1
-                    newDisplayOrder = Math.max(1, focusedDisplayOrder - 1);
+                    // Insert between previous sibling and focused task
+                    const prevSibling = siblings[focusedIndex - 1];
+                    const prevOrder = prevSibling.displayOrder ?? 0;
+                    const focusedOrder = focusedTask.displayOrder ?? prevOrder + 1;
+                    // Use midpoint between previous and focused
+                    newDisplayOrder = (prevOrder + focusedOrder) / 2;
                 }
                 
                 // Create new task object
@@ -2712,13 +2811,12 @@ export class SchedulerService {
                     _collapsed: false
                 };
                 
-                // Use immutable operation: create new array with task inserted
-                // Find where to insert based on displayOrder
-                const focusedIndex = allTasks.findIndex(t => t.id === focusedTask.id);
+                // Physically insert task before focused task in array
+                const focusedArrayIndex = allTasks.findIndex(t => t.id === focusedTask.id);
                 const updatedTasks = [
-                    ...allTasks.slice(0, focusedIndex),
+                    ...allTasks.slice(0, focusedArrayIndex),
                     newTask,
-                    ...allTasks.slice(focusedIndex)
+                    ...allTasks.slice(focusedArrayIndex)
                 ];
                 
                 this.taskStore.setAll(updatedTasks);
@@ -2734,10 +2832,10 @@ export class SchedulerService {
                 this.focusedId = newTask.id;
                 this._updateSelection();
                 
-                // Scroll to new task (render will happen automatically via _onTasksChanged)
-                setTimeout(() => {
+                // Scroll to new task - use requestAnimationFrame to ensure Virtual Scroll Grid has rendered
+                requestAnimationFrame(() => {
                     this._scrollToTaskAndFocus(newTask.id);
-                }, 0);
+                });
                 
                 this.toastService.success('Task inserted');
             } catch (error) {
@@ -2781,7 +2879,32 @@ export class SchedulerService {
             // Swap tasks in array
             [tasks[indexA], tasks[indexB]] = [tasks[indexB], tasks[indexA]];
             
-            // Update store with reordered array
+            // CRITICAL: Update displayOrder to match new physical position
+            // Get all siblings after swap, sorted by their current array position
+            const siblingsAfterSwap = tasks.filter(t => t.parentId === focusedTask.parentId);
+            
+            // Create a map of task ID to array index for stable sorting
+            const taskIndexMap = new Map<string, number>();
+            tasks.forEach((task, index) => {
+                taskIndexMap.set(task.id, index);
+            });
+            
+            // Sort siblings by their current array position (physical order)
+            const sortedSiblings = [...siblingsAfterSwap].sort((a, b) => {
+                const indexA = taskIndexMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+                const indexB = taskIndexMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+                return indexA - indexB;
+            });
+            
+            // Reassign displayOrder sequentially based on new physical order
+            sortedSiblings.forEach((task, index) => {
+                const taskInArray = tasks.find(t => t.id === task.id);
+                if (taskInArray) {
+                    taskInArray.displayOrder = index + 1;
+                }
+            });
+            
+            // Update store with reordered array and updated displayOrder
             this.taskStore.setAll(tasks);
             this.recalculateAll();
             this.saveData();
@@ -3050,56 +3173,71 @@ export class SchedulerService {
                 }));
         });
 
-        // 8.5. Assign displayOrder to pasted tasks
-        // Get all tasks first to calculate displayOrder
+        // 8.5. Normalize displayOrder for existing tasks, then assign to pasted tasks
+        // Use same bulletproof approach as addTask() - normalize first, then append
         const allTasks = this.taskStore.getAll();
         
-        // Group pasted tasks by parentId and assign sequential displayOrder
-        const tasksByParent = new Map<string | null, Task[]>();
-        newTasks.forEach(task => {
-            const parentId = task.parentId ?? null;
-            if (!tasksByParent.has(parentId)) {
-                tasksByParent.set(parentId, []);
-            }
-            tasksByParent.get(parentId)!.push(task);
+        // Normalize displayOrder for all existing tasks (same logic as addTask)
+        const taskIndexMap = new Map<string, number>();
+        allTasks.forEach((t, index) => {
+            taskIndexMap.set(t.id, index);
         });
         
-        // Assign displayOrder based on target location for each parent group
-        tasksByParent.forEach((siblings, parentId) => {
-            const existingSiblings = allTasks.filter(t => t.parentId === parentId);
-            const maxDisplayOrder = existingSiblings.length > 0
-                ? Math.max(...existingSiblings.map(t => t.displayOrder ?? 0).filter(o => o > 0), 0)
-                : 0;
+        // Group all tasks by parentId and normalize displayOrder
+        const tasksByParent = new Map<string | null, Task[]>();
+        allTasks.forEach(t => {
+            const pid = t.parentId ?? null;
+            if (!tasksByParent.has(pid)) {
+                tasksByParent.set(pid, []);
+            }
+            tasksByParent.get(pid)!.push(t);
+        });
+        
+        // Normalize displayOrder for existing tasks
+        const normalizedExistingTasks = allTasks.map(t => {
+            const pid = t.parentId ?? null;
+            const siblings = tasksByParent.get(pid) || [];
+            const sortedSiblings = [...siblings].sort((a, b) => {
+                const indexA = taskIndexMap.get(a.id) ?? Number.MAX_SAFE_INTEGER;
+                const indexB = taskIndexMap.get(b.id) ?? Number.MAX_SAFE_INTEGER;
+                return indexA - indexB;
+            });
             
-            siblings.forEach((task, index) => {
+            const position = sortedSiblings.findIndex(s => s.id === t.id);
+            if (position >= 0) {
+                return {
+                    ...t,
+                    displayOrder: position + 1
+                };
+            }
+            return t;
+        });
+        
+        // Assign displayOrder to pasted tasks - append to bottom of each parent group
+        const pastedTasksByParent = new Map<string | null, Task[]>();
+        newTasks.forEach(task => {
+            const parentId = task.parentId ?? null;
+            if (!pastedTasksByParent.has(parentId)) {
+                pastedTasksByParent.set(parentId, []);
+            }
+            pastedTasksByParent.get(parentId)!.push(task);
+        });
+        
+        pastedTasksByParent.forEach((pastedSiblings, parentId) => {
+            const existingSiblings = normalizedExistingTasks.filter(t => (t.parentId ?? null) === parentId);
+            const maxDisplayOrder = existingSiblings.length;
+            
+            pastedSiblings.forEach((task, index) => {
                 task.displayOrder = maxDisplayOrder + index + 1;
             });
         });
 
-        // 9. Insert newTasks at target location
-        
-        // Find where to insert in the full task list
-        // We need to insert after the last task that appears before insertIndex in flat list
-        if (insertIndex > 0 && insertIndex <= flatList.length) {
-            const targetTask = flatList[insertIndex - 1];
-            const targetTaskIndex = allTasks.findIndex(t => t.id === targetTask.id);
-            
-            // Insert after target task
-            // But we need to find where the target task's subtree ends
-            // For simplicity, insert all new tasks after target task
-            const insertPos = targetTaskIndex + 1;
-            newTasks.forEach((task, idx) => {
-                allTasks.splice(insertPos + idx, 0, task);
-            });
-        } else {
-            // Insert at end
-            newTasks.forEach(task => {
-                allTasks.push(task);
-            });
-        }
+        // 9. Append newTasks to normalized tasks array
+        // Since we've normalized displayOrder, we can safely append to end
+        const finalTasks = [...normalizedExistingTasks, ...newTasks];
 
-        // Update store with new array
-        this.taskStore.setAll(allTasks);
+        // Update store with new array (use finalTasks, not allTasks!)
+        this.taskStore.setAll(finalTasks);
 
         // 10. If clipboardIsCut === true:
         //     - Delete original tasks using clipboardOriginalIds
@@ -3388,9 +3526,25 @@ export class SchedulerService {
                 if (parsed.tasks) {
                     // Temporarily disable onChange to prevent recursion during load
                     const restoreNotifications = this.taskStore.disableNotifications();
-                    this.taskStore.setAll(parsed.tasks);
+                    
+                    // Migrate displayOrder for all loaded tasks based on their array position
+                    // This ensures consistent ordering and prevents new tasks from jumping ahead
+                    const migratedTasks = this._migrateDisplayOrderForAllTasks(parsed.tasks);
+                    
+                    this.taskStore.setAll(migratedTasks);
                     restoreNotifications();
-                    console.log('[SchedulerService] ✅ Loaded', parsed.tasks.length, 'tasks from localStorage');
+                    
+                    // CRITICAL: After loading, normalize displayOrder again to ensure correctness
+                    // This handles cases where tasks might have been saved with incorrect displayOrder
+                    const allTasks = this.taskStore.getAll();
+                    const renormalizedTasks = this._migrateDisplayOrderForAllTasks(allTasks);
+                    if (JSON.stringify(renormalizedTasks) !== JSON.stringify(allTasks)) {
+                        const restoreNotifications2 = this.taskStore.disableNotifications();
+                        this.taskStore.setAll(renormalizedTasks);
+                        restoreNotifications2();
+                    }
+                    
+                    console.log('[SchedulerService] ✅ Loaded', migratedTasks.length, 'tasks from localStorage (displayOrder migrated and normalized)');
                 }
                 if (parsed.calendar) {
                     this.calendarStore.set(parsed.calendar);
@@ -3653,9 +3807,9 @@ export class SchedulerService {
             const data = await this.fileService.importFromMSProjectXML(file);
             this.saveCheckpoint();
             
-            // Assign displayOrder to imported tasks if they don't have it
+            // Normalize displayOrder for imported tasks (use full migration)
             const tasks = data.tasks || [];
-            const tasksWithOrder = this._assignDisplayOrderToTasks(tasks);
+            const tasksWithOrder = this._migrateDisplayOrderForAllTasks(tasks);
             
             this.taskStore.setAll(tasksWithOrder);
             // Note: recalculateAll() and render() will be triggered automatically by _onTasksChanged()

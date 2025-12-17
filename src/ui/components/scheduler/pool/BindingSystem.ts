@@ -137,7 +137,6 @@ export class BindingSystem {
 
         // Handle custom renderer
         if (col.renderer) {
-            const container = cell.text || cell.container;
             const rendered = col.renderer(task, {
                 isParent,
                 depth,
@@ -145,11 +144,20 @@ export class BindingSystem {
                 index: ctx.index,
             });
             if (typeof rendered === 'string') {
-                // Use textContent for text nodes, innerHTML only if needed for HTML
-                if (container === cell.text) {
-                    container.textContent = rendered;
+                // If renderer returns HTML (contains tags), always use innerHTML on container
+                // Otherwise use textContent for text nodes
+                const isHTML = rendered.includes('<') && rendered.includes('>');
+                if (isHTML) {
+                    // Force use of container for HTML rendering
+                    cell.container.innerHTML = rendered;
                 } else {
-                    container.innerHTML = rendered;
+                    // Use text node if available, otherwise container
+                    const container = cell.text || cell.container;
+                    if (container === cell.text) {
+                        container.textContent = rendered;
+                    } else {
+                        container.textContent = rendered;
+                    }
                 }
             }
         }
