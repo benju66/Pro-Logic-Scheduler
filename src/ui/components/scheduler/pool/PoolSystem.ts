@@ -127,12 +127,16 @@ export class PoolSystem {
         const row = document.createElement('div');
         row.className = 'vsg-row';
         row.style.cssText = `
-            display: flex;
+            position: absolute;
+            left: 0;
+            right: 0;
             height: ${this.rowHeight}px;
+            display: flex;
             align-items: center;
             border-bottom: 1px solid #f1f5f9;
             background: white;
             min-width: fit-content;
+            will-change: top;
         `;
 
         const cells = new Map<string, PooledCell>();

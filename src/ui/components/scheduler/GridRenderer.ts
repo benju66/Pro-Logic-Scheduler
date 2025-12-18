@@ -12,7 +12,6 @@ import type { Task, GridColumn } from '../../../types';
 import type { ViewportState, GridRendererOptions, BindingContext } from './types';
 import { PoolSystem } from './pool/PoolSystem';
 import { BindingSystem } from './pool/BindingSystem';
-import { ROW_HEIGHT } from './constants';
 
 /**
  * Editing cell state
@@ -29,7 +28,7 @@ export class GridRenderer {
     private pool: PoolSystem;
     private binder: BindingSystem;
     private container: HTMLElement;
-    private rowContainer: HTMLElement;
+    private rowContainer!: HTMLElement;
     private options: Required<GridRendererOptions>;
     private rowHeight: number;
     private data: Task[] = [];
@@ -104,7 +103,7 @@ export class GridRenderer {
         this.rowContainer = document.createElement('div');
         this.rowContainer.className = 'vsg-row-container';
         this.rowContainer.style.cssText = `
-            position: absolute;
+            position: relative;
             top: 0;
             left: 0;
             right: 0;
@@ -124,23 +123,31 @@ export class GridRenderer {
      * Called every frame during scroll by SchedulerViewport
      */
     render(state: ViewportState): void {
-        const { scrollTop, visibleRange } = state;
+        const { visibleRange } = state;
         const { start, end } = visibleRange;
 
-        // 1. Apply transform (compositor-only, no layout)
-        const offset = Math.floor(start * this.rowHeight);
-        this.rowContainer.style.transform = `translateY(${offset}px)`;
+        // Set container height to hold all rows (enables proper scrolling)
+        this.rowContainer.style.height = `${this.data.length * this.rowHeight}px`;
 
-        // 2. Release rows outside range
+        // Keep container translateY
+        this.rowContainer.style.transform = `translateY(${start * this.rowHeight}px)`;
+
+        // Release rows outside visible range
         this.pool.releaseRowsOutsideRange(start, end);
 
-        // 3. Bind rows in range
+        // Bind and position rows in visible range
         for (let i = start; i <= end && i < this.data.length; i++) {
             const task = this.data[i];
             if (!task) continue;
 
             try {
                 const row = this.pool.acquireRow(i);
+
+                // Position relative to visible range, not absolute
+                row.element.style.position = 'absolute';
+                row.element.style.top = `${(i - start) * this.rowHeight}px`;
+                row.element.style.left = '0';
+                row.element.style.right = '0';
 
                 const context: BindingContext = {
                     task,
@@ -204,6 +211,12 @@ export class GridRenderer {
         const row = this.pool.acquireRow(index);
         const task = this.data[index];
         if (!task) return;
+
+        // Position row correctly
+        row.element.style.position = 'absolute';
+        row.element.style.top = `${index * this.rowHeight}px`;
+        row.element.style.left = '0';
+        row.element.style.right = '0';
 
         const context: BindingContext = {
             task,

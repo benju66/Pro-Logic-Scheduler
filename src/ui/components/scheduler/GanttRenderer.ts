@@ -342,7 +342,7 @@ export class GanttRenderer {
      * Render based on viewport state
      */
     render(state: ViewportState): void {
-        const { scrollTop, visibleRange, viewportHeight } = state;
+        const { visibleRange, viewportHeight } = state;
         let { start, end } = visibleRange;
 
         const ctx = this.dom.mainCtx;
@@ -374,13 +374,13 @@ export class GanttRenderer {
             return;
         }
 
-        // Render layers (back to front)
-        this._renderGridLines(ctx, start, end, scrollTop);
-        this._renderWeekendShading(ctx, start, end, scrollTop);
+        // Render layers (back to front) - using absolute Y positioning relative to visible range
+        this._renderGridLines(ctx, start, end);
+        this._renderWeekendShading(ctx, start, end);
         this._renderTodayLine(ctx);
-        this._renderDependencies(ctx, start, end, scrollTop);
-        this._renderBars(ctx, start, end, scrollTop);
-        this._renderSelectionHighlight(ctx, start, end, scrollTop);
+        this._renderDependencies(ctx, start, end);
+        this._renderBars(ctx, start, end);
+        this._renderSelectionHighlight(ctx, start, end);
     }
 
     /**
@@ -559,10 +559,9 @@ export class GanttRenderer {
     /**
      * Render grid lines
      */
-    private _renderGridLines(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number, scrollTop: number): void {
+    private _renderGridLines(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number): void {
         const ppd = this.pixelsPerDay;
         const width = this.viewportWidth;
-        const offsetY = scrollTop % this.rowHeight;
         const offsetX = this.scrollX % ppd;
 
         if (!this.timelineStart) return;
@@ -570,10 +569,10 @@ export class GanttRenderer {
         ctx.strokeStyle = GanttRenderer.COLORS.gridLine;
         ctx.lineWidth = 0.5;
 
-        // Horizontal row lines (integer-snapped)
+        // Horizontal row lines - absolute positioning relative to visible range
         ctx.beginPath();
         for (let i = 0; i <= lastRow - firstRow + 1; i++) {
-            const y = Math.floor((i * this.rowHeight) - offsetY + 0.5);
+            const y = Math.floor((i * this.rowHeight) + 0.5);
             ctx.moveTo(0, y);
             ctx.lineTo(width, y);
         }
@@ -611,7 +610,7 @@ export class GanttRenderer {
     /**
      * Render weekend shading
      */
-    private _renderWeekendShading(ctx: CanvasRenderingContext2D, _firstRow: number, _lastRow: number, _scrollTop: number): void {
+    private _renderWeekendShading(ctx: CanvasRenderingContext2D, _firstRow: number, _lastRow: number): void {
         const ppd = this.pixelsPerDay;
         const height = this.viewportHeight;
         const offsetX = this.scrollX % ppd;
@@ -660,7 +659,7 @@ export class GanttRenderer {
     /**
      * Render dependencies
      */
-    private _renderDependencies(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number, scrollTop: number): void {
+    private _renderDependencies(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number): void {
         const rowHeight = this.rowHeight;
         const barHeight = 20;
         const barPadding = 9;
@@ -673,8 +672,8 @@ export class GanttRenderer {
             const task = this.data[i];
             if (!task.dependencies || task.dependencies.length === 0) continue;
 
-            // Integer-snap Y coordinate
-            const taskY = Math.floor((i * rowHeight) - scrollTop + barPadding + barHeight / 2);
+            // Absolute Y coordinate relative to visible range start
+            const taskY = Math.floor((i - firstRow) * rowHeight + barPadding + barHeight / 2);
             const taskStart = this._parseDate(task.start);
             if (!taskStart) continue;
             const taskX = this._dateToX(taskStart);
@@ -686,8 +685,11 @@ export class GanttRenderer {
                 const predIndex = this.data.indexOf(predTask);
                 if (predIndex === -1) return;
 
-                // Integer-snap Y coordinate
-                const predY = Math.floor((predIndex * rowHeight) - scrollTop + barPadding + barHeight / 2);
+                // Only draw if predecessor is also in visible range
+                if (predIndex < firstRow || predIndex > lastRow) return;
+
+                // Absolute Y coordinate relative to visible range start
+                const predY = Math.floor((predIndex - firstRow) * rowHeight + barPadding + barHeight / 2);
                 const predEnd = this._parseDate(predTask.end);
                 if (!predEnd) return;
                 const predEndX = this._dateToX(predEnd) + this.pixelsPerDay;
@@ -754,7 +756,7 @@ export class GanttRenderer {
     /**
      * Render task bars
      */
-    private _renderBars(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number, scrollTop: number): void {
+    private _renderBars(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number): void {
         const rowHeight = this.rowHeight;
         const barHeight = 20;
         const barPadding = 9;
@@ -769,14 +771,14 @@ export class GanttRenderer {
 
             const startX = this._dateToX(this._parseDate(task.start));
             const endX = this._dateToX(this._parseDate(task.end)) + this.pixelsPerDay;
-            // Integer-snap Y coordinate
-            const y = Math.floor((i * rowHeight) - scrollTop + barPadding);
+            // Absolute Y coordinate relative to visible range start
+            const y = Math.floor((i - firstRow) * rowHeight + barPadding);
             const width = Math.max(10, endX - startX);
 
             // Skip if not visible horizontally
             if (endX < 0 || startX > this.viewportWidth) continue;
 
-            // Cache bar position for hit testing
+            // Cache bar position for hit testing (absolute Y for hit testing)
             this.barPositions.push({
                 taskId: task.id,
                 x: startX,
@@ -880,7 +882,7 @@ export class GanttRenderer {
     /**
      * Render selection highlight
      */
-    private _renderSelectionHighlight(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number, scrollTop: number): void {
+    private _renderSelectionHighlight(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number): void {
         if (this.selectedIds.size === 0) return;
 
         ctx.fillStyle = GanttRenderer.COLORS.selectionBg;
@@ -888,8 +890,8 @@ export class GanttRenderer {
         for (let i = firstRow; i <= lastRow; i++) {
             const task = this.data[i];
             if (this.selectedIds.has(task.id)) {
-                // Integer-snap Y coordinate
-                const y = Math.floor((i * this.rowHeight) - scrollTop);
+                // Absolute Y coordinate relative to visible range start
+                const y = Math.floor((i - firstRow) * this.rowHeight);
                 ctx.fillRect(0, y, this.viewportWidth, this.rowHeight);
             }
         }
