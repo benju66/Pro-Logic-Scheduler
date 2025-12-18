@@ -2909,8 +2909,13 @@ export class SchedulerService {
                 }));
         });
 
-        // 8.5. Assign sortKeys to pasted tasks
-        // Group pasted tasks by parentId
+        // 8.5. Assign sortKeys to pasted tasks - INSERT AFTER FOCUSED TASK
+        // 
+        // For tasks being pasted at the same level as the focused task (targetParentId),
+        // we want to insert them immediately AFTER the focused task, not at the end.
+        // For tasks in other parent groups (nested children within pasted content),
+        // we append to the end of that group since there's no specific position.
+        
         const pastedTasksByParent = new Map<string | null, Task[]>();
         newTasks.forEach(task => {
             const parentId = task.parentId ?? null;
@@ -2922,19 +2927,49 @@ export class SchedulerService {
         
         // Assign sortKeys to each group
         pastedTasksByParent.forEach((pastedSiblings, parentId) => {
-            // Get existing last key for this parent
-            const existingLastKey = this.taskStore.getLastSortKey(parentId);
+            // Check if this is the same parent level as the focused task
+            const isTargetLevel = parentId === targetParentId;
             
-            // Generate keys for all tasks in this group
-            const sortKeys = OrderingService.generateBulkKeys(
-                existingLastKey,
-                null,
-                pastedSiblings.length
-            );
-            
-            pastedSiblings.forEach((task, index) => {
-                task.sortKey = sortKeys[index];
-            });
+            if (isTargetLevel && this.focusedId) {
+                // INSERT AFTER FOCUSED TASK
+                // Get the focused task and its siblings
+                const focusedTask = this.taskStore.getById(this.focusedId);
+                const siblings = this.taskStore.getChildren(parentId);
+                const focusedIndex = siblings.findIndex(t => t.id === this.focusedId);
+                
+                // Determine the sort key bounds for insertion
+                // beforeKey = focused task's key (insert AFTER this)
+                // afterKey = next sibling's key (insert BEFORE this), or null if at end
+                const beforeKey = focusedTask?.sortKey ?? null;
+                const afterKey = (focusedIndex >= 0 && focusedIndex < siblings.length - 1)
+                    ? siblings[focusedIndex + 1].sortKey
+                    : null;
+                
+                // Generate keys between focused task and next sibling
+                const sortKeys = OrderingService.generateBulkKeys(
+                    beforeKey,
+                    afterKey,
+                    pastedSiblings.length
+                );
+                
+                pastedSiblings.forEach((task, index) => {
+                    task.sortKey = sortKeys[index];
+                });
+            } else {
+                // APPEND TO END (for nested children or when no focused task)
+                // This handles internal hierarchy within pasted content
+                const existingLastKey = this.taskStore.getLastSortKey(parentId);
+                
+                const sortKeys = OrderingService.generateBulkKeys(
+                    existingLastKey,
+                    null,
+                    pastedSiblings.length
+                );
+                
+                pastedSiblings.forEach((task, index) => {
+                    task.sortKey = sortKeys[index];
+                });
+            }
         });
 
         // 9. Append newTasks to existing tasks
@@ -2965,11 +3000,23 @@ export class SchedulerService {
         this.selectedIds.clear();
         newTasks.forEach(t => this.selectedIds.add(t.id));
         this.focusedId = newTasks[0]?.id || null;
+        this.anchorId = this.focusedId;
+
+        // Update selection in UI
+        this._updateSelection();
 
         // 12. recalculateAll() → saveData() → render()
         this.recalculateAll();
         this.saveData();
         this.render();
+
+        // Scroll to show the first pasted task
+        // Use requestAnimationFrame to ensure render completes before scrolling
+        if (this.grid && this.focusedId) {
+            requestAnimationFrame(() => {
+                this.grid?.scrollToTask(this.focusedId!);
+            });
+        }
 
         // 13. Show toast: "Pasted X task(s)" or "Moved X task(s)" for cut
         const message = wasCut 
