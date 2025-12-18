@@ -138,6 +138,13 @@ export class VirtualScrollGrid {
     // Drag state
     private _dragState: DragState | null = null;
     private _dragGhost: HTMLElement | null = null;
+    
+    // Drag UX improvements
+    private _lastDropPosition: 'before' | 'after' | 'child' | null = null;
+    private _lastDropTargetId: string | null = null;
+    private _lastDragOverTime: number = 0;
+    private readonly _dragThrottleMs: number = 32; // ~30fps updates
+    private readonly _hysteresisPixels: number = 6; // dead zone at boundaries
 
     // =========================================================================
     // CONSTRUCTOR
@@ -982,6 +989,7 @@ export class VirtualScrollGrid {
     
     /**
      * Handle drag end
+     * Cleans up all drag state including hysteresis tracking
      * @private
      */
     private _onDragEnd(_e: DragEvent): void {
@@ -993,13 +1001,22 @@ export class VirtualScrollGrid {
         // Clean up ghost
         this._removeDragGhost();
         
-        // Clear drag state
+        // Clear all drag state
         this._dragState = null;
+        
+        // Reset hysteresis state
+        this._lastDropPosition = null;
+        this._lastDropTargetId = null;
+        this._lastDragOverTime = 0;
     }
     
     /**
      * Handle drag over
-     * Enhanced with descendant validation to prevent invalid drops
+     * Enhanced with:
+     * - Adjusted zone thresholds (15/70/15 instead of 25/50/25)
+     * - Hysteresis to prevent flickering at boundaries
+     * - Throttling to reduce update frequency
+     * - Descendant validation to prevent invalid drops
      * @private
      */
     private _onDragOver(e: DragEvent): void {
@@ -1009,6 +1026,13 @@ export class VirtualScrollGrid {
         if (e.dataTransfer) {
             e.dataTransfer.dropEffect = 'move';
         }
+        
+        // Throttle updates for smoother experience
+        const now = performance.now();
+        if (now - this._lastDragOverTime < this._dragThrottleMs) {
+            return;
+        }
+        this._lastDragOverTime = now;
         
         const target = e.target as HTMLElement;
         const row = target.closest('.vsg-row') as HTMLElement | null;
@@ -1022,47 +1046,63 @@ export class VirtualScrollGrid {
             if (e.dataTransfer) {
                 e.dataTransfer.dropEffect = 'none';
             }
+            this._clearDropIndicators();
             return;
         }
         
         // Don't allow drop on descendants of dragged tasks
-        // This prevents circular references
         if (this._isDescendantOfDraggedTasks(targetTaskId)) {
             if (e.dataTransfer) {
                 e.dataTransfer.dropEffect = 'none';
             }
-            // Clear any drop indicators
-            this.dom.rows.forEach(r => {
-                r.classList.remove('drag-over-before', 'drag-over-after', 'drag-over-child');
-            });
+            this._clearDropIndicators();
             return;
         }
         
-        // Clear previous drop indicators
-        this.dom.rows.forEach(r => {
-            r.classList.remove('drag-over-before', 'drag-over-after', 'drag-over-child');
-        });
-        
-        // Determine drop position based on mouse position within row
+        // Calculate mouse position within row
         const rect = row.getBoundingClientRect();
         const y = e.clientY - rect.top;
         const height = rect.height;
         
-        if (y < height * 0.25) {
-            // Top quarter - insert before
-            row.classList.add('drag-over-before');
-            this._dragState.dropPosition = 'before';
-        } else if (y > height * 0.75) {
-            // Bottom quarter - insert after
-            row.classList.add('drag-over-after');
-            this._dragState.dropPosition = 'after';
+        // Zone thresholds (15% / 70% / 15%)
+        const beforeThreshold = height * 0.15;
+        const afterThreshold = height * 0.85;
+        
+        // Determine raw position based on mouse location
+        let rawPosition: 'before' | 'after' | 'child';
+        if (y < beforeThreshold) {
+            rawPosition = 'before';
+        } else if (y > afterThreshold) {
+            rawPosition = 'after';
         } else {
-            // Middle - make child
-            row.classList.add('drag-over-child');
-            this._dragState.dropPosition = 'child';
+            rawPosition = 'child';
         }
         
-        this._dragState.targetTaskId = targetTaskId;
+        // Apply hysteresis to prevent flickering at boundaries
+        const newPosition = this._applyHysteresis(
+            rawPosition, 
+            y, 
+            height, 
+            beforeThreshold, 
+            afterThreshold,
+            targetTaskId
+        );
+        
+        // Only update DOM if position actually changed
+        if (this._dragState.dropPosition !== newPosition || 
+            this._dragState.targetTaskId !== targetTaskId) {
+            
+            this._clearDropIndicators();
+            
+            // Apply new indicator
+            row.classList.add(`drag-over-${newPosition}`);
+            
+            // Update state
+            this._dragState.dropPosition = newPosition;
+            this._dragState.targetTaskId = targetTaskId;
+            this._lastDropPosition = newPosition;
+            this._lastDropTargetId = targetTaskId;
+        }
     }
     
     /**
@@ -1094,6 +1134,85 @@ export class VirtualScrollGrid {
     }
     
     /**
+     * Apply hysteresis to prevent flickering at zone boundaries
+     * Requires extra movement (hysteresis pixels) to switch zones
+     * @private
+     */
+    private _applyHysteresis(
+        rawPosition: 'before' | 'after' | 'child',
+        y: number,
+        height: number,
+        beforeThreshold: number,
+        afterThreshold: number,
+        targetTaskId: string
+    ): 'before' | 'after' | 'child' {
+        // If target changed, reset hysteresis
+        if (this._lastDropTargetId !== targetTaskId) {
+            return rawPosition;
+        }
+        
+        // If no previous position, use raw
+        if (!this._lastDropPosition) {
+            return rawPosition;
+        }
+        
+        // If same position, keep it
+        if (this._lastDropPosition === rawPosition) {
+            return rawPosition;
+        }
+        
+        const h = this._hysteresisPixels;
+        
+        // Apply hysteresis based on transition direction
+        switch (this._lastDropPosition) {
+            case 'before':
+                // Switching from 'before' to 'child' - require extra movement down
+                if (rawPosition === 'child' && y < beforeThreshold + h) {
+                    return 'before';
+                }
+                // Switching from 'before' to 'after' (skipping child) - allow if clearly in after zone
+                if (rawPosition === 'after' && y < afterThreshold + h) {
+                    return y < beforeThreshold + h ? 'before' : 'child';
+                }
+                break;
+                
+            case 'child':
+                // Switching from 'child' to 'before' - require extra movement up
+                if (rawPosition === 'before' && y > beforeThreshold - h) {
+                    return 'child';
+                }
+                // Switching from 'child' to 'after' - require extra movement down
+                if (rawPosition === 'after' && y < afterThreshold + h) {
+                    return 'child';
+                }
+                break;
+                
+            case 'after':
+                // Switching from 'after' to 'child' - require extra movement up
+                if (rawPosition === 'child' && y > afterThreshold - h) {
+                    return 'after';
+                }
+                // Switching from 'after' to 'before' (skipping child) - allow if clearly in before zone
+                if (rawPosition === 'before' && y > beforeThreshold - h) {
+                    return y > afterThreshold - h ? 'after' : 'child';
+                }
+                break;
+        }
+        
+        return rawPosition;
+    }
+    
+    /**
+     * Clear all drop indicators from rows
+     * @private
+     */
+    private _clearDropIndicators(): void {
+        this.dom.rows.forEach(r => {
+            r.classList.remove('drag-over-before', 'drag-over-after', 'drag-over-child');
+        });
+    }
+    
+    /**
      * Handle drag leave
      * @private
      */
@@ -1102,11 +1221,19 @@ export class VirtualScrollGrid {
         const row = target.closest('.vsg-row') as HTMLElement | null;
         if (!row) return;
         
-        // Only remove if actually leaving the row
+        // Only remove indicators if actually leaving the row (not entering a child element)
         const relatedTarget = e.relatedTarget as HTMLElement | null;
         const relatedRow = relatedTarget?.closest('.vsg-row') as HTMLElement | null;
+        
         if (relatedRow !== row) {
             row.classList.remove('drag-over-before', 'drag-over-after', 'drag-over-child');
+            
+            // If leaving to a different row, keep hysteresis for smooth transition
+            // If leaving the grid entirely, reset hysteresis
+            if (!relatedRow) {
+                this._lastDropPosition = null;
+                this._lastDropTargetId = null;
+            }
         }
     }
     

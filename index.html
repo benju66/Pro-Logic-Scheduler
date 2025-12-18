@@ -740,6 +740,9 @@
         /* ============================================================
            DRAG AND DROP
            ============================================================ */
+        /* ============================================================
+           DRAG AND DROP - Enhanced with smooth transitions
+           ============================================================ */
         .vsg-drag-handle {
             width: 100%;
             height: 100%;
@@ -748,49 +751,69 @@
             justify-content: center;
             cursor: grab;
             color: #cbd5e1;
-            transition: color 0.15s;
+            transition: color 0.15s ease;
         }
-        
+
         .vsg-drag-handle:hover {
             color: #6366f1;
         }
-        
+
         .vsg-drag-handle:active {
             cursor: grabbing;
         }
-        
+
         .vsg-row.dragging {
             opacity: 0.5;
             background: #f5f3ff !important;
         }
-        
-        .vsg-row.drag-over-before::before {
+
+        /* Row base - enable transitions for smooth indicator changes */
+        .vsg-row {
+            position: relative;
+            transition: background-color 0.1s ease, box-shadow 0.1s ease;
+        }
+
+        /* Before/After indicators using pseudo-elements with transitions */
+        .vsg-row::before,
+        .vsg-row::after {
             content: '';
             position: absolute;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: #6366f1;
+            z-index: 100;
+            opacity: 0;
+            transform: scaleX(0);
+            transition: opacity 0.1s ease, transform 0.1s ease;
+        }
+
+        .vsg-row::before {
             top: -1px;
-            left: 0;
-            right: 0;
-            height: 2px;
-            background: #6366f1;
-            z-index: 100;
         }
-        
-        .vsg-row.drag-over-after::after {
-            content: '';
-            position: absolute;
+
+        .vsg-row::after {
             bottom: -1px;
-            left: 0;
-            right: 0;
-            height: 2px;
-            background: #6366f1;
-            z-index: 100;
         }
-        
+
+        /* Active indicators - fade and scale in */
+        .vsg-row.drag-over-before::before {
+            opacity: 1;
+            transform: scaleX(1);
+        }
+
+        .vsg-row.drag-over-after::after {
+            opacity: 1;
+            transform: scaleX(1);
+        }
+
+        /* Child indicator - smooth background and shadow transition */
         .vsg-row.drag-over-child {
             background: #f5f3ff !important;
             box-shadow: inset 0 0 0 2px #6366f1;
         }
-        
+
+        /* Drag ghost styling */
         .drag-ghost {
             position: fixed;
             pointer-events: none;
@@ -802,21 +825,26 @@
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
             font-size: 13px;
             color: #1e293b;
-            max-width: 300px;
+            max-width: 250px;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         }
-        
+
         .drag-ghost .drag-count {
             display: inline-block;
+            margin-left: 8px;
+            padding: 2px 6px;
             background: #6366f1;
             color: white;
+            border-radius: 10px;
             font-size: 11px;
             font-weight: 600;
-            padding: 2px 6px;
-            border-radius: 10px;
-            margin-left: 8px;
+        }
+
+        /* Ensure no transition during actual dragging of the row itself */
+        .vsg-row.dragging {
+            transition: none;
         }
         
         /* ============================================================

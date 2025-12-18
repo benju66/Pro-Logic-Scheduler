@@ -36,6 +36,13 @@ export class GridRenderer {
     private editingCell: EditingCell | null = null;
     private editingRows: Set<string> = new Set();
     private isScrolling: boolean = false;
+    
+    // Drag UX state
+    private _lastDropPosition: 'before' | 'after' | 'child' | null = null;
+    private _lastDropTargetId: string | null = null;
+    private _lastDragOverTime: number = 0;
+    private readonly _dragThrottleMs: number = 32;
+    private readonly _hysteresisPixels: number = 6;
 
     constructor(options: GridRendererOptions) {
         this.container = options.container;
@@ -610,16 +617,29 @@ export class GridRenderer {
         rows.forEach(row => {
             row.classList.remove('dragging', 'drag-over-before', 'drag-over-after', 'drag-over-child');
         });
+        
+        // Reset hysteresis state
+        this._lastDropPosition = null;
+        this._lastDropTargetId = null;
+        this._lastDragOverTime = 0;
     }
 
     /**
      * Handle drag over
+     * Enhanced with throttling and hysteresis for smoother UX
      */
     private _onDragOver(e: DragEvent): void {
         e.preventDefault();
         if (e.dataTransfer) {
             e.dataTransfer.dropEffect = 'move';
         }
+
+        // Throttle updates
+        const now = performance.now();
+        if (now - this._lastDragOverTime < this._dragThrottleMs) {
+            return;
+        }
+        this._lastDragOverTime = now;
 
         const target = e.target as HTMLElement;
         const row = target.closest('.vsg-row') as HTMLElement | null;
@@ -636,27 +656,115 @@ export class GridRenderer {
             if (e.dataTransfer) {
                 e.dataTransfer.dropEffect = 'none';
             }
+            this._clearDropIndicators();
             return;
         }
 
-        // Clear previous drop indicators
-        const rows = this.rowContainer.querySelectorAll('.vsg-row');
-        rows.forEach(r => {
-            r.classList.remove('drag-over-before', 'drag-over-after', 'drag-over-child');
-        });
-
-        // Determine drop position based on mouse position
+        // Calculate position
         const rect = row.getBoundingClientRect();
         const y = e.clientY - rect.top;
         const height = rect.height;
 
-        if (y < height * 0.25) {
-            row.classList.add('drag-over-before');
-        } else if (y > height * 0.75) {
-            row.classList.add('drag-over-after');
+        // Zone thresholds (15% / 70% / 15%)
+        const beforeThreshold = height * 0.15;
+        const afterThreshold = height * 0.85;
+
+        // Determine raw position
+        let rawPosition: 'before' | 'after' | 'child';
+        if (y < beforeThreshold) {
+            rawPosition = 'before';
+        } else if (y > afterThreshold) {
+            rawPosition = 'after';
         } else {
-            row.classList.add('drag-over-child');
+            rawPosition = 'child';
         }
+
+        // Apply hysteresis
+        const newPosition = this._applyHysteresis(
+            rawPosition,
+            y,
+            height,
+            beforeThreshold,
+            afterThreshold,
+            targetTaskId
+        );
+
+        // Only update if changed
+        if (this._lastDropPosition !== newPosition || this._lastDropTargetId !== targetTaskId) {
+            this._clearDropIndicators();
+            row.classList.add(`drag-over-${newPosition}`);
+            this._lastDropPosition = newPosition;
+            this._lastDropTargetId = targetTaskId;
+        }
+    }
+    
+    /**
+     * Apply hysteresis to prevent flickering
+     * @private
+     */
+    private _applyHysteresis(
+        rawPosition: 'before' | 'after' | 'child',
+        y: number,
+        _height: number,
+        beforeThreshold: number,
+        afterThreshold: number,
+        targetTaskId: string
+    ): 'before' | 'after' | 'child' {
+        if (this._lastDropTargetId !== targetTaskId) {
+            return rawPosition;
+        }
+        
+        if (!this._lastDropPosition) {
+            return rawPosition;
+        }
+        
+        if (this._lastDropPosition === rawPosition) {
+            return rawPosition;
+        }
+        
+        const h = this._hysteresisPixels;
+        
+        switch (this._lastDropPosition) {
+            case 'before':
+                if (rawPosition === 'child' && y < beforeThreshold + h) {
+                    return 'before';
+                }
+                if (rawPosition === 'after' && y < afterThreshold + h) {
+                    return y < beforeThreshold + h ? 'before' : 'child';
+                }
+                break;
+                
+            case 'child':
+                if (rawPosition === 'before' && y > beforeThreshold - h) {
+                    return 'child';
+                }
+                if (rawPosition === 'after' && y < afterThreshold + h) {
+                    return 'child';
+                }
+                break;
+                
+            case 'after':
+                if (rawPosition === 'child' && y > afterThreshold - h) {
+                    return 'after';
+                }
+                if (rawPosition === 'before' && y > beforeThreshold - h) {
+                    return y > afterThreshold - h ? 'after' : 'child';
+                }
+                break;
+        }
+        
+        return rawPosition;
+    }
+    
+    /**
+     * Clear all drop indicators
+     * @private
+     */
+    private _clearDropIndicators(): void {
+        const rows = this.rowContainer.querySelectorAll('.vsg-row');
+        rows.forEach(r => {
+            r.classList.remove('drag-over-before', 'drag-over-after', 'drag-over-child');
+        });
     }
 
     /**
@@ -669,8 +777,14 @@ export class GridRenderer {
 
         const relatedTarget = e.relatedTarget as HTMLElement | null;
         const relatedRow = relatedTarget?.closest('.vsg-row') as HTMLElement | null;
+        
         if (relatedRow !== row) {
             row.classList.remove('drag-over-before', 'drag-over-after', 'drag-over-child');
+            
+            if (!relatedRow) {
+                this._lastDropPosition = null;
+                this._lastDropTargetId = null;
+            }
         }
     }
 
@@ -701,10 +815,14 @@ export class GridRenderer {
         const y = e.clientY - rect.top;
         const height = rect.height;
 
+        // Zone thresholds (15% / 70% / 15%)
+        const beforeThreshold = height * 0.15;
+        const afterThreshold = height * 0.85;
+
         let position: 'before' | 'after' | 'child';
-        if (y < height * 0.25) {
+        if (y < beforeThreshold) {
             position = 'before';
-        } else if (y > height * 0.75) {
+        } else if (y > afterThreshold) {
             position = 'after';
         } else {
             position = 'child';
