@@ -15,6 +15,7 @@ export interface KeyboardServiceOptions {
   onPaste?: () => void;
   onInsert?: () => void;
   onShiftInsert?: () => void;
+  onCtrlEnter?: () => void;
   onArrowUp?: (shiftKey: boolean, ctrlKey: boolean) => void;
   onArrowDown?: (shiftKey: boolean, ctrlKey: boolean) => void;
   onArrowLeft?: () => void;
@@ -101,6 +102,24 @@ export class KeyboardService {
     if ((isCtrl && e.key === 'y') || (isCtrl && e.shiftKey && e.key === 'z')) {
       e.preventDefault();
       if (this.options.onRedo) this.options.onRedo();
+      return;
+    }
+
+    // Ctrl+Enter: Add child task (works even when editing - saves and adds child)
+    if (isCtrl && e.key === 'Enter') {
+      e.preventDefault();
+      
+      // If editing, blur the input first to save the current edit
+      if (isEditing) {
+        (e.target as HTMLElement).blur();
+      }
+      
+      if (this.options.onCtrlEnter) {
+        // Small delay to ensure blur/save completes
+        setTimeout(() => {
+          this.options.onCtrlEnter!();
+        }, 50);
+      }
       return;
     }
 

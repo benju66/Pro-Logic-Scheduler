@@ -435,6 +435,7 @@ export class SchedulerService {
             onPaste: () => this.paste(),
             onInsert: () => this.insertTaskBelow(),
             onShiftInsert: () => this.insertTaskAbove(),
+            onCtrlEnter: () => this.addChildTask(),
             onArrowUp: (shiftKey, ctrlKey) => this._handleArrowNavigation('ArrowUp', shiftKey, ctrlKey),
             onArrowDown: (shiftKey, ctrlKey) => this._handleArrowNavigation('ArrowDown', shiftKey, ctrlKey),
             onArrowLeft: () => this._handleArrowCollapse('ArrowLeft'),
@@ -2913,6 +2914,101 @@ export class SchedulerService {
         this.render();
         
         this.toastService.success('Task inserted');
+    }
+
+    /**
+     * Add a new task as a CHILD of the currently focused task
+     * If focused task has no children, this is the first child
+     * If focused task has children, appends to end of children
+     * If no task is focused, behaves like addTask() (adds to root)
+     */
+    addChildTask(): void {
+        // Guard: Don't allow task creation during initialization
+        if (!this.isInitialized) {
+            console.log('[SchedulerService] ⚠️ addChildTask() blocked - not initialized');
+            return;
+        }
+        
+        // If no focused task, just add to root level
+        if (!this.focusedId) {
+            this.addTask();
+            return;
+        }
+        
+        const parentTask = this.taskStore.getById(this.focusedId);
+        if (!parentTask) {
+            this.addTask();
+            return;
+        }
+        
+        this.saveCheckpoint();
+        
+        // The focused task becomes the parent
+        const newParentId = this.focusedId;
+        
+        // Get existing children of this parent (sorted by sortKey)
+        const existingChildren = this.taskStore.getChildren(newParentId);
+        
+        // Generate sortKey - append after last child (or first child if none)
+        const lastChildKey = existingChildren.length > 0 
+            ? existingChildren[existingChildren.length - 1].sortKey 
+            : null;
+        const sortKey = OrderingService.generateInsertKey(lastChildKey, null);
+        
+        const today = DateUtils.today();
+        
+        // Create new task as child
+        const newTask: Task = {
+            id: `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: 'New Task',
+            start: today,
+            end: today,
+            duration: 1,
+            parentId: newParentId,  // KEY: Set parent to focused task
+            dependencies: [],
+            progress: 0,
+            constraintType: 'asap',
+            constraintDate: null,
+            notes: '',
+            level: (parentTask.level || 0) + 1,  // Increment level
+            sortKey: sortKey,
+            _collapsed: false,
+        } as Task;
+        
+        // Ensure parent is expanded so child is visible
+        if (parentTask._collapsed) {
+            this.taskStore.update(newParentId, { _collapsed: false });
+        }
+        
+        // Add to store
+        const allTasks = this.taskStore.getAll();
+        this.taskStore.setAll([...allTasks, newTask]);
+        
+        // Focus the new task
+        this.selectedIds.clear();
+        this.selectedIds.add(newTask.id);
+        this.focusedId = newTask.id;
+        
+        // Update selection with focusCell to immediately enter edit mode
+        if (this.grid) {
+            this.grid.setSelection(this.selectedIds, this.focusedId, { focusCell: true, focusField: 'name' });
+        }
+        if (this.gantt) {
+            this.gantt.setSelection(this.selectedIds);
+        }
+        this._updateHeaderCheckboxState();
+        
+        // Recalculate (parent becomes summary task if it wasn't already)
+        this.recalculateAll();
+        this.saveData();
+        this.render();
+        
+        // Scroll to new task
+        if (this.grid) {
+            this.grid.scrollToTask(newTask.id);
+        }
+        
+        this.toastService.success('Child task added');
     }
 
     /**
