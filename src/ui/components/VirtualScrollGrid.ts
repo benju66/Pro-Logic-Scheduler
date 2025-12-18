@@ -999,6 +999,7 @@ export class VirtualScrollGrid {
     
     /**
      * Handle drag over
+     * Enhanced with descendant validation to prevent invalid drops
      * @private
      */
     private _onDragOver(e: DragEvent): void {
@@ -1017,7 +1018,25 @@ export class VirtualScrollGrid {
         if (!targetTaskId) return;
         
         // Don't allow drop on self
-        if (this._dragState.taskIds.includes(targetTaskId)) return;
+        if (this._dragState.taskIds.includes(targetTaskId)) {
+            if (e.dataTransfer) {
+                e.dataTransfer.dropEffect = 'none';
+            }
+            return;
+        }
+        
+        // Don't allow drop on descendants of dragged tasks
+        // This prevents circular references
+        if (this._isDescendantOfDraggedTasks(targetTaskId)) {
+            if (e.dataTransfer) {
+                e.dataTransfer.dropEffect = 'none';
+            }
+            // Clear any drop indicators
+            this.dom.rows.forEach(r => {
+                r.classList.remove('drag-over-before', 'drag-over-after', 'drag-over-child');
+            });
+            return;
+        }
         
         // Clear previous drop indicators
         this.dom.rows.forEach(r => {
@@ -1044,6 +1063,34 @@ export class VirtualScrollGrid {
         }
         
         this._dragState.targetTaskId = targetTaskId;
+    }
+    
+    /**
+     * Check if a task is a descendant of any dragged tasks
+     * @private
+     * @param taskId - Task ID to check
+     * @returns True if taskId is a descendant of any task being dragged
+     */
+    private _isDescendantOfDraggedTasks(taskId: string): boolean {
+        if (!this._dragState) return false;
+        
+        const draggedIds = new Set(this._dragState.taskIds);
+        
+        // Walk up the parent chain from taskId
+        let currentId: string | null = taskId;
+        while (currentId) {
+            const task = this.data.find(t => t.id === currentId);
+            if (!task) break;
+            
+            // Check if current task's parent is one of the dragged tasks
+            if (task.parentId && draggedIds.has(task.parentId)) {
+                return true;
+            }
+            
+            currentId = task.parentId ?? null;
+        }
+        
+        return false;
     }
     
     /**

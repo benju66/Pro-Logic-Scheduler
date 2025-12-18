@@ -628,13 +628,24 @@ export class GridRenderer {
         const targetTaskId = row.dataset.taskId;
         if (!targetTaskId) return;
 
+        // Get dragged task ID from dataTransfer
+        const dragData = e.dataTransfer?.getData('text/plain');
+        
+        // Don't allow drop on self
+        if (dragData && this.selectedIds.has(dragData) && this.selectedIds.has(targetTaskId)) {
+            if (e.dataTransfer) {
+                e.dataTransfer.dropEffect = 'none';
+            }
+            return;
+        }
+
         // Clear previous drop indicators
         const rows = this.rowContainer.querySelectorAll('.vsg-row');
         rows.forEach(r => {
             r.classList.remove('drag-over-before', 'drag-over-after', 'drag-over-child');
         });
 
-        // Determine drop position
+        // Determine drop position based on mouse position
         const rect = row.getBoundingClientRect();
         const y = e.clientY - rect.top;
         const height = rect.height;
@@ -690,11 +701,13 @@ export class GridRenderer {
         const y = e.clientY - rect.top;
         const height = rect.height;
 
-        let position: 'before' | 'after' = 'after';
+        let position: 'before' | 'after' | 'child';
         if (y < height * 0.25) {
             position = 'before';
         } else if (y > height * 0.75) {
             position = 'after';
+        } else {
+            position = 'child';
         }
 
         if (this.options.onRowMove) {

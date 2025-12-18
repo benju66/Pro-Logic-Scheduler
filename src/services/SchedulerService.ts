@@ -1721,14 +1721,208 @@ export class SchedulerService {
 
     /**
      * Handle row move (drag and drop)
+     * 
+     * Supports three drop positions:
+     * - 'before': Insert dragged tasks before target (same parent level)
+     * - 'after': Insert dragged tasks after target (same parent level)
+     * - 'child': Make dragged tasks children of target (indent)
+     * 
+     * When dragging parent tasks, all descendants move with them.
+     * Uses fractional indexing (sortKey) to avoid renumbering other tasks.
+     * 
      * @private
-     * @param taskIds - Task IDs being moved
-     * @param targetId - Target task ID
+     * @param taskIds - Task IDs being moved (may include multiple selected)
+     * @param targetId - Target task ID to drop on/near
      * @param position - 'before', 'after', or 'child'
      */
     private _handleRowMove(taskIds: string[], targetId: string, position: 'before' | 'after' | 'child'): void {
-        // TODO: Implement drag and drop reordering
-        this.toastService.info('Drag and drop reordering coming soon');
+        // =========================================================================
+        // VALIDATION
+        // =========================================================================
+        
+        // Guard: No tasks to move
+        if (!taskIds || taskIds.length === 0) {
+            return;
+        }
+        
+        // Guard: No valid target
+        const targetTask = this.taskStore.getById(targetId);
+        if (!targetTask) {
+            this.toastService.warning('Invalid drop target');
+            return;
+        }
+        
+        // Guard: Can't drop on self
+        if (taskIds.includes(targetId)) {
+            return;
+        }
+        
+        // =========================================================================
+        // COLLECT ALL TASKS TO MOVE (including descendants)
+        // =========================================================================
+        
+        const selectedSet = new Set(taskIds);
+        
+        // Find "top-level" selected tasks (tasks whose parent is NOT also selected)
+        // This is the same pattern used in indentSelection()
+        const topLevelSelected = taskIds
+            .map(id => this.taskStore.getById(id))
+            .filter((t): t is Task => t !== undefined)
+            .filter(task => !task.parentId || !selectedSet.has(task.parentId));
+        
+        if (topLevelSelected.length === 0) {
+            return;
+        }
+        
+        // Collect all tasks to move (top-level + all their descendants)
+        // This ensures parent tasks bring their children along
+        const tasksToMove = new Set<Task>();
+        const taskIdsToMove = new Set<string>();
+        
+        const collectDescendants = (task: Task): void => {
+            tasksToMove.add(task);
+            taskIdsToMove.add(task.id);
+            
+            // Recursively collect all descendants
+            this.taskStore.getChildren(task.id).forEach(child => {
+                collectDescendants(child);
+            });
+        };
+        
+        topLevelSelected.forEach(task => collectDescendants(task));
+        
+        // =========================================================================
+        // VALIDATE: Prevent circular reference (can't drop parent onto descendant)
+        // =========================================================================
+        
+        if (taskIdsToMove.has(targetId)) {
+            this.toastService.warning('Cannot drop a task onto its own descendant');
+            return;
+        }
+        
+        // Also check if target is inside any task being moved
+        let checkParent = targetTask.parentId;
+        while (checkParent) {
+            if (taskIdsToMove.has(checkParent)) {
+                this.toastService.warning('Cannot drop a task onto its own descendant');
+                return;
+            }
+            const parent = this.taskStore.getById(checkParent);
+            checkParent = parent?.parentId ?? null;
+        }
+        
+        // =========================================================================
+        // SAVE CHECKPOINT FOR UNDO
+        // =========================================================================
+        
+        this.saveCheckpoint();
+        
+        // =========================================================================
+        // DETERMINE NEW PARENT AND SORT KEY POSITION
+        // =========================================================================
+        
+        let newParentId: string | null;
+        let beforeKey: string | null;
+        let afterKey: string | null;
+        
+        if (position === 'child') {
+            // =====================================================================
+            // CHILD POSITION: Make dragged tasks children of target
+            // =====================================================================
+            newParentId = targetId;
+            
+            // Append to end of target's children
+            const existingChildren = this.taskStore.getChildren(targetId);
+            beforeKey = existingChildren.length > 0 
+                ? existingChildren[existingChildren.length - 1].sortKey ?? null 
+                : null;
+            afterKey = null;
+            
+            // If target was collapsed, expand it to show the newly added children
+            if (targetTask._collapsed) {
+                this.taskStore.update(targetId, { _collapsed: false });
+            }
+            
+        } else if (position === 'before') {
+            // =====================================================================
+            // BEFORE POSITION: Insert before target (same parent level)
+            // =====================================================================
+            newParentId = targetTask.parentId ?? null;
+            
+            // Get siblings at target's level
+            const siblings = this.taskStore.getChildren(newParentId);
+            const targetIndex = siblings.findIndex(t => t.id === targetId);
+            
+            // beforeKey = previous sibling's key (or null if first)
+            beforeKey = targetIndex > 0 ? siblings[targetIndex - 1].sortKey ?? null : null;
+            // afterKey = target's key
+            afterKey = targetTask.sortKey ?? null;
+            
+        } else {
+            // =====================================================================
+            // AFTER POSITION: Insert after target (same parent level)
+            // =====================================================================
+            newParentId = targetTask.parentId ?? null;
+            
+            // Get siblings at target's level
+            const siblings = this.taskStore.getChildren(newParentId);
+            const targetIndex = siblings.findIndex(t => t.id === targetId);
+            
+            // beforeKey = target's key
+            beforeKey = targetTask.sortKey ?? null;
+            // afterKey = next sibling's key (or null if last)
+            afterKey = targetIndex < siblings.length - 1 
+                ? siblings[targetIndex + 1].sortKey ?? null 
+                : null;
+        }
+        
+        // =========================================================================
+        // GENERATE SORT KEYS FOR MOVED TASKS
+        // =========================================================================
+        
+        // Generate keys for top-level selected tasks (they get inserted at the drop position)
+        const sortKeys = OrderingService.generateBulkKeys(
+            beforeKey,
+            afterKey,
+            topLevelSelected.length
+        );
+        
+        // =========================================================================
+        // UPDATE TOP-LEVEL TASKS (change parentId and sortKey)
+        // =========================================================================
+        
+        topLevelSelected.forEach((task, index) => {
+            this.taskStore.update(task.id, {
+                parentId: newParentId,
+                sortKey: sortKeys[index]
+            });
+        });
+        
+        // NOTE: Descendants keep their parentId unchanged (they stay as children of their original parent)
+        // They will automatically move with their parent because the hierarchy is preserved
+        
+        // =========================================================================
+        // RECALCULATE, SAVE, AND RENDER
+        // =========================================================================
+        
+        this.recalculateAll();
+        this.saveData();
+        this.render();
+        
+        // =========================================================================
+        // USER FEEDBACK
+        // =========================================================================
+        
+        const totalMoved = tasksToMove.size;
+        const topLevelCount = topLevelSelected.length;
+        
+        if (totalMoved === 1) {
+            this.toastService.success('Task moved');
+        } else if (totalMoved === topLevelCount) {
+            this.toastService.success(`Moved ${totalMoved} tasks`);
+        } else {
+            this.toastService.success(`Moved ${topLevelCount} task(s) with ${totalMoved - topLevelCount} children`);
+        }
     }
 
     /**
