@@ -198,7 +198,7 @@ export class GanttRenderer {
         headerWrapper.className = 'cg-header-wrapper';
         headerWrapper.style.cssText = `
             position: relative;
-            height: ${this.headerHeight}px;
+            height: 50px;
             flex-shrink: 0;
             overflow: hidden;
         `;

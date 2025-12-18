@@ -11,7 +11,7 @@ export const ROW_HEIGHT = 38;
 /**
  * Header height in pixels
  */
-export const HEADER_HEIGHT = 60;
+export const HEADER_HEIGHT = 50;
 
 /**
  * Default buffer rows (extra rows above/below viewport)

@@ -129,11 +129,14 @@ export class SchedulerViewport {
         // Create scroll content wrappers that define the scroll height
         // These will be inserted AFTER renderers build their DOM
         // Store references so we can update their height later
-        // CRITICAL: Must be position: relative (not absolute) to contribute to scroll height
+        // CRITICAL: Must be position: absolute (not relative) to prevent pushing rows down
         this.scrollContent = document.createElement('div');
         this.scrollContent.className = 'scheduler-scroll-content';
         this.scrollContent.style.cssText = `
-            position: relative;
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
             width: 100%;
             min-height: 0;
             pointer-events: none;
