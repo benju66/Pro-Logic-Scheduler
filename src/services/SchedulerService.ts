@@ -334,8 +334,8 @@ export class SchedulerService {
         return {
             setData: (tasks: Task[]) => viewport.setData(tasks),
             setVisibleData: (tasks: Task[]) => viewport.setVisibleData(tasks),
-            setSelection: (selectedIds: Set<string>, focusedId?: string | null) => {
-                viewport.setSelection([...selectedIds], focusedId ?? null);
+            setSelection: (selectedIds: Set<string>, focusedId?: string | null, options?: { focusCell?: boolean; focusField?: string }) => {
+                viewport.setSelection([...selectedIds], focusedId ?? null, options);
             },
             scrollToTask: (taskId: string) => viewport.scrollToTask(taskId),
             focusCell: (taskId: string, field: string) => {
@@ -2317,15 +2317,20 @@ export class SchedulerService {
             this.selectedIds.clear();
             this.selectedIds.add(task.id);
             this.focusedId = task.id;
-            this._updateSelection();
+            
+            // Pass focusCell: true to focus the name input for immediate editing
+            if (this.grid) {
+                this.grid.setSelection(this.selectedIds, this.focusedId, { focusCell: true, focusField: 'name' });
+            }
+            if (this.gantt) {
+                this.gantt.setSelection(this.selectedIds);
+            }
+            this._updateHeaderCheckboxState();
             
             // Recalculate and render
             this.recalculateAll();
             this.saveData();
             this.render();
-            
-            // Scroll to new task with robust retry
-            this._scrollToTaskAndFocus(task.id, 'name');
             
             this.toastService?.success('Task added');
             return task;
@@ -2576,19 +2581,20 @@ export class SchedulerService {
         this.selectedIds.clear();
         this.selectedIds.add(newTask.id);
         this.focusedId = newTask.id;
-        this._updateSelection();
+        
+        // Pass focusCell: true to focus the name input for immediate editing
+        if (this.grid) {
+            this.grid.setSelection(this.selectedIds, this.focusedId, { focusCell: true, focusField: 'name' });
+        }
+        if (this.gantt) {
+            this.gantt.setSelection(this.selectedIds);
+        }
+        this._updateHeaderCheckboxState();
         
         // Recalculate and render
         this.recalculateAll();
         this.saveData();
         this.render();
-        
-        // Scroll to new task
-        requestAnimationFrame(() => {
-            if (this.grid) {
-                this.grid.scrollToTask(newTask.id);
-            }
-        });
         
         this.toastService.success('Task inserted');
     }

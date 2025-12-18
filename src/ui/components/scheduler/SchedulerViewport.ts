@@ -15,6 +15,16 @@ import { GanttRenderer } from './GanttRenderer';
 import { ROW_HEIGHT, HEADER_HEIGHT, DEFAULT_BUFFER_ROWS, ERROR_CONFIG } from './constants';
 
 /**
+ * Options for setSelection behavior
+ */
+export interface SetSelectionOptions {
+    /** If true, focus the cell for editing (scroll to task and focus input). Default: false */
+    focusCell?: boolean;
+    /** The field to focus when focusCell is true. Default: 'name' */
+    focusField?: string;
+}
+
+/**
  * Scheduler Viewport - Master Controller
  */
 export class SchedulerViewport {
@@ -586,8 +596,11 @@ export class SchedulerViewport {
 
     /**
      * Set selection state
+     * @param taskIds - Array of selected task IDs
+     * @param focusedId - The task ID that should be considered "focused" (for keyboard navigation anchor)
+     * @param options - Optional behavior configuration
      */
-    setSelection(taskIds: string[], focusedId?: string | null): void {
+    setSelection(taskIds: string[], focusedId?: string | null, options?: SetSelectionOptions): void {
         // Guard: Don't process selection if destroyed
         if (this.isDestroyed) return;
 
@@ -596,11 +609,12 @@ export class SchedulerViewport {
         // Update both renderers
         if (this.gridRenderer) {
             this.gridRenderer.setSelection(taskIds);
-            // Focus cell if focusedId is provided
-            if (focusedId && taskIds.includes(focusedId)) {
-                // Use requestAnimationFrame to ensure DOM is ready
+            
+            // Only focus cell if explicitly requested (e.g., after adding a task or pressing F2)
+            if (options?.focusCell && focusedId && taskIds.includes(focusedId)) {
+                const field = options.focusField ?? 'name';
                 requestAnimationFrame(() => {
-                    this.gridRenderer?.focusCell(focusedId, 'name');
+                    this.gridRenderer?.focusCell(focusedId, field);
                 });
             }
         }

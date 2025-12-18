@@ -1907,11 +1907,15 @@ export class VirtualScrollGrid {
      * Update selection state
      * @param selectedIds - Set of selected task IDs
      * @param focusedId - Currently focused task ID
+     * @param options - Optional focus behavior
      */
-    setSelection(selectedIds: Set<string>, focusedId: string | null = null): void {
+    setSelection(selectedIds: Set<string>, focusedId: string | null = null, options?: { focusCell?: boolean; focusField?: string }): void {
         this.selectedIds = selectedIds;
         this.focusedId = focusedId;
         this._updateVisibleRows(); // Re-render to show selection
+        
+        // Note: VirtualScrollGrid doesn't handle focusCell here - that's done by SchedulerViewport
+        // This maintains backward compatibility if VirtualScrollGrid is used directly
     }
 
     /**
