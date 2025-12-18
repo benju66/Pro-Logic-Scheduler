@@ -185,6 +185,11 @@ export class GanttRenderer {
         
         this._bindEvents();
         this._measure();
+
+        // Initialize header canvas transform to match initial scroll position
+        if (this.dom.headerCanvas) {
+            this.dom.headerCanvas.style.transform = `translateX(-${this.scrollX}px)`;
+        }
     }
 
     /**
@@ -232,6 +237,7 @@ export class GanttRenderer {
             position: absolute;
             top: 0;
             left: 0;
+            will-change: transform;
         `;
         headerWrapper.appendChild(headerCanvas);
         const headerCtx = headerCanvas.getContext('2d');
@@ -282,12 +288,16 @@ export class GanttRenderer {
             scrollContent,
         };
 
-        // Sync header scroll with main canvas scroll
+        // Sync header scroll with main canvas scroll using CSS transform
+        // IMPORTANT: We use transform because the header canvas is position:absolute,
+        // which means scrollLeft has no visual effect on it. Transform physically moves it.
         scrollContainer.addEventListener('scroll', () => {
-            if (headerWrapper) {
-                headerWrapper.scrollLeft = scrollContainer.scrollLeft;
-            }
-            this.scrollX = scrollContainer.scrollLeft;
+            const scrollX = scrollContainer.scrollLeft;
+            
+            // Move header canvas using transform (works with position:absolute)
+            this.dom.headerCanvas.style.transform = `translateX(-${scrollX}px)`;
+            
+            this.scrollX = scrollX;
             this._renderHeader();
             this.dirty = true;
         }, { passive: true });
@@ -397,6 +407,11 @@ export class GanttRenderer {
         // Update scroll content size
         this.totalContentHeight = totalContentHeight;
         this._updateScrollContentSize();
+
+        // Keep header transform in sync after resize
+        if (this.dom.headerCanvas) {
+            this.dom.headerCanvas.style.transform = `translateX(-${this.scrollX}px)`;
+        }
     }
 
     /**
@@ -512,16 +527,24 @@ export class GanttRenderer {
         const ppd = this.pixelsPerDay;
         const height = this.headerHeight;
 
-        for (let i = 0; i <= totalDays; i++) {
-            const date = this._addDays(startDate, i);
+        const dayColumnCount = this._getDayColumnCount();
+        const canvasWidth = this.dom.headerCanvas.width / (window.devicePixelRatio || 1);
+
+        for (let i = 0; i <= dayColumnCount; i++) {
             const x = i * ppd;
+            
+            // Don't render beyond canvas width
+            if (x > canvasWidth) break;
+            
+            const date = this._addDays(startDate, i);
             const dayOfWeek = date.getDay();
             const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
-            // Draw cell background
-            if (isWeekend) {
+            // Draw cell background (for day columns, not the boundary line)
+            if (i < dayColumnCount && isWeekend) {
+                const bgWidth = Math.min(ppd, canvasWidth - x);
                 ctx.fillStyle = GanttRenderer.COLORS.weekendBg;
-                ctx.fillRect(x, 0, ppd, height);
+                ctx.fillRect(x, 0, bgWidth, height);
             }
 
             // Draw vertical line
@@ -531,10 +554,12 @@ export class GanttRenderer {
             ctx.lineTo(x + 0.5, height);
             ctx.stroke();
 
-            // Draw label
-            ctx.fillStyle = GanttRenderer.COLORS.headerText;
-            const label = this._formatDate(date, 'day');
-            ctx.fillText(label, x + ppd / 2, height / 2);
+            // Draw label (only for day columns, not the final boundary)
+            if (i < dayColumnCount) {
+                ctx.fillStyle = GanttRenderer.COLORS.headerText;
+                const label = this._formatDate(date, 'day');
+                ctx.fillText(label, x + ppd / 2, height / 2);
+            }
         }
     }
 
@@ -545,17 +570,25 @@ export class GanttRenderer {
         const ppd = this.pixelsPerDay;
         const height = this.headerHeight;
 
-        for (let i = 0; i <= totalDays; i++) {
-            const date = this._addDays(startDate, i);
+        const dayColumnCount = this._getDayColumnCount();
+        const canvasWidth = this.dom.headerCanvas.width / (window.devicePixelRatio || 1);
+
+        for (let i = 0; i <= dayColumnCount; i++) {
             const x = i * ppd;
+            
+            // Don't render beyond canvas width
+            if (x > canvasWidth) break;
+            
+            const date = this._addDays(startDate, i);
             const dayOfWeek = date.getDay();
             const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
             const isMonday = dayOfWeek === 1;
 
-            // Weekend background
-            if (isWeekend) {
+            // Weekend background (for day columns, not the boundary line)
+            if (i < dayColumnCount && isWeekend) {
+                const bgWidth = Math.min(ppd, canvasWidth - x);
                 ctx.fillStyle = GanttRenderer.COLORS.weekendBg;
-                ctx.fillRect(x, 0, ppd, height);
+                ctx.fillRect(x, 0, bgWidth, height);
             }
 
             // Vertical grid lines
@@ -566,10 +599,10 @@ export class GanttRenderer {
             ctx.lineTo(x + 0.5, height);
             ctx.stroke();
 
-            // Week label on Monday
-            if (isMonday) {
+            // Week label on Monday (only for day columns)
+            if (i < dayColumnCount && isMonday) {
                 ctx.fillStyle = GanttRenderer.COLORS.headerText;
-                const weekWidth = 7 * ppd;
+                const weekWidth = Math.min(7 * ppd, canvasWidth - x);
                 const label = this._formatDate(date, 'week');
                 ctx.fillText(label, x + weekWidth / 2, height / 2);
             }
@@ -583,12 +616,28 @@ export class GanttRenderer {
         const ppd = this.pixelsPerDay;
         const height = this.headerHeight;
 
+        const dayColumnCount = this._getDayColumnCount();
+        const canvasWidth = this.dom.headerCanvas.width / (window.devicePixelRatio || 1);
+
         let lastMonth = -1;
         let monthStartX = 0;
 
-        for (let i = 0; i <= totalDays; i++) {
-            const date = this._addDays(startDate, i);
+        for (let i = 0; i <= dayColumnCount; i++) {
             const x = i * ppd;
+            
+            // Don't render beyond canvas width
+            if (x > canvasWidth) {
+                // Draw label for final visible month before breaking
+                if (lastMonth !== -1) {
+                    const lastDate = this._addDays(startDate, i - 1);
+                    const label = this._formatDate(lastDate, 'month');
+                    ctx.fillStyle = GanttRenderer.COLORS.headerText;
+                    ctx.fillText(label, (monthStartX + Math.min(x, canvasWidth)) / 2, height / 2);
+                }
+                break;
+            }
+            
+            const date = this._addDays(startDate, i);
             const month = date.getMonth();
             const isFirstOfMonth = date.getDate() === 1;
 
@@ -613,11 +662,13 @@ export class GanttRenderer {
             }
         }
 
-        // Draw label for last month
-        const lastX = totalDays * ppd;
-        const label = this._formatDate(this._addDays(startDate, totalDays), 'month');
-        ctx.fillStyle = GanttRenderer.COLORS.headerText;
-        ctx.fillText(label, (monthStartX + lastX) / 2, height / 2);
+        // Draw label for last month (if we didn't break early)
+        const lastX = Math.min(dayColumnCount * ppd, canvasWidth);
+        if (lastMonth !== -1 && lastX > monthStartX) {
+            const label = this._formatDate(this._addDays(startDate, dayColumnCount - 1), 'month');
+            ctx.fillStyle = GanttRenderer.COLORS.headerText;
+            ctx.fillText(label, (monthStartX + lastX) / 2, height / 2);
+        }
     }
 
     /**
@@ -652,13 +703,19 @@ export class GanttRenderer {
         }
         ctx.stroke();
 
-        // Vertical day lines - render full timeline
-        const totalDays = this._daysBetween(this.timelineStart, this.timelineEnd);
+        // Vertical day lines - render full timeline width
+        // Use dayColumnCount to ensure gridlines extend to canvas edge
+        const dayColumnCount = this._getDayColumnCount();
+        const canvasWidth = this.dom.mainCanvas.width / (window.devicePixelRatio || 1);
 
         ctx.beginPath();
-        for (let i = 0; i <= totalDays; i++) {
-            const date = this._addDays(this.timelineStart, i);
+        for (let i = 0; i <= dayColumnCount; i++) {
             const x = i * ppd + 0.5;
+            
+            // Don't draw beyond canvas width (safety check)
+            if (x > canvasWidth + 1) break;
+            
+            const date = this._addDays(this.timelineStart, i);
             const dayOfWeek = date.getDay();
 
             if (dayOfWeek === 1) {
@@ -689,17 +746,24 @@ export class GanttRenderer {
 
         if (!this.timelineStart || !this.timelineEnd) return;
 
-        const totalDays = this._daysBetween(this.timelineStart, this.timelineEnd);
+        const dayColumnCount = this._getDayColumnCount();
+        const canvasWidth = this.dom.mainCanvas.width / (window.devicePixelRatio || 1);
 
         ctx.fillStyle = GanttRenderer.COLORS.weekendBg;
 
-        for (let i = 0; i <= totalDays; i++) {
+        for (let i = 0; i < dayColumnCount; i++) {
+            const x = i * ppd;
+            
+            // Don't shade beyond canvas width
+            if (x >= canvasWidth) break;
+            
             const date = this._addDays(this.timelineStart, i);
             const dayOfWeek = date.getDay();
 
             if (dayOfWeek === 0 || dayOfWeek === 6) {
-                const x = i * ppd;
-                ctx.fillRect(x, 0, ppd, height);
+                // Clamp width to not exceed canvas boundary
+                const shadingWidth = Math.min(ppd, canvasWidth - x);
+                ctx.fillRect(x, 0, shadingWidth, height);
             }
         }
     }
@@ -1491,6 +1555,32 @@ export class GanttRenderer {
         const d1 = date1 instanceof Date ? date1 : new Date(date1);
         const d2 = date2 instanceof Date ? date2 : new Date(date2);
         return Math.round((d2.getTime() - d1.getTime()) / GanttRenderer.MS_PER_DAY);
+    }
+
+    /**
+     * Calculate the total timeline width in pixels
+     * This is the single source of truth for timeline width calculations
+     * @returns Width in pixels, or 0 if timeline not set
+     */
+    private _getTimelineWidth(): number {
+        if (!this.timelineStart || !this.timelineEnd) return 0;
+        const totalDays = this._daysBetween(this.timelineStart, this.timelineEnd);
+        // We need (totalDays + 1) columns to show all days including the last one
+        // Each column is pixelsPerDay wide
+        return (totalDays + 1) * this.pixelsPerDay;
+    }
+
+    /**
+     * Get the number of day columns to render
+     * This ensures gridlines are drawn for the full canvas width
+     * @returns Number of day columns
+     */
+    private _getDayColumnCount(): number {
+        if (!this.timelineStart || !this.timelineEnd) return 0;
+        const totalDays = this._daysBetween(this.timelineStart, this.timelineEnd);
+        // Add 1 because we need gridlines on both sides of each day column
+        // totalDays gives us the difference, but we need totalDays + 1 columns
+        return totalDays + 1;
     }
 
     /**
