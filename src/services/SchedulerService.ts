@@ -3193,7 +3193,8 @@ export class SchedulerService {
             if (this.gantt) {
                 this.gantt.setData(tasks);
                 this.gantt.setSelection(this.selectedIds);
-                this.gantt.setViewMode(this.viewMode);
+                // Note: Don't call setViewMode here - it resets custom zoom levels
+                // setViewMode should only be called when user explicitly changes view mode
             }
         });
     }
@@ -3735,10 +3736,10 @@ export class SchedulerService {
         const viewport = (this as any).viewport;
         if (viewport?.ganttRenderer) {
             (viewport.ganttRenderer as any).setZoom(pixelsPerDay);
-            this.render();
+            // Note: GanttRenderer handles re-rendering internally, no need to call render()
         } else if (this.gantt) {
             (this.gantt as any).setZoom(pixelsPerDay);
-            this.render();
+            // Note: GanttRenderer handles re-rendering internally, no need to call render()
         }
     }
 
@@ -3762,10 +3763,10 @@ export class SchedulerService {
         const viewport = (this as any).viewport;
         if (viewport?.ganttRenderer) {
             (viewport.ganttRenderer as any).zoomIn();
-            this.render();
+            // Note: GanttRenderer handles re-rendering internally, no need to call render()
         } else if (this.gantt) {
             (this.gantt as any).zoomIn();
-            this.render();
+            // Note: GanttRenderer handles re-rendering internally, no need to call render()
         }
     }
 
@@ -3776,10 +3777,10 @@ export class SchedulerService {
         const viewport = (this as any).viewport;
         if (viewport?.ganttRenderer) {
             (viewport.ganttRenderer as any).zoomOut();
-            this.render();
+            // Note: GanttRenderer handles re-rendering internally, no need to call render()
         } else if (this.gantt) {
             (this.gantt as any).zoomOut();
-            this.render();
+            // Note: GanttRenderer handles re-rendering internally, no need to call render()
         }
     }
 
@@ -3790,10 +3791,10 @@ export class SchedulerService {
         const viewport = (this as any).viewport;
         if (viewport?.ganttRenderer) {
             (viewport.ganttRenderer as any).fitToView();
-            this.render();
+            // Note: GanttRenderer handles re-rendering internally, no need to call render()
         } else if (this.gantt) {
             (this.gantt as any).fitToView();
-            this.render();
+            // Note: GanttRenderer handles re-rendering internally, no need to call render()
         }
     }
 
@@ -3804,10 +3805,10 @@ export class SchedulerService {
         const viewport = (this as any).viewport;
         if (viewport?.ganttRenderer) {
             (viewport.ganttRenderer as any).resetZoom();
-            this.render();
+            // Note: GanttRenderer handles re-rendering internally, no need to call render()
         } else if (this.gantt) {
             (this.gantt as any).resetZoom();
-            this.render();
+            // Note: GanttRenderer handles re-rendering internally, no need to call render()
         }
     }
 
