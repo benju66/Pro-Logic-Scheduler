@@ -14,6 +14,7 @@ export interface KeyboardServiceOptions {
   onCut?: () => void;
   onPaste?: () => void;
   onInsert?: () => void;
+  onShiftInsert?: () => void;
   onArrowUp?: (shiftKey: boolean, ctrlKey: boolean) => void;
   onArrowDown?: (shiftKey: boolean, ctrlKey: boolean) => void;
   onArrowLeft?: () => void;
@@ -154,15 +155,21 @@ export class KeyboardService {
       return;
     }
 
-    // Insert key or Ctrl+I / Cmd+I - add task above
-    if ((e.key === 'Insert' || (isCtrl && e.key === 'i')) && this.options.onInsert) {
-      console.log('[KeyboardService] 🔍 Insert key pressed', {
-        key: e.key,
-        isAppReady: this.options.isAppReady ? this.options.isAppReady() : 'not checked',
-        stackTrace: new Error().stack
-      });
+    // Insert key - add task below (default), Shift+Insert - add task above
+    if (e.key === 'Insert' || (isCtrl && e.key === 'i')) {
       e.preventDefault();
-      this.options.onInsert();
+      
+      if (e.shiftKey) {
+        // Shift+Insert: Insert ABOVE focused task (old behavior)
+        if (this.options.onShiftInsert) {
+          this.options.onShiftInsert();
+        }
+      } else {
+        // Insert: Insert BELOW focused task (new default)
+        if (this.options.onInsert) {
+          this.options.onInsert();
+        }
+      }
       return;
     }
 

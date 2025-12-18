@@ -240,6 +240,7 @@ export class SchedulerService {
             onToggleCollapse: (taskId) => this.toggleCollapse(taskId),
             onSelectionChange: (selectedIds) => this._handleSelectionChange(selectedIds),
             onRowMove: (taskIds, targetId, position) => this._handleRowMove(taskIds, targetId, position),
+            onEnterLastRow: (lastTaskId, field) => this._handleEnterLastRow(lastTaskId, field),
             isParent: (id) => this.taskStore.isParent(id),
             getDepth: (id) => this.taskStore.getDepth(id),
         };
@@ -432,7 +433,8 @@ export class SchedulerService {
             onCopy: () => this.copySelected(),
             onCut: () => this.cutSelected(),
             onPaste: () => this.paste(),
-            onInsert: () => this.insertTaskAbove(),
+            onInsert: () => this.insertTaskBelow(),
+            onShiftInsert: () => this.insertTaskAbove(),
             onArrowUp: (shiftKey, ctrlKey) => this._handleArrowNavigation('ArrowUp', shiftKey, ctrlKey),
             onArrowDown: (shiftKey, ctrlKey) => this._handleArrowNavigation('ArrowDown', shiftKey, ctrlKey),
             onArrowLeft: () => this._handleArrowCollapse('ArrowLeft'),
@@ -1559,6 +1561,40 @@ export class SchedulerService {
         }
 
         this.saveData();
+    }
+
+    /**
+     * Handle Enter key pressed on the last task in the list
+     * Creates a new task as a sibling and focuses the same field
+     * @private
+     * @param lastTaskId - The ID of the last task (where Enter was pressed)
+     * @param field - The field that was being edited (to focus same field in new task)
+     */
+    private _handleEnterLastRow(lastTaskId: string, field: string): void {
+        // Get the last task to determine its parent (new task will be a sibling)
+        const lastTask = this.taskStore.getById(lastTaskId);
+        if (!lastTask) return;
+        
+        // Create new task with same parent as the last task (making it a sibling)
+        // Use addTask which already handles:
+        // - Generating sortKey (appends to end of siblings)
+        // - Setting focusCell: true
+        // - Selecting the new task
+        // - Scrolling to it
+        
+        // We need to temporarily set focusedId so addTask creates sibling at correct level
+        this.focusedId = lastTaskId;
+        
+        // Add the task - this will create it as a sibling of lastTask
+        this.addTask().then((newTask) => {
+            if (newTask && this.grid) {
+                // Focus the same field that was being edited (not always 'name')
+                // Use a short delay to ensure the task is rendered
+                setTimeout(() => {
+                    this.grid?.focusCell(newTask.id, field);
+                }, 100);
+            }
+        });
     }
 
     /**
@@ -2745,6 +2781,92 @@ export class SchedulerService {
         const afterKey = focusedTask.sortKey;
         
         // Generate key between previous sibling and focused task
+        const sortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
+        
+        const today = DateUtils.today();
+        
+        // Create new task
+        const newTask: Task = {
+            id: `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: 'New Task',
+            start: today,
+            end: today,
+            duration: 1,
+            parentId: focusedTask.parentId,
+            dependencies: [],
+            progress: 0,
+            constraintType: 'asap',
+            constraintDate: null,
+            notes: '',
+            level: focusedTask.level || 0,
+            sortKey: sortKey,
+            _collapsed: false,
+        } as Task;
+        
+        // Add to store
+        const allTasks = this.taskStore.getAll();
+        this.taskStore.setAll([...allTasks, newTask]);
+        
+        // Focus the new task
+        this.selectedIds.clear();
+        this.selectedIds.add(newTask.id);
+        this.focusedId = newTask.id;
+        
+        // Pass focusCell: true to focus the name input for immediate editing
+        if (this.grid) {
+            this.grid.setSelection(this.selectedIds, this.focusedId, { focusCell: true, focusField: 'name' });
+        }
+        if (this.gantt) {
+            this.gantt.setSelection(this.selectedIds);
+        }
+        this._updateHeaderCheckboxState();
+        
+        // Recalculate and render
+        this.recalculateAll();
+        this.saveData();
+        this.render();
+        
+        this.toastService.success('Task inserted');
+    }
+
+    /**
+     * Insert a new task BELOW the currently focused task
+     * Uses fractional indexing to insert between siblings
+     */
+    insertTaskBelow(): void {
+        // Guard: Don't allow task creation during initialization
+        if (!this.isInitialized) {
+            console.log('[SchedulerService] ⚠️ insertTaskBelow() blocked - not initialized');
+            return;
+        }
+        
+        // If no focused task, just add to bottom
+        if (!this.focusedId) {
+            this.addTask();
+            return;
+        }
+        
+        const focusedTask = this.taskStore.getById(this.focusedId);
+        if (!focusedTask) {
+            this.addTask();
+            return;
+        }
+        
+        this.saveCheckpoint();
+        
+        // Get siblings sorted by sortKey
+        const siblings = this.taskStore.getChildren(focusedTask.parentId ?? null);
+        const focusedIndex = siblings.findIndex(t => t.id === focusedTask.id);
+        
+        // Determine sort key bounds for insertion BELOW focused task
+        // beforeKey = focused task's key (insert AFTER this)
+        // afterKey = next sibling's key (insert BEFORE this), or null if at end
+        const beforeKey = focusedTask.sortKey;
+        const afterKey = (focusedIndex >= 0 && focusedIndex < siblings.length - 1)
+            ? siblings[focusedIndex + 1].sortKey
+            : null;
+        
+        // Generate key between focused task and next sibling
         const sortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
         
         const today = DateUtils.today();

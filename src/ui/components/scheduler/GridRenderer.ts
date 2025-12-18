@@ -61,6 +61,7 @@ export class GridRenderer {
             onToggleCollapse: options.onToggleCollapse ?? (() => {}),
             onSelectionChange: options.onSelectionChange ?? (() => {}),
             onRowMove: options.onRowMove ?? (() => {}),
+            onEnterLastRow: options.onEnterLastRow,
             isParent: options.isParent ?? (() => false),
             getDepth: options.getDepth ?? (() => 0),
         } as Required<GridRendererOptions>;
@@ -526,7 +527,7 @@ export class GridRenderer {
             return;
         }
 
-        // Enter key: blur input and move to next/previous row
+        // Enter key: blur input and move to next/previous row (or create new task if on last row)
         if (e.key === 'Enter' && input.classList.contains('vsg-input')) {
             e.preventDefault();
 
@@ -534,6 +535,7 @@ export class GridRenderer {
             const taskId = row?.dataset.taskId;
             const field = input.getAttribute('data-field');
 
+            // Save current edit
             if (this.options.onCellChange && field && taskId) {
                 this.options.onCellChange(taskId, field, input.value);
             }
@@ -550,10 +552,16 @@ export class GridRenderer {
                     setTimeout(() => this.focusCell(prevTaskId, field), 50);
                 }
             } else {
-                // Enter: move to same cell in next row
+                // Enter: move to same cell in next row, or create new task if on last row
                 if (taskIndex < this.data.length - 1 && field) {
+                    // Not on last row - move to next row
                     const nextTaskId = this.data[taskIndex + 1].id;
                     setTimeout(() => this.focusCell(nextTaskId, field), 50);
+                } else if (taskIndex === this.data.length - 1 && field) {
+                    // ON LAST ROW - trigger callback to create new task
+                    if (this.options.onEnterLastRow) {
+                        this.options.onEnterLastRow(taskId, field);
+                    }
                 }
             }
             return;

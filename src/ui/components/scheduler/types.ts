@@ -94,6 +94,8 @@ export interface GridRendererOptions {
     onToggleCollapse?: (taskId: string) => void;
     onSelectionChange?: (selectedIds: string[]) => void;
     onRowMove?: (taskIds: string[], targetId: string, position: 'before' | 'after') => void;
+    /** Called when Enter is pressed on the last task - allows creating a new task */
+    onEnterLastRow?: (lastTaskId: string, field: string) => void;
     
     // Metadata providers
     isParent?: (taskId: string) => boolean;
