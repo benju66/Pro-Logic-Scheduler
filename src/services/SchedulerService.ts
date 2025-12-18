@@ -3685,33 +3685,21 @@ export class SchedulerService {
     // =========================================================================
 
     /**
-     * Zoom in (change to more detailed view)
+     * Zoom in (increase visual scale)
+     * NOTE: This changes zoom level, NOT view mode
+     * Use setViewMode() to change Day/Week/Month time scale
      */
     zoomIn(): void {
-        const modes: ViewMode[] = ['Month', 'Week', 'Day'];
-        const currentIndex = modes.indexOf(this.viewMode);
-        if (currentIndex < modes.length - 1) {
-            this.viewMode = modes[currentIndex + 1];
-            if (this.gantt) {
-                this.gantt.setViewMode(this.viewMode);
-            }
-            this.render();
-        }
+        this.zoomGanttIn();
     }
 
     /**
-     * Zoom out (change to less detailed view)
+     * Zoom out (decrease visual scale)
+     * NOTE: This changes zoom level, NOT view mode
+     * Use setViewMode() to change Day/Week/Month time scale
      */
     zoomOut(): void {
-        const modes: ViewMode[] = ['Month', 'Week', 'Day'];
-        const currentIndex = modes.indexOf(this.viewMode);
-        if (currentIndex > 0) {
-            this.viewMode = modes[currentIndex - 1];
-            if (this.gantt) {
-                this.gantt.setViewMode(this.viewMode);
-            }
-            this.render();
-        }
+        this.zoomGanttOut();
     }
 
     /**

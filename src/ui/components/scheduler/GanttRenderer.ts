@@ -1314,26 +1314,39 @@ export class GanttRenderer {
     }
 
     /**
-     * Set view mode
+     * Set view mode - ONLY changes header format and gridline intervals, NOT zoom
+     * @param mode - 'Day', 'Week', or 'Month'
      */
     setViewMode(mode: string): void {
-        const viewMode = GanttRenderer.VIEW_MODES[mode];
-        if (!viewMode) return;
+        const viewModeConfig = GanttRenderer.VIEW_MODES[mode];
+        if (!viewModeConfig) return;
 
+        const previousMode = this.viewMode;
         this.viewMode = mode;
-        this.pixelsPerDay = viewMode.pixelsPerDay;
-
+        
+        // ✅ FIX: Do NOT reset pixelsPerDay here
+        // Keep current zoom level, only change header format
+        
+        this._measure();
         this._updateScrollContentSize();
         this._renderHeader();
         this.dirty = true;
+        
+        console.log(`[GanttRenderer] View mode: ${previousMode} → ${mode} (zoom unchanged: ${this.pixelsPerDay} ppd)`);
     }
 
     /**
-     * Set zoom level directly via pixels per day
+     * Get current view mode
+     */
+    getViewMode(): string {
+        return this.viewMode;
+    }
+
+    /**
+     * Set zoom level - ONLY changes visual scale, NOT view mode
      * @param pixelsPerDay - Pixels per day (1-80 range)
      */
     setZoom(pixelsPerDay: number): void {
-        // Clamp to valid range
         const newPixelsPerDay = Math.max(
             GanttRenderer.ZOOM_LEVELS.min,
             Math.min(GanttRenderer.ZOOM_LEVELS.max, pixelsPerDay)
@@ -1341,21 +1354,18 @@ export class GanttRenderer {
         
         if (this.pixelsPerDay === newPixelsPerDay) return;
         
+        const previousZoom = this.pixelsPerDay;
         this.pixelsPerDay = newPixelsPerDay;
         
-        // Update view mode label based on pixelsPerDay
-        if (newPixelsPerDay >= 30) {
-            this.viewMode = 'Day';
-        } else if (newPixelsPerDay >= 10) {
-            this.viewMode = 'Week';
-        } else {
-            this.viewMode = 'Month';
-        }
+        // ✅ FIX: Do NOT change viewMode here
+        // View mode is controlled separately by setViewMode()
         
         this._measure();
         this._updateScrollContentSize();
         this._renderHeader();
         this.dirty = true;
+        
+        console.log(`[GanttRenderer] Zoom: ${previousZoom} → ${newPixelsPerDay} ppd (view mode unchanged: ${this.viewMode})`);
     }
 
     /**
@@ -1412,10 +1422,12 @@ export class GanttRenderer {
     }
 
     /**
-     * Reset zoom to default
+     * Reset zoom to default for current view mode
      */
     resetZoom(): void {
-        this.setZoom(GanttRenderer.ZOOM_LEVELS.default);
+        const defaultZoom = GanttRenderer.VIEW_MODES[this.viewMode]?.pixelsPerDay 
+            ?? GanttRenderer.ZOOM_LEVELS.default;
+        this.setZoom(defaultZoom);
     }
 
     /**
