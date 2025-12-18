@@ -366,6 +366,21 @@
     flex: 1;
     overflow: auto;
     position: relative;
+    cursor: default;
+}
+
+/* Pan cursor states */
+.cg-scroll-container.panning {
+    cursor: grabbing !important;
+}
+
+.cg-scroll-container.pan-ready {
+    cursor: grab;
+}
+
+/* Prevent text selection during pan */
+.cg-scroll-container.panning * {
+    user-select: none !important;
 }
 
 .cg-scroll-content {

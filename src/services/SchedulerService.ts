@@ -3728,6 +3728,90 @@ export class SchedulerService {
     }
 
     /**
+     * Set Gantt zoom level
+     * @param pixelsPerDay - Pixels per day (1-80)
+     */
+    setGanttZoom(pixelsPerDay: number): void {
+        const viewport = (this as any).viewport;
+        if (viewport?.ganttRenderer) {
+            (viewport.ganttRenderer as any).setZoom(pixelsPerDay);
+            this.render();
+        } else if (this.gantt) {
+            (this.gantt as any).setZoom(pixelsPerDay);
+            this.render();
+        }
+    }
+
+    /**
+     * Get current Gantt zoom level
+     */
+    getGanttZoom(): number {
+        const viewport = (this as any).viewport;
+        if (viewport?.ganttRenderer) {
+            return (viewport.ganttRenderer as any).getZoom() || 20;
+        } else if (this.gantt) {
+            return (this.gantt as any).getZoom() || 20;
+        }
+        return 20;
+    }
+
+    /**
+     * Zoom Gantt in
+     */
+    zoomGanttIn(): void {
+        const viewport = (this as any).viewport;
+        if (viewport?.ganttRenderer) {
+            (viewport.ganttRenderer as any).zoomIn();
+            this.render();
+        } else if (this.gantt) {
+            (this.gantt as any).zoomIn();
+            this.render();
+        }
+    }
+
+    /**
+     * Zoom Gantt out
+     */
+    zoomGanttOut(): void {
+        const viewport = (this as any).viewport;
+        if (viewport?.ganttRenderer) {
+            (viewport.ganttRenderer as any).zoomOut();
+            this.render();
+        } else if (this.gantt) {
+            (this.gantt as any).zoomOut();
+            this.render();
+        }
+    }
+
+    /**
+     * Fit Gantt to view
+     */
+    fitGanttToView(): void {
+        const viewport = (this as any).viewport;
+        if (viewport?.ganttRenderer) {
+            (viewport.ganttRenderer as any).fitToView();
+            this.render();
+        } else if (this.gantt) {
+            (this.gantt as any).fitToView();
+            this.render();
+        }
+    }
+
+    /**
+     * Reset Gantt zoom to default
+     */
+    resetGanttZoom(): void {
+        const viewport = (this as any).viewport;
+        if (viewport?.ganttRenderer) {
+            (viewport.ganttRenderer as any).resetZoom();
+            this.render();
+        } else if (this.gantt) {
+            (this.gantt as any).resetZoom();
+            this.render();
+        }
+    }
+
+    /**
      * Get performance statistics
      * @returns Stats object
      */

@@ -56,6 +56,9 @@ function initApp(): void {
         
         // Make UIEventManager available globally for window functions (backward compatibility)
         window.uiEventManager = uiEventManager;
+        
+        // Initialize zoom controls
+        initZoomControls();
     }).catch(error => {
         console.error('Failed to initialize app:', error);
     });
@@ -193,3 +196,76 @@ window.showToast = showToast as (message: string, type?: string) => void;
         uiEventManager.copyConsoleOutput();
     }
 };
+
+// ================================================================
+// ZOOM CONTROLS
+// ================================================================
+function initZoomControls(): void {
+    const zoomInBtn = document.getElementById('zoom-in-btn');
+    const zoomOutBtn = document.getElementById('zoom-out-btn');
+    const fitToViewBtn = document.getElementById('fit-to-view-btn');
+    const resetZoomBtn = document.getElementById('reset-zoom-btn');
+    const zoomLevelDisplay = document.getElementById('zoom-level');
+    
+    // Update zoom level display
+    function updateZoomDisplay(): void {
+        if (zoomLevelDisplay && scheduler) {
+            const zoom = scheduler.getGanttZoom();
+            const percentage = Math.round((zoom / 20) * 100); // 20 = 100%
+            zoomLevelDisplay.textContent = `${percentage}%`;
+        }
+    }
+    
+    // Zoom in
+    zoomInBtn?.addEventListener('click', () => {
+        scheduler?.zoomGanttIn();
+        updateZoomDisplay();
+    });
+    
+    // Zoom out
+    zoomOutBtn?.addEventListener('click', () => {
+        scheduler?.zoomGanttOut();
+        updateZoomDisplay();
+    });
+    
+    // Fit to view
+    fitToViewBtn?.addEventListener('click', () => {
+        scheduler?.fitGanttToView();
+        updateZoomDisplay();
+    });
+    
+    // Reset zoom
+    resetZoomBtn?.addEventListener('click', () => {
+        scheduler?.resetGanttZoom();
+        updateZoomDisplay();
+    });
+    
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+            if (e.key === '=' || e.key === '+') {
+                e.preventDefault();
+                scheduler?.zoomGanttIn();
+                updateZoomDisplay();
+            } else if (e.key === '-') {
+                e.preventDefault();
+                scheduler?.zoomGanttOut();
+                updateZoomDisplay();
+            } else if (e.key === '0') {
+                e.preventDefault();
+                scheduler?.resetGanttZoom();
+                updateZoomDisplay();
+            }
+        }
+    });
+    
+    // Initial display update (with delay to ensure scheduler is ready)
+    setTimeout(() => {
+        updateZoomDisplay();
+    }, 100);
+    
+    // Update display periodically (in case zoom changes from other sources)
+    setInterval(() => {
+        updateZoomDisplay();
+    }, 500);
+}

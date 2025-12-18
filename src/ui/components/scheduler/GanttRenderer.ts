@@ -71,6 +71,14 @@ export class GanttRenderer {
     private hoveredTaskId: string | null = null;
     private dragState: DragState | null = null;
 
+    // Pan state
+    private isPanning: boolean = false;
+    private panStartX: number = 0;
+    private panStartY: number = 0;
+    private panStartScrollLeft: number = 0;
+    private panStartScrollTop: number = 0;
+    private _spacePressed: boolean = false;
+
     // View state
     private viewMode: string = 'Week';
     private scrollX: number = 0;
@@ -117,6 +125,14 @@ export class GanttRenderer {
         },
     };
 
+    // Zoom configuration
+    private static readonly ZOOM_LEVELS = {
+        min: 1,      // Most zoomed out (1 pixel per day)
+        max: 80,     // Most zoomed in (80 pixels per day)
+        default: 20, // Default (Week view)
+        step: 1.5,   // Zoom multiplier per step
+    };
+
     // Milliseconds per day
     private static readonly MS_PER_DAY = 86400000;
 
@@ -159,6 +175,13 @@ export class GanttRenderer {
         } as Required<GanttRendererOptions>;
 
         this._buildDOM();
+        
+        // Bind pan methods for proper event listener removal
+        this._onPanMove = this._onPanMove.bind(this);
+        this._onPanEnd = this._onPanEnd.bind(this);
+        this._onSpaceDown = this._onSpaceDown.bind(this);
+        this._onSpaceUp = this._onSpaceUp.bind(this);
+        
         this._bindEvents();
         this._measure();
     }
@@ -284,6 +307,34 @@ export class GanttRenderer {
         this.dom.mainCanvas.addEventListener('mouseleave', () => this._onMouseLeave());
         this.dom.mainCanvas.addEventListener('click', (e) => this._onClick(e));
         this.dom.mainCanvas.addEventListener('dblclick', (e) => this._onDoubleClick(e));
+
+        // Mouse wheel zoom (Ctrl + scroll)
+        this.dom.scrollContainer.addEventListener('wheel', (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                e.preventDefault();
+                
+                if (e.deltaY < 0) {
+                    this.zoomIn();
+                } else {
+                    this.zoomOut();
+                }
+            }
+        }, { passive: false });
+
+        // Pan navigation (middle mouse button or Space + drag or Alt + drag)
+        this.dom.mainCanvas.addEventListener('mousedown', (e) => this._onPanStart(e));
+        this.dom.scrollContainer.addEventListener('mousedown', (e) => this._onPanStart(e));
+        document.addEventListener('mousemove', this._onPanMove);
+        document.addEventListener('mouseup', this._onPanEnd);
+        document.addEventListener('keydown', this._onSpaceDown);
+        document.addEventListener('keyup', this._onSpaceUp);
+
+        // Prevent context menu on middle click
+        this.dom.scrollContainer.addEventListener('auxclick', (e) => {
+            if (e.button === 1) {
+                e.preventDefault();
+            }
+        });
 
         // Resize observer
         this.resizeObserver = new ResizeObserver(() => {
@@ -972,6 +1023,17 @@ export class GanttRenderer {
      * Handle mouse down
      */
     private _onMouseDown(e: MouseEvent): void {
+        // Don't start bar drag if panning should occur (space or alt held)
+        // This allows panning to take precedence over bar dragging
+        if (e.button === 0 && (this._spacePressed || e.altKey)) {
+            return;
+        }
+        
+        // Don't start bar drag if middle mouse button (used for panning)
+        if (e.button === 1) {
+            return;
+        }
+        
         const rect = this.dom.mainCanvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
@@ -1046,6 +1108,113 @@ export class GanttRenderer {
             this.options.onBarDoubleClick(hitBar.taskId, e);
         }
     }
+
+    /**
+     * Check if an input element is currently focused
+     */
+    private _isInputFocused(): boolean {
+        const activeElement = document.activeElement;
+        return activeElement instanceof HTMLInputElement || 
+               activeElement instanceof HTMLTextAreaElement ||
+               activeElement instanceof HTMLSelectElement ||
+               activeElement?.getAttribute('contenteditable') === 'true';
+    }
+
+    /**
+     * Start panning
+     */
+    private _onPanStart(e: MouseEvent): void {
+        // Pan with middle mouse button (button 1) or space+left click or Alt+left click
+        const shouldPan = e.button === 1 || // Middle mouse
+                          (e.button === 0 && this._spacePressed) || // Space + left click
+                          (e.button === 0 && e.altKey); // Alt + left click
+        
+        if (!shouldPan) return;
+        
+        e.preventDefault();
+        
+        this.isPanning = true;
+        this.panStartX = e.clientX;
+        this.panStartY = e.clientY;
+        this.panStartScrollLeft = this.dom.scrollContainer.scrollLeft;
+        this.panStartScrollTop = this.dom.scrollContainer.scrollTop;
+        
+        // Change cursor
+        this.dom.scrollContainer.style.cursor = 'grabbing';
+        document.body.style.cursor = 'grabbing';
+        
+        // Add panning class for CSS styling
+        this.dom.scrollContainer.classList.add('panning');
+        
+        // Prevent text selection while panning
+        document.body.style.userSelect = 'none';
+    }
+
+    /**
+     * Handle pan movement
+     */
+    private _onPanMove = (e: MouseEvent): void => {
+        if (!this.isPanning) return;
+        
+        e.preventDefault();
+        
+        const deltaX = e.clientX - this.panStartX;
+        const deltaY = e.clientY - this.panStartY;
+        
+        // Scroll in opposite direction of drag (natural panning)
+        this.dom.scrollContainer.scrollLeft = this.panStartScrollLeft - deltaX;
+        this.dom.scrollContainer.scrollTop = this.panStartScrollTop - deltaY;
+    };
+
+    /**
+     * End panning
+     */
+    private _onPanEnd = (_e: MouseEvent): void => {
+        if (!this.isPanning) return;
+        
+        this.isPanning = false;
+        
+        // Reset cursor
+        this.dom.scrollContainer.style.cursor = this._spacePressed ? 'grab' : 'default';
+        document.body.style.cursor = 'default';
+        
+        // Remove panning class
+        this.dom.scrollContainer.classList.remove('panning');
+        
+        if (this._spacePressed) {
+            this.dom.scrollContainer.classList.add('pan-ready');
+        } else {
+            this.dom.scrollContainer.classList.remove('pan-ready');
+        }
+        
+        // Re-enable text selection
+        document.body.style.userSelect = '';
+    };
+
+    /**
+     * Handle space key down
+     */
+    private _onSpaceDown = (e: KeyboardEvent): void => {
+        if (e.code === 'Space' && !this._isInputFocused()) {
+            e.preventDefault(); // Prevent page scroll
+            this._spacePressed = true;
+            this.dom.scrollContainer.style.cursor = 'grab';
+            this.dom.scrollContainer.classList.add('pan-ready');
+        }
+    };
+
+    /**
+     * Handle space key up
+     */
+    private _onSpaceUp = (e: KeyboardEvent): void => {
+        if (e.code === 'Space') {
+            this._spacePressed = false;
+            if (!this.isPanning) {
+                this.dom.scrollContainer.style.cursor = 'default';
+                this.dom.scrollContainer.classList.remove('pan-ready');
+            }
+        }
+    };
 
     /**
      * Handle drag
@@ -1160,6 +1329,96 @@ export class GanttRenderer {
     }
 
     /**
+     * Set zoom level directly via pixels per day
+     * @param pixelsPerDay - Pixels per day (1-80 range)
+     */
+    setZoom(pixelsPerDay: number): void {
+        // Clamp to valid range
+        const newPixelsPerDay = Math.max(
+            GanttRenderer.ZOOM_LEVELS.min,
+            Math.min(GanttRenderer.ZOOM_LEVELS.max, pixelsPerDay)
+        );
+        
+        if (this.pixelsPerDay === newPixelsPerDay) return;
+        
+        this.pixelsPerDay = newPixelsPerDay;
+        
+        // Update view mode label based on pixelsPerDay
+        if (newPixelsPerDay >= 30) {
+            this.viewMode = 'Day';
+        } else if (newPixelsPerDay >= 10) {
+            this.viewMode = 'Week';
+        } else {
+            this.viewMode = 'Month';
+        }
+        
+        this._measure();
+        this._updateScrollContentSize();
+        this._renderHeader();
+        this.dirty = true;
+    }
+
+    /**
+     * Get current zoom level
+     */
+    getZoom(): number {
+        return this.pixelsPerDay;
+    }
+
+    /**
+     * Zoom in (increase pixelsPerDay)
+     */
+    zoomIn(): void {
+        const newZoom = Math.min(
+            this.pixelsPerDay * GanttRenderer.ZOOM_LEVELS.step,
+            GanttRenderer.ZOOM_LEVELS.max
+        );
+        this.setZoom(newZoom);
+    }
+
+    /**
+     * Zoom out (decrease pixelsPerDay)
+     */
+    zoomOut(): void {
+        const newZoom = Math.max(
+            this.pixelsPerDay / GanttRenderer.ZOOM_LEVELS.step,
+            GanttRenderer.ZOOM_LEVELS.min
+        );
+        this.setZoom(newZoom);
+    }
+
+    /**
+     * Fit entire timeline to view
+     */
+    fitToView(): void {
+        if (!this.timelineStart || !this.timelineEnd) return;
+        
+        const totalDays = this._daysBetween(this.timelineStart, this.timelineEnd);
+        if (totalDays <= 0) return;
+        
+        // Calculate pixelsPerDay to fit content in viewport with padding
+        const availableWidth = this.viewportWidth - 40; // 20px padding each side
+        const newPixelsPerDay = Math.max(
+            GanttRenderer.ZOOM_LEVELS.min,
+            Math.min(GanttRenderer.ZOOM_LEVELS.max, availableWidth / totalDays)
+        );
+        
+        this.setZoom(newPixelsPerDay);
+        
+        // Reset scroll to start
+        if (this.dom.scrollContainer) {
+            this.dom.scrollContainer.scrollLeft = 0;
+        }
+    }
+
+    /**
+     * Reset zoom to default
+     */
+    resetZoom(): void {
+        this.setZoom(GanttRenderer.ZOOM_LEVELS.default);
+    }
+
+    /**
      * Convert date to X coordinate (absolute position, no scroll offset)
      */
     private _dateToX(date: Date | null): number {
@@ -1229,6 +1488,13 @@ export class GanttRenderer {
         if (this.resizeObserver) {
             this.resizeObserver.disconnect();
         }
+        
+        // Remove document-level pan listeners
+        document.removeEventListener('mousemove', this._onPanMove);
+        document.removeEventListener('mouseup', this._onPanEnd);
+        document.removeEventListener('keydown', this._onSpaceDown);
+        document.removeEventListener('keyup', this._onSpaceUp);
+        
         this.container.innerHTML = '';
     }
 }
