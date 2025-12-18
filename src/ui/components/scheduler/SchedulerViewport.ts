@@ -583,7 +583,7 @@ export class SchedulerViewport {
     /**
      * Set selection state
      */
-    setSelection(taskIds: string[]): void {
+    setSelection(taskIds: string[], focusedId?: string | null): void {
         // Guard: Don't process selection if destroyed
         if (this.isDestroyed) return;
 
@@ -592,6 +592,13 @@ export class SchedulerViewport {
         // Update both renderers
         if (this.gridRenderer) {
             this.gridRenderer.setSelection(taskIds);
+            // Focus cell if focusedId is provided
+            if (focusedId && taskIds.includes(focusedId)) {
+                // Use requestAnimationFrame to ensure DOM is ready
+                requestAnimationFrame(() => {
+                    this.gridRenderer?.focusCell(focusedId, 'name');
+                });
+            }
         }
         if (this.ganttRenderer) {
             this.ganttRenderer.setSelection(this.selectedIds);

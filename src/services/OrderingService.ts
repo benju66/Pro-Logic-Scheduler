@@ -74,25 +74,44 @@ export class OrderingService {
     
     /**
      * Generate multiple sort keys for bulk insert operations
-     * Keys are evenly distributed between beforeKey and afterKey
+     * Overload 1: Keys are evenly distributed between beforeKey and afterKey (legacy signature)
+     * Overload 2: Generates sequential keys starting from afterKey (new signature)
      * 
-     * @param beforeKey - Sort key of item before insertion point (null if at start)
-     * @param afterKey - Sort key of item after insertion point (null if at end)
+     * @param beforeKeyOrAfterKey - For legacy: beforeKey. For sequential: afterKey
+     * @param afterKeyOrBeforeKey - For legacy: afterKey. For sequential: beforeKey (unused)
      * @param count - Number of keys to generate
      * @returns Array of sort keys, in order
      * 
      * @example
-     * generateBulkKeys(null, null, 3)     // → ["a0", "a1", "a2"]
-     * generateBulkKeys("a0", "a1", 2)     // → ["a0G", "a0V"]
-     * generateBulkKeys("a2", null, 3)     // → ["a3", "a4", "a5"]
+     * generateBulkKeys(null, null, 3)     // → ["a0", "a1", "a2"] (sequential)
+     * generateBulkKeys("a0", "a1", 2)     // → ["a0G", "a0V"] (distributed)
+     * generateBulkKeys("a2", null, 3)     // → ["a3", "a4", "a5"] (sequential)
      */
     static generateBulkKeys(
-        beforeKey: string | null, 
-        afterKey: string | null, 
+        beforeKeyOrAfterKey: string | null, 
+        afterKeyOrBeforeKey: string | null, 
         count: number
     ): string[] {
         if (count <= 0) return [];
-        return generateNKeysBetween(beforeKey, afterKey, count);
+        
+        // If afterKeyOrBeforeKey is null, treat as sequential generation from beforeKeyOrAfterKey
+        // This handles both legacy usage (beforeKey, afterKey) and new sequential usage (afterKey, null)
+        if (afterKeyOrBeforeKey === null) {
+            // Sequential generation starting from beforeKeyOrAfterKey (treated as afterKey)
+            const keys: string[] = [];
+            let currentKey = beforeKeyOrAfterKey;
+            
+            for (let i = 0; i < count; i++) {
+                const newKey = this.generateAppendKey(currentKey);
+                keys.push(newKey);
+                currentKey = newKey;
+            }
+            
+            return keys;
+        }
+        
+        // Legacy: distributed keys between beforeKey and afterKey
+        return generateNKeysBetween(beforeKeyOrAfterKey, afterKeyOrBeforeKey, count);
     }
     
     /**

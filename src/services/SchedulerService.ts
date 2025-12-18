@@ -335,7 +335,7 @@ export class SchedulerService {
             setData: (tasks: Task[]) => viewport.setData(tasks),
             setVisibleData: (tasks: Task[]) => viewport.setVisibleData(tasks),
             setSelection: (selectedIds: Set<string>, focusedId?: string | null) => {
-                viewport.setSelection([...selectedIds]);
+                viewport.setSelection([...selectedIds], focusedId ?? null);
             },
             scrollToTask: (taskId: string) => viewport.scrollToTask(taskId),
             focusCell: (taskId: string, field: string) => {
@@ -2268,80 +2268,68 @@ export class SchedulerService {
      * Add a new task - ALWAYS appends to bottom of siblings
      * Uses fractional indexing for bulletproof ordering
      */
-    addTask(taskData: Partial<Task> = {}): Promise<Task | undefined> | Task | undefined {
-        // Guard: Don't allow task creation during initialization
+    addTask(taskData: Partial<Task> = {}): Promise<Task | undefined> {
         if (!this.isInitialized) {
-            console.log('[SchedulerService] ⚠️ addTask() blocked - not initialized');
             return Promise.resolve(undefined);
         }
         
-        this.saveCheckpoint();
-        
-        // Determine parent - inherit from focused task or use provided parentId
-        let parentId: string | null = taskData.parentId ?? null;
-        if (this.focusedId && taskData.parentId === undefined) {
-            const focusedTask = this.taskStore.getById(this.focusedId);
-            if (focusedTask) {
-                parentId = focusedTask.parentId ?? null;
+        return this.operationQueue.enqueue(async () => {
+            this.saveCheckpoint();
+            
+            // Determine parent
+            let parentId: string | null = taskData.parentId ?? null;
+            if (this.focusedId && taskData.parentId === undefined) {
+                const focusedTask = this.taskStore.getById(this.focusedId);
+                if (focusedTask) {
+                    parentId = focusedTask.parentId ?? null;
+                }
             }
-        }
-        
-        // Generate sort key - append after last sibling
-        const lastSortKey = this.taskStore.getLastSortKey(parentId);
-        const sortKey = OrderingService.generateAppendKey(lastSortKey);
-        
-        const today = DateUtils.today();
-        
-        // Create task with all required fields
-        const taskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        const task: Task = {
-            id: taskId,
-            name: taskData.name || 'New Task',
-            start: taskData.start || today,
-            end: taskData.end || today,
-            duration: taskData.duration || 1,
-            parentId: parentId,
-            dependencies: taskData.dependencies || [],
-            progress: taskData.progress || 0,
-            constraintType: taskData.constraintType || 'asap',
-            constraintDate: taskData.constraintDate || null,
-            notes: taskData.notes || '',
-            level: 0, // Will be recalculated
-            sortKey: sortKey,
-            _collapsed: false,
-            // Spread any additional fields from taskData
-            ...taskData,
-        } as Task;
-        
-        // Ensure required fields aren't overwritten by spread
-        task.id = taskId;
-        task.sortKey = sortKey;
-        task.parentId = parentId;
-        
-        // Add to store - single operation, no normalization needed
-        const allTasks = this.taskStore.getAll();
-        this.taskStore.setAll([...allTasks, task]);
-        
-        // Update UI state
-        this.selectedIds.clear();
-        this.selectedIds.add(task.id);
-        this.focusedId = task.id;
-        this._updateSelection();
-        
-        // Recalculate and render
-        this.recalculateAll();
-        this.saveData();
-        this.render();
-        
-        // Scroll to new task
-        requestAnimationFrame(() => {
-            if (this.grid) {
-                this.grid.scrollToTask(task.id);
-            }
+            
+            // Generate sort key (now guaranteed to see latest state)
+            const lastSortKey = this.taskStore.getLastSortKey(parentId);
+            const sortKey = OrderingService.generateAppendKey(lastSortKey);
+            
+            const today = DateUtils.today();
+            const taskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            
+            const task: Task = {
+                id: taskId,
+                name: taskData.name || 'New Task',
+                start: taskData.start || today,
+                end: taskData.end || today,
+                duration: taskData.duration || 1,
+                parentId: parentId,
+                dependencies: taskData.dependencies || [],
+                progress: taskData.progress || 0,
+                constraintType: taskData.constraintType || 'asap',
+                constraintDate: taskData.constraintDate || null,
+                notes: taskData.notes || '',
+                level: 0,
+                sortKey: sortKey,
+                _collapsed: false,
+            } as Task;
+            
+            // Add to store
+            const allTasks = this.taskStore.getAll();
+            this.taskStore.setAll([...allTasks, task]);
+            
+            // Update UI state
+            this.selectedIds.clear();
+            this.selectedIds.add(task.id);
+            this.focusedId = task.id;
+            this._updateSelection();
+            
+            // Recalculate and render
+            this.recalculateAll();
+            this.saveData();
+            this.render();
+            
+            // Scroll to new task with robust retry
+            this._scrollToTaskAndFocus(task.id, 'name');
+            
+            this.toastService?.success('Task added');
+            return task;
         });
-        
-        this.toastService?.success('Task added');
-        return task;
     }
 
     /**
@@ -3769,22 +3757,25 @@ export class SchedulerService {
     generateMockTasks(count: number): void {
         this.saveCheckpoint();
         
+        const today = DateUtils.today();
+        const existingTasks = this.taskStore.getAll();
+        const tasks: Task[] = [...existingTasks];
+        
+        // Pre-generate all sortKeys to avoid stale reads
+        const lastKey = this.taskStore.getLastSortKey(null);
+        const sortKeys = OrderingService.generateBulkKeys(lastKey, null, count);
+        
         const calendar = this.calendarStore.get();
-        const tasks: Task[] = [];
         
         for (let i = 0; i < count; i++) {
             const duration = Math.floor(Math.random() * 10) + 1;
             const startOffset = Math.floor(Math.random() * 200);
-            const startDate = DateUtils.addWorkDays(DateUtils.today(), startOffset, calendar);
+            const startDate = DateUtils.addWorkDays(today, startOffset, calendar);
             const endDate = DateUtils.addWorkDays(startDate, duration - 1, calendar);
             
-            const lastKey = i === 0 ? null : this.taskStore.getLastSortKey(null);
-            const sortKey = OrderingService.generateAppendKey(lastKey);
-            
             const task: Task = {
-                id: `mock_${i}_${Date.now()}`,
-                name: `Task ${i + 1} - ${this._randomTaskName()}`,
-                sortKey: sortKey,
+                id: `task_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 9)}`,
+                name: `Task ${existingTasks.length + i + 1}`,
                 start: startDate,
                 end: endDate,
                 duration: duration,
@@ -3795,6 +3786,7 @@ export class SchedulerService {
                 constraintDate: null,
                 notes: '',
                 level: 0,
+                sortKey: sortKeys[i],
                 _collapsed: false,
             };
             
@@ -3821,6 +3813,8 @@ export class SchedulerService {
         this.recalculateAll();
         this.saveData();
         this.render();
+        
+        this.toastService?.success(`Generated ${count} tasks`);
     }
 
     /**

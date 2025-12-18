@@ -117,7 +117,7 @@ export class TaskStore {
       const keyB = b.sortKey ?? '';
       if (keyA < keyB) return -1;
       if (keyA > keyB) return 1;
-      return 0;
+      return a.id.localeCompare(b.id); // Deterministic tiebreaker when sortKeys are equal
     });
   }
 

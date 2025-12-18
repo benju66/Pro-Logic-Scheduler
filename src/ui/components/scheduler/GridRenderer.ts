@@ -129,8 +129,8 @@ export class GridRenderer {
         // Set container height to hold all rows (enables proper scrolling)
         this.rowContainer.style.height = `${this.data.length * this.rowHeight}px`;
 
-        // Keep container translateY
-        this.rowContainer.style.transform = `translateY(${start * this.rowHeight}px)`;
+        // REMOVE the translateY - rows will self-position
+        this.rowContainer.style.transform = 'none';
 
         // Release rows outside visible range
         this.pool.releaseRowsOutsideRange(start, end);
@@ -143,9 +143,9 @@ export class GridRenderer {
             try {
                 const row = this.pool.acquireRow(i);
 
-                // Position relative to visible range, not absolute
+                // Position ABSOLUTE from top of container (not relative to visible range)
                 row.element.style.position = 'absolute';
-                row.element.style.top = `${(i - start) * this.rowHeight}px`;
+                row.element.style.top = `${i * this.rowHeight}px`;
                 row.element.style.left = '0';
                 row.element.style.right = '0';
 
