@@ -235,6 +235,7 @@ export class SchedulerViewport {
             container: this.ganttPane, // This is the #gantt-container element
             rowHeight: this.rowHeight,
             headerHeight: this.headerHeight,
+            onNeedsRender: () => this._scheduleRender(), // FIX: Notify viewport when gantt needs render
         });
 
         this.ganttReady = true;

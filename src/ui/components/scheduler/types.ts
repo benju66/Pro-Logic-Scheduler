@@ -113,6 +113,7 @@ export interface GanttRendererOptions {
     onBarDoubleClick?: (taskId: string, event: MouseEvent) => void;
     onBarDrag?: (task: Task, start: string, end: string) => void;
     onDependencyClick?: (taskId: string, depId: string, event: MouseEvent) => void;
+    onNeedsRender?: () => void;  // Callback when gantt needs viewport to render
     
     // Metadata providers
     isParent?: (taskId: string) => boolean;

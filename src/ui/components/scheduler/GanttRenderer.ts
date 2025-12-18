@@ -171,6 +171,7 @@ export class GanttRenderer {
             onBarDoubleClick: options.onBarDoubleClick ?? (() => {}),
             onBarDrag: options.onBarDrag ?? (() => {}),
             onDependencyClick: options.onDependencyClick ?? (() => {}),
+            onNeedsRender: options.onNeedsRender ?? (() => {}),
             isParent: options.isParent ?? (() => false),
         } as Required<GanttRendererOptions>;
 
@@ -363,7 +364,8 @@ export class GanttRenderer {
         let totalContentWidth = this.viewportWidth;
         if (this.timelineStart && this.timelineEnd) {
             const totalDays = this._daysBetween(this.timelineStart, this.timelineEnd);
-            totalContentWidth = Math.max(this.viewportWidth, totalDays * this.pixelsPerDay);
+            // FIX: Add 1 to ensure last gridline has room to render
+            totalContentWidth = Math.max(this.viewportWidth, (totalDays + 1) * this.pixelsPerDay);
         }
 
         // Check if resize is needed (avoid unnecessary resets)
@@ -404,7 +406,8 @@ export class GanttRenderer {
         if (!this.timelineStart || !this.timelineEnd) return;
 
         const totalDays = this._daysBetween(this.timelineStart, this.timelineEnd);
-        const totalWidth = totalDays * this.pixelsPerDay;
+        // FIX: Add 1 to match _measure() and ensure last gridline has room
+        const totalWidth = (totalDays + 1) * this.pixelsPerDay;
         const totalHeight = this.data.length * this.rowHeight;
 
         this.dom.scrollContent.style.width = `${Math.max(totalWidth, this.viewportWidth)}px`;
@@ -1332,6 +1335,9 @@ export class GanttRenderer {
         this._renderHeader();
         this.dirty = true;
         
+        // FIX: Notify viewport that we need a render
+        this.options.onNeedsRender();
+        
         console.log(`[GanttRenderer] View mode: ${previousMode} → ${mode} (zoom unchanged: ${this.pixelsPerDay} ppd)`);
     }
 
@@ -1364,6 +1370,9 @@ export class GanttRenderer {
         this._updateScrollContentSize();
         this._renderHeader();
         this.dirty = true;
+        
+        // FIX: Notify viewport that we need a render
+        this.options.onNeedsRender();
         
         console.log(`[GanttRenderer] Zoom: ${previousZoom} → ${newPixelsPerDay} ppd (view mode unchanged: ${this.viewMode})`);
     }
