@@ -10,7 +10,6 @@
 
 import type { Task, LinkType } from '../../../types';
 import type { ViewportState, GanttRendererOptions } from './types';
-import { ROW_HEIGHT, HEADER_HEIGHT } from './constants';
 
 /**
  * View mode configuration
@@ -77,6 +76,7 @@ export class GanttRenderer {
     private scrollX: number = 0;
     private viewportWidth: number = 0;
     private viewportHeight: number = 0;
+    private totalContentHeight: number = 0;
 
     // Time range
     private projectStart: Date | null = null;
@@ -173,11 +173,9 @@ export class GanttRenderer {
         this.container.innerHTML = '';
         
         // Ensure container has proper overflow
-        // Horizontal scroll is handled by the container
-        // Vertical scroll is handled by the inner scroll container (cg-scroll-container)
+        // Both horizontal and vertical scroll are handled by the inner scroll container
         this.container.style.cssText = `
-            overflow-x: auto;
-            overflow-y: hidden;
+            overflow: hidden;
             height: 100%;
             position: relative;
         `;
@@ -200,7 +198,8 @@ export class GanttRenderer {
             position: relative;
             height: 50px;
             flex-shrink: 0;
-            overflow: hidden;
+            overflow-x: hidden;
+            overflow-y: hidden;
         `;
 
         const headerCanvas = document.createElement('canvas');
@@ -214,13 +213,12 @@ export class GanttRenderer {
         const headerCtx = headerCanvas.getContext('2d');
 
         // Create scroll container for main canvas
-        // Horizontal scroll is handled by the outer container (gantt-container)
-        // Vertical scroll is handled here (will be synced by SchedulerViewport)
+        // Horizontal and vertical scroll handled here
         const scrollContainer = document.createElement('div');
         scrollContainer.className = 'cg-scroll-container';
         scrollContainer.style.cssText = `
             flex: 1;
-            overflow-x: hidden;
+            overflow-x: auto;
             overflow-y: auto;
             position: relative;
         `;
@@ -260,10 +258,12 @@ export class GanttRenderer {
             scrollContent,
         };
 
-        // Listen to horizontal scroll on the outer container (gantt-container)
-        // This handles timeline scrolling
-        this.container.addEventListener('scroll', () => {
-            this.scrollX = this.container.scrollLeft;
+        // Sync header scroll with main canvas scroll
+        scrollContainer.addEventListener('scroll', () => {
+            if (headerWrapper) {
+                headerWrapper.scrollLeft = scrollContainer.scrollLeft;
+            }
+            this.scrollX = scrollContainer.scrollLeft;
             this._renderHeader();
             this.dirty = true;
         }, { passive: true });
@@ -301,26 +301,48 @@ export class GanttRenderer {
         this.viewportWidth = rect.width;
         this.viewportHeight = rect.height - this.headerHeight;
 
-        // Account for device pixel ratio
         const dpr = window.devicePixelRatio || 1;
 
         if (!this.dom.headerCtx || !this.dom.mainCtx) return;
 
-        // Size header canvas
-        this.dom.headerCanvas.width = this.viewportWidth * dpr;
+        // Calculate total content HEIGHT (all tasks)
+        const totalContentHeight = Math.max(this.viewportHeight, this.data.length * this.rowHeight);
+
+        // Calculate total content WIDTH (full timeline)
+        let totalContentWidth = this.viewportWidth;
+        if (this.timelineStart && this.timelineEnd) {
+            const totalDays = this._daysBetween(this.timelineStart, this.timelineEnd);
+            totalContentWidth = Math.max(this.viewportWidth, totalDays * this.pixelsPerDay);
+        }
+
+        // Check if resize is needed (avoid unnecessary resets)
+        const currentMainWidth = this.dom.mainCanvas.width;
+        const currentMainHeight = this.dom.mainCanvas.height;
+        const newMainWidth = Math.round(totalContentWidth * dpr);
+        const newMainHeight = Math.round(totalContentHeight * dpr);
+        
+        if (currentMainWidth === newMainWidth && currentMainHeight === newMainHeight) {
+            return; // No resize needed
+        }
+
+        // Size header canvas to FULL timeline width
+        this.dom.headerCanvas.width = totalContentWidth * dpr;
         this.dom.headerCanvas.height = this.headerHeight * dpr;
-        this.dom.headerCanvas.style.width = `${this.viewportWidth}px`;
+        this.dom.headerCanvas.style.width = `${totalContentWidth}px`;
         this.dom.headerCanvas.style.height = `${this.headerHeight}px`;
+        this.dom.headerCtx.setTransform(1, 0, 0, 1, 0, 0);
         this.dom.headerCtx.scale(dpr, dpr);
 
-        // Size main canvas
-        this.dom.mainCanvas.width = this.viewportWidth * dpr;
-        this.dom.mainCanvas.height = this.viewportHeight * dpr;
-        this.dom.mainCanvas.style.width = `${this.viewportWidth}px`;
-        this.dom.mainCanvas.style.height = `${this.viewportHeight}px`;
+        // Size main canvas to FULL content dimensions
+        this.dom.mainCanvas.width = totalContentWidth * dpr;
+        this.dom.mainCanvas.height = totalContentHeight * dpr;
+        this.dom.mainCanvas.style.width = `${totalContentWidth}px`;
+        this.dom.mainCanvas.style.height = `${totalContentHeight}px`;
+        this.dom.mainCtx.setTransform(1, 0, 0, 1, 0, 0);
         this.dom.mainCtx.scale(dpr, dpr);
 
         // Update scroll content size
+        this.totalContentHeight = totalContentHeight;
         this._updateScrollContentSize();
     }
 
@@ -342,7 +364,7 @@ export class GanttRenderer {
      * Render based on viewport state
      */
     render(state: ViewportState): void {
-        const { visibleRange, viewportHeight, scrollTop } = state;
+        const { visibleRange } = state;
         let { start, end } = visibleRange;
 
         const ctx = this.dom.mainCtx;
@@ -352,10 +374,11 @@ export class GanttRenderer {
         // Header renders independently of task data - only needs timelineStart
         this._renderHeader();
 
-        // Clear canvas
+        // Fill with background color instead of clearing (reduces flash)
         const width = this.dom.mainCanvas.width / (window.devicePixelRatio || 1);
         const height = this.dom.mainCanvas.height / (window.devicePixelRatio || 1);
-        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = GanttRenderer.COLORS.background;
+        ctx.fillRect(0, 0, width, height);
 
         if (this.data.length === 0 || !this.timelineStart) {
             this._renderEmptyState(ctx);
@@ -374,13 +397,14 @@ export class GanttRenderer {
             return;
         }
 
-        // Render layers (back to front) - using absolute Y positioning with scrollTop offset
-        this._renderGridLines(ctx, start, end, scrollTop);
+        // Render layers (back to front) - using absolute Y positioning
+        // Canvas is inside scrolling container, so no scrollTop offset needed
+        this._renderGridLines(ctx, start, end);
         this._renderWeekendShading(ctx, start, end);
         this._renderTodayLine(ctx);
-        this._renderDependencies(ctx, start, end, scrollTop);
-        this._renderBars(ctx, start, end, scrollTop);
-        this._renderSelectionHighlight(ctx, start, end, scrollTop);
+        this._renderDependencies(ctx, start, end);
+        this._renderBars(ctx, start, end);
+        this._renderSelectionHighlight(ctx, start, end);
     }
 
     /**
@@ -390,7 +414,7 @@ export class GanttRenderer {
         const ctx = this.dom.headerCtx;
         if (!ctx) return;
 
-        const width = this.viewportWidth;
+        const width = this.dom.headerCanvas.width / (window.devicePixelRatio || 1);
         const height = this.headerHeight;
 
         // Clear
@@ -410,8 +434,8 @@ export class GanttRenderer {
         const viewMode = GanttRenderer.VIEW_MODES[this.viewMode];
         if (!viewMode) return;
 
-        const startDate = this._addDays(this.timelineStart, Math.floor(this.scrollX / this.pixelsPerDay));
-        const visibleDays = Math.ceil(width / this.pixelsPerDay) + 2;
+        // Render full timeline (no scroll offset needed - canvas scrolls with container)
+        const totalDays = this._daysBetween(this.timelineStart, this.timelineEnd || this.timelineStart);
 
         ctx.font = '11px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
         ctx.textAlign = 'center';
@@ -419,25 +443,24 @@ export class GanttRenderer {
 
         // Draw based on view mode
         if (this.viewMode === 'Day') {
-            this._renderHeaderDays(ctx, startDate, visibleDays);
+            this._renderHeaderDays(ctx, this.timelineStart, totalDays);
         } else if (this.viewMode === 'Week') {
-            this._renderHeaderWeeks(ctx, startDate, visibleDays);
+            this._renderHeaderWeeks(ctx, this.timelineStart, totalDays);
         } else {
-            this._renderHeaderMonths(ctx, startDate, visibleDays);
+            this._renderHeaderMonths(ctx, this.timelineStart, totalDays);
         }
     }
 
     /**
      * Render day-level header
      */
-    private _renderHeaderDays(ctx: CanvasRenderingContext2D, startDate: Date, visibleDays: number): void {
+    private _renderHeaderDays(ctx: CanvasRenderingContext2D, startDate: Date, totalDays: number): void {
         const ppd = this.pixelsPerDay;
-        const offsetX = this.scrollX % ppd;
         const height = this.headerHeight;
 
-        for (let i = -1; i < visibleDays; i++) {
+        for (let i = 0; i <= totalDays; i++) {
             const date = this._addDays(startDate, i);
-            const x = (i * ppd) - offsetX;
+            const x = i * ppd;
             const dayOfWeek = date.getDay();
             const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
 
@@ -464,14 +487,13 @@ export class GanttRenderer {
     /**
      * Render week-level header
      */
-    private _renderHeaderWeeks(ctx: CanvasRenderingContext2D, startDate: Date, visibleDays: number): void {
+    private _renderHeaderWeeks(ctx: CanvasRenderingContext2D, startDate: Date, totalDays: number): void {
         const ppd = this.pixelsPerDay;
-        const offsetX = this.scrollX % ppd;
         const height = this.headerHeight;
 
-        for (let i = -1; i < visibleDays; i++) {
+        for (let i = 0; i <= totalDays; i++) {
             const date = this._addDays(startDate, i);
-            const x = (i * ppd) - offsetX;
+            const x = i * ppd;
             const dayOfWeek = date.getDay();
             const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
             const isMonday = dayOfWeek === 1;
@@ -503,17 +525,16 @@ export class GanttRenderer {
     /**
      * Render month-level header
      */
-    private _renderHeaderMonths(ctx: CanvasRenderingContext2D, startDate: Date, visibleDays: number): void {
+    private _renderHeaderMonths(ctx: CanvasRenderingContext2D, startDate: Date, totalDays: number): void {
         const ppd = this.pixelsPerDay;
-        const offsetX = this.scrollX % ppd;
         const height = this.headerHeight;
 
         let lastMonth = -1;
         let monthStartX = 0;
 
-        for (let i = -1; i < visibleDays; i++) {
+        for (let i = 0; i <= totalDays; i++) {
             const date = this._addDays(startDate, i);
-            const x = (i * ppd) - offsetX;
+            const x = i * ppd;
             const month = date.getMonth();
             const isFirstOfMonth = date.getDate() === 1;
 
@@ -538,9 +559,9 @@ export class GanttRenderer {
             }
         }
 
-        // Draw label for last visible month
-        const lastX = (visibleDays * ppd) - offsetX;
-        const label = this._formatDate(this._addDays(startDate, visibleDays - 1), 'month');
+        // Draw label for last month
+        const lastX = totalDays * ppd;
+        const label = this._formatDate(this._addDays(startDate, totalDays), 'month');
         ctx.fillStyle = GanttRenderer.COLORS.headerText;
         ctx.fillText(label, (monthStartX + lastX) / 2, height / 2);
     }
@@ -559,33 +580,31 @@ export class GanttRenderer {
     /**
      * Render grid lines
      */
-    private _renderGridLines(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number, scrollTop: number): void {
+    private _renderGridLines(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number): void {
         const ppd = this.pixelsPerDay;
-        const width = this.viewportWidth;
-        const offsetX = this.scrollX % ppd;
+        const width = this.dom.mainCanvas.width / (window.devicePixelRatio || 1);
 
-        if (!this.timelineStart) return;
+        if (!this.timelineStart || !this.timelineEnd) return;
 
         ctx.strokeStyle = GanttRenderer.COLORS.gridLine;
         ctx.lineWidth = 0.5;
 
-        // Horizontal row lines - absolute positioning with scrollTop offset
+        // Horizontal row lines - absolute positioning (canvas scrolls with container)
         ctx.beginPath();
         for (let i = firstRow; i <= lastRow + 1; i++) {
-            const y = Math.floor((i * this.rowHeight - scrollTop) + 0.5);
+            const y = Math.floor(i * this.rowHeight + 0.5);
             ctx.moveTo(0, y);
             ctx.lineTo(width, y);
         }
         ctx.stroke();
 
-        // Vertical day lines
-        const visibleDays = Math.ceil(width / ppd) + 2;
-        const startDate = this._addDays(this.timelineStart, Math.floor(this.scrollX / ppd));
+        // Vertical day lines - render full timeline
+        const totalDays = this._daysBetween(this.timelineStart, this.timelineEnd);
 
         ctx.beginPath();
-        for (let i = 0; i < visibleDays; i++) {
-            const date = this._addDays(startDate, i);
-            const x = (i * ppd) - offsetX + 0.5;
+        for (let i = 0; i <= totalDays; i++) {
+            const date = this._addDays(this.timelineStart, i);
+            const x = i * ppd + 0.5;
             const dayOfWeek = date.getDay();
 
             if (dayOfWeek === 1) {
@@ -594,14 +613,14 @@ export class GanttRenderer {
                 ctx.lineWidth = 1;
                 ctx.beginPath();
                 ctx.moveTo(x, 0);
-                ctx.lineTo(x, this.viewportHeight);
+                ctx.lineTo(x, this.totalContentHeight);
                 ctx.stroke();
                 ctx.strokeStyle = GanttRenderer.COLORS.gridLine;
                 ctx.lineWidth = 0.5;
                 ctx.beginPath();
             } else {
                 ctx.moveTo(x, 0);
-                ctx.lineTo(x, this.viewportHeight);
+                ctx.lineTo(x, this.totalContentHeight);
             }
         }
         ctx.stroke();
@@ -612,22 +631,20 @@ export class GanttRenderer {
      */
     private _renderWeekendShading(ctx: CanvasRenderingContext2D, _firstRow: number, _lastRow: number): void {
         const ppd = this.pixelsPerDay;
-        const height = this.viewportHeight;
-        const offsetX = this.scrollX % ppd;
-        const visibleDays = Math.ceil(this.viewportWidth / ppd) + 2;
+        const height = this.totalContentHeight;
 
-        if (!this.timelineStart) return;
+        if (!this.timelineStart || !this.timelineEnd) return;
 
-        const startDate = this._addDays(this.timelineStart, Math.floor(this.scrollX / ppd));
+        const totalDays = this._daysBetween(this.timelineStart, this.timelineEnd);
 
         ctx.fillStyle = GanttRenderer.COLORS.weekendBg;
 
-        for (let i = 0; i < visibleDays; i++) {
-            const date = this._addDays(startDate, i);
+        for (let i = 0; i <= totalDays; i++) {
+            const date = this._addDays(this.timelineStart, i);
             const dayOfWeek = date.getDay();
 
             if (dayOfWeek === 0 || dayOfWeek === 6) {
-                const x = (i * ppd) - offsetX;
+                const x = i * ppd;
                 ctx.fillRect(x, 0, ppd, height);
             }
         }
@@ -644,14 +661,15 @@ export class GanttRenderer {
         if (today < this.timelineStart || today > this.timelineEnd) return;
 
         const x = this._dateToX(today);
-        if (x < 0 || x > this.viewportWidth) return;
+        const width = this.dom.mainCanvas.width / (window.devicePixelRatio || 1);
+        if (x < 0 || x > width) return;
 
         ctx.strokeStyle = GanttRenderer.COLORS.todayLine;
         ctx.lineWidth = 2;
         ctx.setLineDash([5, 3]);
         ctx.beginPath();
         ctx.moveTo(x + 0.5, 0);
-        ctx.lineTo(x + 0.5, this.viewportHeight);
+        ctx.lineTo(x + 0.5, this.totalContentHeight);
         ctx.stroke();
         ctx.setLineDash([]);
     }
@@ -659,7 +677,7 @@ export class GanttRenderer {
     /**
      * Render dependencies
      */
-    private _renderDependencies(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number, scrollTop: number): void {
+    private _renderDependencies(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number): void {
         const rowHeight = this.rowHeight;
         const barHeight = 20;
         const barPadding = 9;
@@ -672,8 +690,8 @@ export class GanttRenderer {
             const task = this.data[i];
             if (!task.dependencies || task.dependencies.length === 0) continue;
 
-            // Absolute Y coordinate with scrollTop offset
-            const taskY = Math.floor(i * rowHeight - scrollTop + barPadding + barHeight / 2);
+            // Absolute Y coordinate (canvas scrolls with container)
+            const taskY = Math.floor(i * rowHeight + barPadding + barHeight / 2);
             const taskStart = this._parseDate(task.start);
             if (!taskStart) continue;
             const taskX = this._dateToX(taskStart);
@@ -686,8 +704,8 @@ export class GanttRenderer {
                 if (predIndex === -1) return;
 
                 // Draw dependency even if predecessor is outside visible range (for arrows)
-                // Absolute Y coordinate with scrollTop offset
-                const predY = Math.floor(predIndex * rowHeight - scrollTop + barPadding + barHeight / 2);
+                // Absolute Y coordinate (canvas scrolls with container)
+                const predY = Math.floor(predIndex * rowHeight + barPadding + barHeight / 2);
                 const predEnd = this._parseDate(predTask.end);
                 if (!predEnd) return;
                 const predEndX = this._dateToX(predEnd) + this.pixelsPerDay;
@@ -754,7 +772,7 @@ export class GanttRenderer {
     /**
      * Render task bars
      */
-    private _renderBars(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number, scrollTop: number): void {
+    private _renderBars(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number): void {
         const rowHeight = this.rowHeight;
         const barHeight = 20;
         const barPadding = 9;
@@ -769,14 +787,15 @@ export class GanttRenderer {
 
             const startX = this._dateToX(this._parseDate(task.start));
             const endX = this._dateToX(this._parseDate(task.end)) + this.pixelsPerDay;
-            // Absolute Y coordinate with scrollTop offset
-            const y = Math.floor(i * rowHeight - scrollTop + barPadding);
+            // Absolute Y coordinate (canvas scrolls with container)
+            const y = Math.floor(i * rowHeight + barPadding);
             const width = Math.max(10, endX - startX);
 
-            // Skip if not visible horizontally
-            if (endX < 0 || startX > this.viewportWidth) continue;
+            // Skip if not visible horizontally (check against full canvas width)
+            const canvasWidth = this.dom.mainCanvas.width / (window.devicePixelRatio || 1);
+            if (endX < 0 || startX > canvasWidth) continue;
 
-            // Cache bar position for hit testing (absolute Y for hit testing)
+            // Cache bar position for hit testing (absolute Y coordinates)
             this.barPositions.push({
                 taskId: task.id,
                 x: startX,
@@ -792,7 +811,7 @@ export class GanttRenderer {
             const isSelected = this.selectedIds.has(task.id);
             const isHovered = this.hoveredTaskId === task.id;
 
-            let barColor = GanttRenderer.COLORS.barNormal;
+            let barColor: string = GanttRenderer.COLORS.barNormal;
             let strokeColor: string | null = null;
 
             if (isParent) {
@@ -880,17 +899,18 @@ export class GanttRenderer {
     /**
      * Render selection highlight
      */
-    private _renderSelectionHighlight(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number, scrollTop: number): void {
+    private _renderSelectionHighlight(ctx: CanvasRenderingContext2D, firstRow: number, lastRow: number): void {
         if (this.selectedIds.size === 0) return;
 
         ctx.fillStyle = GanttRenderer.COLORS.selectionBg;
+        const width = this.dom.mainCanvas.width / (window.devicePixelRatio || 1);
 
         for (let i = firstRow; i <= lastRow; i++) {
             const task = this.data[i];
             if (this.selectedIds.has(task.id)) {
-                // Absolute Y coordinate with scrollTop offset
-                const y = Math.floor(i * this.rowHeight - scrollTop);
-                ctx.fillRect(0, y, this.viewportWidth, this.rowHeight);
+                // Absolute Y coordinate (canvas scrolls with container)
+                const y = Math.floor(i * this.rowHeight);
+                ctx.fillRect(0, y, width, this.rowHeight);
             }
         }
     }
@@ -1030,7 +1050,7 @@ export class GanttRenderer {
     /**
      * Handle drag
      */
-    private _handleDrag(x: number, y: number): void {
+    private _handleDrag(x: number, _y: number): void {
         if (!this.dragState) return;
 
         const deltaX = x - this.dragState.startX;
@@ -1073,7 +1093,10 @@ export class GanttRenderer {
         tasks.forEach(t => this.taskMap.set(t.id, t));
 
         this._calculateTimelineRange();
-        this._updateScrollContentSize();
+        
+        // IMPORTANT: Re-measure to resize canvas for new data length
+        this._measure();
+        
         this._renderHeader();
         this.dirty = true;
     }
@@ -1137,12 +1160,12 @@ export class GanttRenderer {
     }
 
     /**
-     * Convert date to X coordinate
+     * Convert date to X coordinate (absolute position, no scroll offset)
      */
     private _dateToX(date: Date | null): number {
         if (!date || !this.timelineStart) return 0;
         const days = this._daysBetween(this.timelineStart, date);
-        return (days * this.pixelsPerDay) - this.scrollX;
+        return days * this.pixelsPerDay;
     }
 
     /**
