@@ -56,6 +56,9 @@ export class RustEngine implements ISchedulingEngine {
 
     /**
      * Update a single task in Rust state
+     * 
+     * CRITICAL: Assumes the task already exists in Rust state.
+     * Do not fall back to syncTasks automatically.
      */
     async updateTask(id: string, updates: Partial<Task>): Promise<void> {
         if (!this.initialized) {
@@ -68,6 +71,43 @@ export class RustEngine implements ISchedulingEngine {
             await invoke<string>('update_engine_task', { id, updatesJson });
         } catch (error) {
             console.error(`[RustEngine] Failed to update task ${id}:`, error);
+            // Don't throw - allow graceful degradation
+        }
+    }
+
+    /**
+     * Add a new task to Rust state
+     */
+    async addTask(task: Task): Promise<void> {
+        if (!this.initialized) {
+            console.warn('[RustEngine] addTask called before initialization');
+            return;
+        }
+
+        try {
+            const taskJson = JSON.stringify(task);
+            await invoke<string>('add_engine_task', { taskJson });
+            console.log(`[RustEngine] Added task ${task.id}`);
+        } catch (error) {
+            console.error(`[RustEngine] Failed to add task ${task.id}:`, error);
+            // Don't throw - allow graceful degradation
+        }
+    }
+
+    /**
+     * Delete a task from Rust state
+     */
+    async deleteTask(taskId: string): Promise<void> {
+        if (!this.initialized) {
+            console.warn('[RustEngine] deleteTask called before initialization');
+            return;
+        }
+
+        try {
+            await invoke<string>('delete_engine_task', { id: taskId });
+            console.log(`[RustEngine] Deleted task ${taskId}`);
+        } catch (error) {
+            console.error(`[RustEngine] Failed to delete task ${taskId}:`, error);
             // Don't throw - allow graceful degradation
         }
     }

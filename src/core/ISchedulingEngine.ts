@@ -46,13 +46,27 @@ export interface ISchedulingEngine {
     /**
      * Update a single task in the engine's internal state
      * 
-     * IMPORTANT: This must update the internal task array.
-     * Not a no-op - required for state consistency.
+     * IMPORTANT: This assumes the task already exists in the engine state.
+     * For new tasks, use addTask() instead.
      * 
      * @param id - Task ID to update
      * @param updates - Partial task with changed fields
      */
     updateTask(id: string, updates: Partial<Task>): Promise<void>;
+
+    /**
+     * Add a new task to the engine's internal state
+     * 
+     * @param task - Complete task object to add
+     */
+    addTask(task: Task): Promise<void>;
+
+    /**
+     * Delete a task from the engine's internal state
+     * 
+     * @param taskId - Task ID to delete
+     */
+    deleteTask(taskId: string): Promise<void>;
 
     /**
      * Sync all tasks (bulk update)

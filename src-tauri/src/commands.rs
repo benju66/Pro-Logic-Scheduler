@@ -40,6 +40,7 @@ pub fn initialize_engine(
 /// Update a single task in the engine state
 /// 
 /// Called from RustEngine.updateTask()
+/// Assumes the task already exists
 #[tauri::command]
 pub fn update_engine_task(
     id: String,
@@ -61,6 +62,54 @@ pub fn update_engine_task(
     project.update_task(&id, updates)?;
     
     Ok("Updated".to_string())
+}
+
+/// Add a new task to the engine state
+/// 
+/// Called from RustEngine.addTask()
+#[tauri::command]
+pub fn add_engine_task(
+    task_json: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    // Parse task
+    let task: Task = serde_json::from_str(&task_json)
+        .map_err(|e| format!("Failed to parse task: {}", e))?;
+
+    // Lock state and add
+    let mut project = state.project.lock()
+        .map_err(|e| format!("Failed to lock state: {}", e))?;
+
+    if !project.initialized {
+        return Err("Engine not initialized".to_string());
+    }
+
+    project.add_task(task);
+    
+    println!("[Rust Engine] Added task");
+    Ok("Added".to_string())
+}
+
+/// Delete a task from the engine state
+/// 
+/// Called from RustEngine.deleteTask()
+#[tauri::command]
+pub fn delete_engine_task(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    // Lock state and delete
+    let mut project = state.project.lock()
+        .map_err(|e| format!("Failed to lock state: {}", e))?;
+
+    if !project.initialized {
+        return Err("Engine not initialized".to_string());
+    }
+
+    project.delete_task(&id)?;
+    
+    println!("[Rust Engine] Deleted task {}", id);
+    Ok("Deleted".to_string())
 }
 
 /// Sync all tasks (bulk update)

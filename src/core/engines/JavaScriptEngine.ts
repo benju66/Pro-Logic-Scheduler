@@ -52,8 +52,8 @@ export class JavaScriptEngine implements ISchedulingEngine {
     /**
      * Update a single task in internal state
      * 
-     * CRITICAL: This is NOT a no-op. The interface contract requires
-     * that recalculateAll() uses internal state, so we must keep it current.
+     * CRITICAL: Assumes the task already exists in internal state.
+     * For new tasks, use addTask() instead.
      */
     async updateTask(id: string, updates: Partial<Task>): Promise<void> {
         if (!this.initialized) {
@@ -69,9 +69,45 @@ export class JavaScriptEngine implements ISchedulingEngine {
                 ...updates,
             };
         } else {
-            // Task not found - might be a new task, add it
-            console.warn(`[JavaScriptEngine] Task ${id} not found for update, adding as new`);
-            this.tasks.push(updates as Task);
+            console.warn(`[JavaScriptEngine] Task ${id} not found for update`);
+        }
+    }
+
+    /**
+     * Add a new task to internal state
+     */
+    async addTask(task: Task): Promise<void> {
+        if (!this.initialized) {
+            console.warn('[JavaScriptEngine] addTask called before initialization');
+            return;
+        }
+
+        // Check if task already exists
+        const existingIndex = this.tasks.findIndex(t => t.id === task.id);
+        if (existingIndex !== -1) {
+            console.warn(`[JavaScriptEngine] Task ${task.id} already exists, updating instead`);
+            this.tasks[existingIndex] = task;
+        } else {
+            this.tasks.push(task);
+            console.log(`[JavaScriptEngine] Added task ${task.id}`);
+        }
+    }
+
+    /**
+     * Delete a task from internal state
+     */
+    async deleteTask(taskId: string): Promise<void> {
+        if (!this.initialized) {
+            console.warn('[JavaScriptEngine] deleteTask called before initialization');
+            return;
+        }
+
+        const taskIndex = this.tasks.findIndex(t => t.id === taskId);
+        if (taskIndex !== -1) {
+            this.tasks.splice(taskIndex, 1);
+            console.log(`[JavaScriptEngine] Deleted task ${taskId}`);
+        } else {
+            console.warn(`[JavaScriptEngine] Task ${taskId} not found for deletion`);
         }
     }
 

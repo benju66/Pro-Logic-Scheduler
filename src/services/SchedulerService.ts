@@ -2679,6 +2679,13 @@ export class SchedulerService {
             this._updateHeaderCheckboxState();
             
             // Recalculate and render
+            // Sync new task to engine
+            if (this.engine) {
+                this.engine.addTask(task).catch(error => {
+                    console.warn('[SchedulerService] Failed to sync new task to engine:', error);
+                });
+            }
+            
             this.recalculateAll();
             this.saveData();
             this.render();
@@ -2695,14 +2702,28 @@ export class SchedulerService {
     deleteTask(taskId: string): void {
         this.saveCheckpoint();
         
-        // Delete children recursively
+        // Collect all task IDs to delete (including children)
+        const idsToDelete: string[] = [];
         const deleteRecursive = (id: string): void => {
             const children = this.taskStore.getChildren(id);
             children.forEach(child => deleteRecursive(child.id));
-            this.taskStore.delete(id);
+            idsToDelete.push(id);
         };
-
         deleteRecursive(taskId);
+        
+        // Delete from task store
+        idsToDelete.forEach(id => {
+            this.taskStore.delete(id);
+        });
+        
+        // Sync deletions to engine
+        if (this.engine) {
+            idsToDelete.forEach(id => {
+                this.engine!.deleteTask(id).catch(error => {
+                    console.warn(`[SchedulerService] Failed to sync task deletion to engine for ${id}:`, error);
+                });
+            });
+        }
         
         this.selectedIds.delete(taskId);
         if (this.focusedId === taskId) {
@@ -3632,10 +3653,11 @@ export class SchedulerService {
         }
 
         // === CHANGED: Handle Async Engine Properly ===
+        // NOTE: Engine state is kept in sync via delta updates (addTask/updateTask/deleteTask)
+        // No need to syncTasks here - engine already has latest state
         if (this.engine) {
-            // Sync tasks to engine -> Calculate -> Apply
-            this.engine.syncTasks(tasks)
-                .then(() => this.engine!.recalculateAll())
+            // Calculate directly - engine state is already up-to-date
+            this.engine.recalculateAll()
                 .then((result) => {
                     this._applyCalculationResult(result);
                     this._lastCalcTime = performance.now() - startTime;
@@ -3769,13 +3791,8 @@ export class SchedulerService {
             return;
         }
         
-        // Sync engine with latest tasks before recalculating
-        if (this.engine) {
-            const tasks = this.taskStore.getAll();
-            this.engine.syncTasks(tasks).catch(error => {
-                console.warn('[SchedulerService] Failed to sync tasks to engine:', error);
-            });
-        }
+        // NOTE: Engine state is kept in sync via delta updates (addTask/updateTask/deleteTask)
+        // No need to syncTasks here - engine already has latest state
         
         // Tasks changed - trigger recalculation and render
         this.recalculateAll();

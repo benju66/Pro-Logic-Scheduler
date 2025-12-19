@@ -12,6 +12,8 @@ use engine_state::AppState;
 use commands::{
     initialize_engine,
     update_engine_task,
+    add_engine_task,
+    delete_engine_task,
     sync_engine_tasks,
     calculate_cpm,
     get_engine_status,
@@ -35,6 +37,8 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             initialize_engine,
             update_engine_task,
+            add_engine_task,
+            delete_engine_task,
             sync_engine_tasks,
             calculate_cpm,
             get_engine_status,

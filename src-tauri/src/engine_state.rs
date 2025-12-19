@@ -42,6 +42,7 @@ impl ProjectState {
     }
 
     /// Update a single task
+    /// Assumes the task already exists
     pub fn update_task(&mut self, id: &str, updates: serde_json::Value) -> Result<(), String> {
         if let Some(task) = self.tasks.get_mut(id) {
             // Apply updates from JSON object
@@ -99,6 +100,11 @@ impl ProjectState {
                                 task.sort_key = v.to_string();
                             }
                         }
+                        "dependencies" => {
+                            if let Ok(deps) = serde_json::from_value(value.clone()) {
+                                task.dependencies = deps;
+                            }
+                        }
                         // Add more fields as needed
                         _ => {
                             // Ignore unknown fields for forward compatibility
@@ -110,6 +116,33 @@ impl ProjectState {
         } else {
             Err(format!("Task {} not found", id))
         }
+    }
+
+    /// Add a new task to the state
+    pub fn add_task(&mut self, task: Task) {
+        let task_id = task.id.clone();
+        
+        // Add to tasks map
+        self.tasks.insert(task_id.clone(), task);
+        
+        // Add to task_order if not already present
+        if !self.task_order.contains(&task_id) {
+            self.task_order.push(task_id);
+        }
+    }
+
+    /// Delete a task from the state
+    /// Removes from both tasks map and task_order vector
+    pub fn delete_task(&mut self, task_id: &str) -> Result<(), String> {
+        // Remove from tasks map
+        if self.tasks.remove(task_id).is_none() {
+            return Err(format!("Task {} not found", task_id));
+        }
+        
+        // Remove from task_order vector
+        self.task_order.retain(|id| id != task_id);
+        
+        Ok(())
     }
 
     /// Get all tasks in order
