@@ -29,15 +29,18 @@ import { HistoryManager } from '../data/HistoryManager';
 import { ToastService } from '../ui/services/ToastService';
 import { FileService } from '../ui/services/FileService';
 import { KeyboardService } from '../ui/services/KeyboardService';
-import { SyncService } from './SyncService';
 import { OrderingService } from './OrderingService';
-import { VirtualScrollGrid } from '../ui/components/VirtualScrollGrid';
-import { CanvasGantt } from '../ui/components/CanvasGantt';
 import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport';
 import { GridRenderer } from '../ui/components/scheduler/GridRenderer';
 import { GanttRenderer } from '../ui/components/scheduler/GanttRenderer';
 import { SideDrawer } from '../ui/components/SideDrawer';
-import type { GridRendererOptions, GanttRendererOptions, SchedulerViewportOptions } from '../ui/components/scheduler/types';
+import type { 
+    GridRendererOptions, 
+    GanttRendererOptions, 
+    SchedulerViewportOptions,
+    VirtualScrollGridFacade,
+    CanvasGanttFacade
+} from '../ui/components/scheduler/types';
 import { DependenciesModal } from '../ui/components/DependenciesModal';
 import { CalendarModal } from '../ui/components/CalendarModal';
 import { ColumnSettingsModal } from '../ui/components/ColumnSettingsModal';
@@ -93,11 +96,10 @@ export class SchedulerService {
     public toastService!: ToastService;  // Public for access from main.ts
     private fileService!: FileService;
     private keyboardService: KeyboardService | null = null;
-    private syncService: SyncService | null = null;
 
     // UI components (initialized in init())
-    public grid: VirtualScrollGrid | null = null;  // Public for access from AppInitializer and UIEventManager
-    public gantt: CanvasGantt | null = null;  // Public for access from AppInitializer and UIEventManager
+    public grid: VirtualScrollGridFacade | null = null;  // Public for access from AppInitializer and UIEventManager
+    public gantt: CanvasGanttFacade | null = null;  // Public for access from AppInitializer and UIEventManager
     private drawer: SideDrawer | null = null;
     private dependenciesModal: DependenciesModal | null = null;
     private calendarModal: CalendarModal | null = null;
@@ -173,9 +175,6 @@ export class SchedulerService {
             isTauri: this.isTauri,
             onToast: (msg, type) => this.toastService.show(msg, type)
         });
-
-        // Sync service (will be initialized after grid/gantt created)
-        this.syncService = null;
     }
 
     /**
@@ -270,9 +269,6 @@ export class SchedulerService {
         this.grid = this._createGridFacade(viewport);
         this.gantt = this._createGanttFacade(viewport);
 
-        // Sync service is no longer needed (viewport handles sync internally)
-        this.syncService = null;
-
         // Create side drawer
         if (drawerContainer) {
             this.drawer = new SideDrawer({
@@ -330,7 +326,7 @@ export class SchedulerService {
     /**
      * Create facade wrapper for VirtualScrollGrid API compatibility
      */
-    private _createGridFacade(viewport: SchedulerViewport): VirtualScrollGrid {
+    private _createGridFacade(viewport: SchedulerViewport): VirtualScrollGridFacade {
         // Return a facade object that implements VirtualScrollGrid interface
         return {
             setData: (tasks: Task[]) => viewport.setData(tasks),
@@ -359,13 +355,13 @@ export class SchedulerService {
                 renderCount: 0,
             }),
             destroy: () => viewport.destroy(),
-        } as VirtualScrollGrid;
+        };
     }
 
     /**
      * Create facade wrapper for CanvasGantt API compatibility
      */
-    private _createGanttFacade(viewport: SchedulerViewport): CanvasGantt {
+    private _createGanttFacade(viewport: SchedulerViewport): CanvasGanttFacade {
         // Return a facade object that implements CanvasGantt interface
         return {
             setData: (tasks: Task[]) => viewport.setData(tasks),
@@ -390,7 +386,7 @@ export class SchedulerService {
                 renderCount: 0,
             }),
             destroy: () => viewport.destroy(),
-        } as unknown as CanvasGantt;
+        };
     }
 
     /**
@@ -1417,6 +1413,156 @@ export class SchedulerService {
     }
 
     /**
+     * Apply task edit with scheduling triangle logic
+     * 
+     * Centralizes the CPM-aware edit logic used by both grid and drawer:
+     * - Duration edit → Update duration, CPM recalculates end
+     * - Start edit → Apply SNET constraint
+     * - End edit → Apply FNLT constraint
+     * - Actuals → Update without affecting CPM
+     * - Constraints → Update and trigger recalculation
+     * 
+     * @private
+     * @param taskId - Task ID
+     * @param field - Field name
+     * @param value - New value
+     * @returns Object indicating what follow-up actions are needed
+     */
+    private _applyTaskEdit(taskId: string, field: string, value: unknown): { 
+        needsRecalc: boolean; 
+        needsRender: boolean;
+        success: boolean;
+    } {
+        const task = this.taskStore.getById(taskId);
+        if (!task) {
+            return { needsRecalc: false, needsRender: false, success: false };
+        }
+        
+        const isParent = this.taskStore.isParent(taskId);
+        let needsRecalc = false;
+        let needsRender = false;
+
+        switch (field) {
+            case 'duration':
+                // Duration edit: update duration, CPM will recalculate end
+                // This is standard CPM behavior - no constraint needed
+                const newDuration = Math.max(1, parseInt(String(value)) || 1);
+                this.taskStore.update(taskId, { duration: newDuration });
+                needsRecalc = true;
+                break;
+                
+            case 'start':
+                // Start edit: User is setting a start constraint
+                // Apply SNET (Start No Earlier Than) so CPM respects this date
+                if (value && !isParent) {
+                    const startValue = String(value);
+                    // Validate date format
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(startValue)) {
+                        console.warn('[SchedulerService] Invalid date format:', startValue);
+                        return { needsRecalc: false, needsRender: false, success: false };
+                    }
+                    
+                    this.taskStore.update(taskId, { 
+                        start: startValue,
+                        constraintType: 'snet',
+                        constraintDate: startValue 
+                    });
+                    this.toastService.info('Start constraint (SNET) applied');
+                    needsRecalc = true;
+                }
+                break;
+                
+            case 'end':
+                // End edit: User is setting a finish deadline
+                // Apply FNLT (Finish No Later Than) so CPM respects this date
+                if (value && !isParent) {
+                    const endValue = String(value);
+                    // Validate date format
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(endValue)) {
+                        console.warn('[SchedulerService] Invalid date format:', endValue);
+                        return { needsRecalc: false, needsRender: false, success: false };
+                    }
+                    
+                    // Check if deadline is earlier than current start (impossible constraint)
+                    if (task.start && endValue < task.start) {
+                        this.toastService.warning('Deadline is earlier than start date - schedule may be impossible');
+                    }
+                    
+                    this.taskStore.update(taskId, { 
+                        constraintType: 'fnlt',
+                        constraintDate: endValue 
+                    });
+                    this.toastService.info('Finish deadline (FNLT) applied');
+                    needsRecalc = true;
+                }
+                break;
+                
+            case 'actualStart':
+                // Actual start edit: Update actual start date (does NOT trigger CPM recalculation)
+                if (value && !isParent) {
+                    const actualStartValue = String(value);
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(actualStartValue)) {
+                        console.warn('[SchedulerService] Invalid date format:', actualStartValue);
+                        return { needsRecalc: false, needsRender: false, success: false };
+                    }
+                    this.taskStore.update(taskId, { actualStart: actualStartValue });
+                    needsRender = true; // Re-render to update variance display
+                } else if (!value && !isParent) {
+                    // Clear actual start
+                    this.taskStore.update(taskId, { actualStart: null });
+                    needsRender = true;
+                }
+                break;
+                
+            case 'actualFinish':
+                // Actual finish edit: Update actual finish date (does NOT trigger CPM recalculation)
+                if (value && !isParent) {
+                    const actualFinishValue = String(value);
+                    if (!/^\d{4}-\d{2}-\d{2}$/.test(actualFinishValue)) {
+                        console.warn('[SchedulerService] Invalid date format:', actualFinishValue);
+                        return { needsRecalc: false, needsRender: false, success: false };
+                    }
+                    this.taskStore.update(taskId, { actualFinish: actualFinishValue });
+                    needsRender = true; // Re-render to update variance display
+                } else if (!value && !isParent) {
+                    // Clear actual finish
+                    this.taskStore.update(taskId, { actualFinish: null });
+                    needsRender = true;
+                }
+                break;
+                
+            case 'constraintType':
+                // Constraint type change: if set to ASAP, clear constraint date
+                const constraintValue = String(value);
+                if (constraintValue === 'asap') {
+                    this.taskStore.update(taskId, { 
+                        constraintType: 'asap',
+                        constraintDate: null 
+                    });
+                    this.toastService.info('Constraint removed - task will schedule based on dependencies');
+                } else {
+                    // For other constraint types, just update
+                    this.taskStore.update(taskId, { constraintType: constraintValue as ConstraintType });
+                }
+                needsRecalc = true;
+                break;
+                
+            case 'constraintDate':
+                // Constraint date change
+                this.taskStore.update(taskId, { constraintDate: String(value) || null });
+                needsRecalc = true;
+                break;
+                
+            default:
+                // All other fields - simple update (name, notes, progress, etc.)
+                this.taskStore.update(taskId, { [field]: value } as Partial<Task>);
+                needsRender = true;
+        }
+        
+        return { needsRecalc, needsRender, success: true };
+    }
+
+    /**
      * Handle cell change with proper scheduling triangle logic
      * 
      * Matches industry-standard CPM behavior (same as MS Project):
@@ -1439,129 +1585,24 @@ export class SchedulerService {
         
         this.saveCheckpoint();
         
-        const task = this.taskStore.getById(taskId);
-        if (!task) return;
+        const result = this._applyTaskEdit(taskId, field, value);
         
-        // Check if this is a parent/summary task (dates roll up from children)
-        const isParent = this.taskStore.isParent(taskId);
-
-        // Handle scheduling triangle fields with proper CPM logic
-        switch (field) {
-            case 'duration':
-                // Duration edit: update duration, CPM will recalculate end
-                // This is standard CPM behavior - no constraint needed
-                const newDuration = Math.max(1, parseInt(String(value)) || 1);
-                this.taskStore.update(taskId, { duration: newDuration });
-                break;
-                
-            case 'start':
-                // Start edit: User is setting a start constraint
-                // Apply SNET (Start No Earlier Than) so CPM respects this date
-                if (value && !isParent) {
-                    const startValue = String(value);
-                    // Validate date format
-                    if (!/^\d{4}-\d{2}-\d{2}$/.test(startValue)) {
-                        console.warn('[SchedulerService] Invalid date format:', startValue);
-                        return;
-                    }
-                    
-                    this.taskStore.update(taskId, { 
-                        start: startValue,
-                        constraintType: 'snet',
-                        constraintDate: startValue 
-                    });
-                    this.toastService.info('Start constraint (SNET) applied');
-                }
-                break;
-                
-            case 'end':
-                // End edit: User is setting a finish deadline
-                // Apply FNLT (Finish No Later Than) so CPM respects this date
-                if (value && !isParent) {
-                    const endValue = String(value);
-                    // Validate date format
-                    if (!/^\d{4}-\d{2}-\d{2}$/.test(endValue)) {
-                        console.warn('[SchedulerService] Invalid date format:', endValue);
-                        return;
-                    }
-                    
-                    // Check if deadline is earlier than current start (impossible constraint)
-                    if (task.start && endValue < task.start) {
-                        this.toastService.warning('Deadline is earlier than start date - schedule may be impossible');
-                    }
-                    
-                    this.taskStore.update(taskId, { 
-                        constraintType: 'fnlt',
-                        constraintDate: endValue 
-                    });
-                    this.toastService.info('Finish deadline (FNLT) applied');
-                }
-                break;
-                
-            case 'actualStart':
-                // Actual start edit: Update actual start date (does NOT trigger CPM recalculation)
-                if (value && !isParent) {
-                    const actualStartValue = String(value);
-                    if (!/^\d{4}-\d{2}-\d{2}$/.test(actualStartValue)) {
-                        console.warn('[SchedulerService] Invalid date format:', actualStartValue);
-                        return;
-                    }
-                    this.taskStore.update(taskId, { actualStart: actualStartValue });
-                    // Re-render to update variance display
-                    this.render();
-                } else if (!value && !isParent) {
-                    // Clear actual start
-                    this.taskStore.update(taskId, { actualStart: null });
-                    this.render();
-                }
-                break;
-                
-            case 'actualFinish':
-                // Actual finish edit: Update actual finish date (does NOT trigger CPM recalculation)
-                if (value && !isParent) {
-                    const actualFinishValue = String(value);
-                    if (!/^\d{4}-\d{2}-\d{2}$/.test(actualFinishValue)) {
-                        console.warn('[SchedulerService] Invalid date format:', actualFinishValue);
-                        return;
-                    }
-                    this.taskStore.update(taskId, { actualFinish: actualFinishValue });
-                    // Re-render to update variance display
-                    this.render();
-                } else if (!value && !isParent) {
-                    // Clear actual finish
-                    this.taskStore.update(taskId, { actualFinish: null });
-                    this.render();
-                }
-                break;
-                
-            case 'constraintType':
-                // Constraint type change: if set to ASAP, clear constraint date
-                const constraintValue = String(value);
-                if (constraintValue === 'asap') {
-                    this.taskStore.update(taskId, { 
-                        constraintType: 'asap',
-                        constraintDate: null 
-                    });
-                    this.toastService.info('Constraint removed - task will schedule based on dependencies');
-                } else {
-                    // For other constraint types, just update
-                    this.taskStore.update(taskId, { constraintType: constraintValue as ConstraintType });
-                }
-                break;
-                
-            default:
-                // All other fields - simple update
-                this.taskStore.update(taskId, { [field]: value });
+        if (!result.success) {
+            return;
         }
-
-        // Recalculate if date/duration changed (but NOT for actuals - they don't affect schedule)
-        if (['start', 'end', 'duration'].includes(field) && !['actualStart', 'actualFinish'].includes(field)) {
+        
+        // Handle follow-up actions
+        if (result.needsRecalc) {
             this.recalculateAll();
-        } else {
+            this.saveData();
             this.render();
+        } else if (result.needsRender) {
+            this.render();
+            this.saveData();
+        } else {
+            // Even if no recalc/render needed, save the data
+            this.saveData();
         }
-
-        this.saveData();
     }
 
     /**
@@ -1639,82 +1680,22 @@ export class SchedulerService {
     private _handleDrawerUpdate(taskId: string, field: string, value: unknown): void {
         this.saveCheckpoint();
         
-        const task = this.taskStore.getById(taskId);
-        if (!task) return;
+        const result = this._applyTaskEdit(taskId, field, value);
         
-        const isParent = this.taskStore.isParent(taskId);
-
-        // Handle scheduling triangle fields with proper CPM logic
-        switch (field) {
-            case 'duration':
-                // Duration edit: update duration, CPM will recalculate end
-                const newDuration = Math.max(1, parseInt(String(value)) || 1);
-                this.taskStore.update(taskId, { duration: newDuration });
-                break;
-                
-            case 'start':
-                // Start edit: Apply SNET constraint
-                if (value && !isParent) {
-                    const startValue = String(value);
-                    if (!/^\d{4}-\d{2}-\d{2}$/.test(startValue)) {
-                        console.warn('[SchedulerService] Invalid date format:', startValue);
-                        return;
-                    }
-                    
-                    this.taskStore.update(taskId, { 
-                        start: startValue,
-                        constraintType: 'snet',
-                        constraintDate: startValue 
-                    });
-                    this.toastService.info('Start constraint (SNET) applied');
-                }
-                break;
-                
-            case 'end':
-                // End edit: Apply FNLT constraint (deadline)
-                if (value && !isParent) {
-                    const endValue = String(value);
-                    if (!/^\d{4}-\d{2}-\d{2}$/.test(endValue)) {
-                        console.warn('[SchedulerService] Invalid date format:', endValue);
-                        return;
-                    }
-                    
-                    if (task.start && endValue < task.start) {
-                        this.toastService.warning('Deadline is earlier than start date - schedule may be impossible');
-                    }
-                    
-                    this.taskStore.update(taskId, { 
-                        constraintType: 'fnlt',
-                        constraintDate: endValue 
-                    });
-                    this.toastService.info('Finish deadline (FNLT) applied');
-                }
-                break;
-                
-            case 'constraintType':
-                // Constraint type change
-                const constraintValue = String(value);
-                if (constraintValue === 'asap') {
-                    this.taskStore.update(taskId, { 
-                        constraintType: 'asap',
-                        constraintDate: null 
-                    });
-                    this.toastService.info('Constraint removed - task will schedule based on dependencies');
-                } else {
-                    this.taskStore.update(taskId, { constraintType: constraintValue as ConstraintType });
-                }
-                break;
-                
-            default:
-                // All other fields - simple update
-                this.taskStore.update(taskId, { [field]: value } as Partial<Task>);
+        if (!result.success) {
+            return;
         }
-
-        // Recalculate if date/duration/constraint changed
-        if (['start', 'end', 'duration', 'constraintType', 'constraintDate'].includes(field)) {
+        
+        // Handle follow-up actions
+        if (result.needsRecalc) {
             this.recalculateAll();
-        } else {
+            this.saveData();
             this.render();
+        } else if (result.needsRender) {
+            this.render();
+            this.saveData();
+        } else {
+            this.saveData();
         }
         
         // Sync drawer with updated values (dates may have changed from CPM)
@@ -1724,8 +1705,6 @@ export class SchedulerService {
                 this.drawer.sync(updatedTask);
             }
         }
-
-        this.saveData();
     }
 
     /**
@@ -2341,23 +2320,6 @@ export class SchedulerService {
             requestAnimationFrame(() => {
                 this._isSyncingHeader = false;
             });
-        }
-    }
-
-    private _syncScrollToGantt(scrollTop: number): void {
-        if (this.syncService) {
-            this.syncService.syncGridToGantt(scrollTop);
-        }
-    }
-
-    /**
-     * Sync scroll from Gantt to grid
-     * @private
-     * @param scrollTop - Scroll position
-     */
-    private _syncScrollToGrid(scrollTop: number): void {
-        if (this.syncService) {
-            this.syncService.syncGanttToGrid(scrollTop);
         }
     }
 

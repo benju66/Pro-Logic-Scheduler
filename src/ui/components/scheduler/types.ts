@@ -181,3 +181,52 @@ export interface PerformanceMetrics {
     avgRenderTime: number;
 }
 
+/**
+ * Facade interface for VirtualScrollGrid API compatibility
+ * Used when SchedulerViewport wraps grid functionality
+ */
+export interface VirtualScrollGridFacade {
+    setData(tasks: Task[]): void;
+    setVisibleData(tasks: Task[]): void;
+    setSelection(
+        selectedIds: Set<string>, 
+        focusedId?: string | null, 
+        options?: { focusCell?: boolean; focusField?: string }
+    ): void;
+    scrollToTask(taskId: string): void;
+    focusCell(taskId: string, field: string): void;
+    refresh(): void;
+    updateColumns(columns: GridColumn[]): void;
+    updateRow(taskId: string): void;
+    setScrollTop(scrollTop: number): void;
+    getScrollTop(): number;
+    getStats(): {
+        totalTasks: number;
+        visibleRange: string;
+        renderedRows: number;
+        poolSize: number;
+        renderCount: number;
+    };
+    destroy(): void;
+}
+
+/**
+ * Facade interface for CanvasGantt API compatibility
+ * Used when SchedulerViewport wraps gantt functionality
+ */
+export interface CanvasGanttFacade {
+    setData(tasks: Task[]): void;
+    setSelection(selectedIds: Set<string>): void;
+    setViewMode(mode: string): void;
+    setScrollTop(scrollTop: number): void;
+    getScrollTop(): number;
+    scrollToTask(taskId: string): void;
+    refresh(): void;
+    getStats(): {
+        totalTasks: number;
+        visibleRange: string;
+        renderedRows?: number;
+    };
+    destroy(): void;
+}
+
