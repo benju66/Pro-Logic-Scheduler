@@ -67,11 +67,15 @@ interface Task {
 * **Implementation:** Handled by `OrderingService.ts` using the `fractional-indexing` library.
 * **Benefit:** Allows reordering operations (drag-and-drop) to update **only one record**, making it compatible with offline-first and SQL databases.
 
-### 2.3. State Management
+### 2.3. State Management (Event Sourcing)
 
 * **TaskStore:** Central repository. Manages CRUD and hierarchy queries (`getChildren`, `getVisibleTasks`). Emits `onChange` events.
 * **CalendarStore:** Manages working days, holidays, and weekends.
-* **HistoryManager:** Implements Undo/Redo via snapshots of the Store state.
+* **HistoryManager (Command Pattern):**
+    * **No Snapshots:** To support high performance and SQLite auditability, the system does NOT store full JSON snapshots of the state.
+    * **Command Pattern:** Every user intent (e.g., "Indent Task", "Update Duration") is reified as a Command object.
+    * **Undo/Redo:** Handled by pushing the *inverse* command to an undo stack (e.g., Undo "Indent" = Execute "Outdent").
+    * **Persistence:** All commands are logged to the SQLite `events` table.
 
 ---
 
@@ -118,6 +122,13 @@ The `SchedulerService` interprets user edits to maintain logical consistency:
 * **Edit Start:** Apply **SNET** (Start No Earlier Than) constraint.
 * **Edit End:** Apply **FNLT** (Finish No Later Than) constraint (Deadline).
 * **Edit Actuals:** Update `actualStart`/`actualFinish`. Does **not** affect CPM dates (variance tracking only).
+
+### 3.4. Performance Strategy (Rust Migration)
+
+To achieve 60 FPS with >10,000 tasks, the calculation engine will be migrated in **Phase 2**:
+* **Migration:** `src/core/CPM.ts` logic will be ported to **Rust/WASM**.
+* **Threading:** Calculations will run on a background thread to prevent UI blocking during heavy forward/backward passes.
+* **Monte Carlo:** The Rust engine will also power the future "Schedule Confidence" simulations.
 
 ---
 
@@ -184,10 +195,24 @@ The `KeyboardService` maps keys to Service actions:
 
 ---
 
-## 6. Implementation Plan (SQLite Migration Readiness)
+## 6. Implementation Plan (SQLite & Event Sourcing)
 
-To migrate to SQLite, the following mapping must be enforced:
+To migrate to SQLite (Phase 1), the data layer must transition to an **Event Sourcing** model using `tauri-plugin-sql`.
 
+### 6.1. The Events Table
+All application state changes must be logged to an append-only table to ensure auditability and crash recovery.
+
+* **Table Name:** `events`
+* **Schema:**
+    * `id`: INTEGER PRIMARY KEY AUTOINCREMENT
+    * `task_id`: TEXT (UUID) - Target of the action
+    * `action_type`: TEXT (e.g., `TASK_UPDATE`, `TASK_CREATE`, `LINK_ADD`, `INDENT`)
+    * `payload`: JSON - The data required to replay the action (e.g., `{ "field": "duration", "old": 5, "new": 10 }`)
+    * `timestamp`: INTEGER (Unix Epoch)
+    * `user_id`: TEXT (Optional, for future collaboration)
+* **Replay Requirement:** The application state must be fully reproducible by replaying these events from the database.
+
+### 6.2. Schema Mapping Rules
 1. **Ordering:** The SQL table MUST store `sort_key` (VARCHAR). Indexing on `(parent_id, sort_key)` is required for performance.
 2. **Dates:** Store as ISO strings (`YYYY-MM-DD`).
 3. **Constraints:** Store `constraint_type` and `constraint_date`.
@@ -214,5 +239,35 @@ To migrate to SQLite, the following mapping must be enforced:
 * `refresh()`: Forces a layout recalculation and render cycle.
 
 ```
+
+---
+
+## 8. Quality Assurance & AI Verification Strategy
+
+To ensure "Bulletproof" reliability without a human QA team, the system relies on an **Automated Verification Gate**.
+
+### 8.1. The "Verify" Protocol
+Every development phase must include a corresponding verification script (e.g., `verify-phase1.ts`).
+* **Requirement:** The AI Developer must run this script after every significant code change.
+* **Success Criteria:** A change is only considered "Complete" when the verification script prints `VERIFICATION PASSED`.
+
+### 8.2. Testing Layers
+1.  **Unit Tests (Vitest):**
+    * **Scope:** `CPM.ts`, `DateUtils.ts`, `OrderingService.ts`.
+    * **Mandate:** 100% logical branch coverage for core math/dates.
+    * **Performance:** Must run in <100ms.
+2.  **Integration Tests (The "Verify" Scripts):**
+    * **Scope:** `SchedulerService` + `TaskStore` + `HistoryManager`.
+    * **Mandate:** Simulate real user flows (Add Task -> Indent -> Undo -> Redo) and assert state integrity.
+3.  **Performance "Canaries":**
+    * **Mandate:** Rendering loop must never exceed 16.6ms (60 FPS) for 1,000 visible rows.
+    * **Regression:** Any commit that drops FPS below 55 must be reverted.
+
+### 8.3. Self-Correction Loop
+If a verification step fails:
+1.  The AI must analyze the `verify` output error.
+2.  The AI must propose a fix.
+3.  The AI must re-run `verify` to confirm the fix.
+4.  Only then can the code be committed.
 
 ```
