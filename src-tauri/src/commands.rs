@@ -91,21 +91,31 @@ pub fn sync_engine_tasks(
 /// Run CPM calculation
 /// 
 /// Called from RustEngine.recalculateAll()
-/// Currently returns passthrough result - actual CPM in Phase 3b
+/// Uses actual Rust CPM implementation
 #[tauri::command]
 pub fn calculate_cpm(
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    let project = state.project.lock()
+    let mut project = state.project.lock()
         .map_err(|e| format!("Failed to lock state: {}", e))?;
 
     if !project.initialized {
         return Err("Engine not initialized".to_string());
     }
 
-    // Phase 3a: Return passthrough result
-    // Phase 3b: Implement actual Rust CPM here
-    let result = project.create_passthrough_result();
+    // Get calendar - must be initialized
+    let calendar = project.calendar.as_ref()
+        .ok_or("Calendar not initialized".to_string())?;
+
+    // Get tasks as mutable vector
+    let mut tasks = project.get_tasks_ordered();
+    
+    // Run CPM calculation
+    use crate::cpm::calculate;
+    let result = calculate(&mut tasks, calendar);
+    
+    // Update project state with calculated tasks
+    project.load_tasks(result.tasks.clone());
     
     serde_json::to_string(&result)
         .map_err(|e| format!("Failed to serialize result: {}", e))

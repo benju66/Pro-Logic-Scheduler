@@ -4,6 +4,8 @@
 mod types;
 mod engine_state;
 mod commands;
+mod date_utils;
+mod cpm;
 
 use tauri::Manager;
 use engine_state::AppState;
