@@ -184,9 +184,9 @@ window.showToast = showToast as (message: string, type?: string) => void;
     }
 };
 
-(window as Window & { clearTasks?: () => void }).clearTasks = function(): void {
+(window as Window & { clearTasks?: () => Promise<void> }).clearTasks = async function(): Promise<void> {
     if (uiEventManager) {
-        uiEventManager.clearTasks();
+        await uiEventManager.clearTasks();
     }
 };
 

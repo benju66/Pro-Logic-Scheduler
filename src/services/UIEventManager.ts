@@ -505,7 +505,10 @@ export class UIEventManager {
       
       // Route actions to appropriate handlers
       if (action) {
-        this._handleAction(action, button);
+        // Handle async actions (don't await - let them run)
+        this._handleAction(action, button).catch(error => {
+          console.error('[UIEventManager] Action handler error:', error);
+        });
       }
     };
     
@@ -524,7 +527,7 @@ export class UIEventManager {
    * @param action - Action name
    * @param button - Button element
    */
-  private _handleAction(action: string, button: HTMLElement): void {
+  private async _handleAction(action: string, button: HTMLElement): Promise<void> {
     const scheduler = this.getScheduler();
     
     try {
@@ -592,7 +595,7 @@ export class UIEventManager {
           this.generate1000Tasks();
           break;
         case 'clear-tasks':
-          this.clearTasks();
+          await this.clearTasks();
           break;
         case 'show-stats':
           this.showStats();
@@ -785,25 +788,15 @@ export class UIEventManager {
   /**
    * Clear all tasks
    */
-  clearTasks(): void {
+  async clearTasks(): Promise<void> {
     const scheduler = this.getScheduler();
     if (!scheduler) {
       console.error('Scheduler not initialized');
       return;
     }
-    if (!confirm('Clear all tasks?')) return;
     
-    // Clear tasks
-    scheduler.tasks = [];
-    scheduler.selectedIds.clear();
-    scheduler.focusedId = null;
-    
-    // Save and render
-    scheduler.saveData();
-    scheduler.render();
-    
-    // Also trigger recalculation to reset CPM state
-    scheduler.recalculateAll();
+    // Use the centralized clearAllData method which handles SQLite purging
+    await scheduler.clearAllData();
     
     this._showToast('All tasks cleared', 'info');
   }

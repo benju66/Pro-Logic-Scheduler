@@ -54,7 +54,7 @@ declare global {
     /** Task generation handlers (backward compatibility) */
     generate1000Tasks?: () => void;
     generate5000Tasks?: () => void;
-    clearTasks?: () => void;
+    clearTasks?: () => Promise<void>;
     
     /** UI handlers (backward compatibility) */
     showStats?: () => void;

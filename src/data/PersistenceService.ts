@@ -457,5 +457,41 @@ CREATE TABLE IF NOT EXISTS snapshots (
   getInitialized(): boolean {
     return this.isInitialized;
   }
+
+  /**
+   * Purge all data from the database (Hard Reset)
+   * Wipes all tables and reclaims disk space
+   */
+  async purgeDatabase(): Promise<void> {
+    if (!this.db) {
+      console.warn('[PersistenceService] Database not initialized - cannot purge');
+      return;
+    }
+
+    try {
+      // Stop the flush loop to prevent interference
+      if (this.flushTimer !== null) {
+        clearInterval(this.flushTimer);
+        this.flushTimer = null;
+      }
+
+      // Clear the write queue (no point flushing events we're about to delete)
+      this.writeQueue = [];
+
+      // Delete all data from all tables
+      await this.db.execute('DELETE FROM events');
+      await this.db.execute('DELETE FROM tasks');
+      await this.db.execute('DELETE FROM snapshots');
+      await this.db.execute('DELETE FROM calendar');
+
+      // Vacuum to reclaim disk space
+      await this.db.execute('VACUUM');
+
+      console.log('[PersistenceService] ☢️ Database purged');
+    } catch (error) {
+      console.error('[PersistenceService] Failed to purge database:', error);
+      throw error;
+    }
+  }
 }
 

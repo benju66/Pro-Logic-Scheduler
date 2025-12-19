@@ -4225,20 +4225,32 @@ export class SchedulerService {
      * Clear all saved data and start fresh
      * Use when data is corrupted or user wants to reset
      */
-    clearAllData(): void {
+    async clearAllData(): Promise<void> {
         if (!confirm('This will delete all your tasks and settings. Continue?')) {
             return;
         }
         
+        // Purge SQLite database if persistence service is available
+        if (this.persistenceService) {
+            try {
+                await this.persistenceService.purgeDatabase();
+            } catch (error) {
+                console.error('[SchedulerService] Failed to purge database:', error);
+                this.toastService.error('Failed to clear database - some data may remain');
+            }
+        }
+        
+        // Clear localStorage (backup/fallback)
         localStorage.removeItem(SchedulerService.STORAGE_KEY);
         localStorage.removeItem('pro_scheduler_column_widths');
         localStorage.removeItem('pro_scheduler_column_preferences');
         
+        // Reset in-memory state
         this.taskStore.setAll([]);
         this._createSampleData();
         
         this.recalculateAll();
-        this.saveData();
+        await this.saveData();
         this.render();
         
         this.toastService.success('All data cleared - starting fresh');
