@@ -1,10 +1,33 @@
 /**
- * @fileoverview History manager - handles undo/redo functionality
+ * @fileoverview History manager - handles undo/redo functionality with Event Sourcing
  * @module data/HistoryManager
+ * 
+ * Implements Command Pattern for undo/redo:
+ * - Stores forward/backward event pairs instead of snapshots
+ * - Undo applies backward event
+ * - Redo applies forward event
  */
 
 import type { Callback } from '../types';
 import { MAX_HISTORY_SIZE } from '../core/Constants';
+
+/**
+ * Queued event structure (matches PersistenceService)
+ */
+export interface QueuedEvent {
+  type: string;
+  targetId: string | null;
+  payload: Record<string, unknown>;
+  timestamp: Date;
+}
+
+/**
+ * Undoable action - pairs forward and backward events
+ */
+export interface UndoableAction {
+  forward: QueuedEvent;
+  backward: QueuedEvent;
+}
 
 /**
  * History manager options
@@ -16,10 +39,11 @@ export interface HistoryManagerOptions {
 
 /**
  * History manager for undo/redo operations
+ * Uses Command Pattern with Event Sourcing
  */
 export class HistoryManager {
-  private history: string[] = [];
-  private future: string[] = [];
+  private undoStack: UndoableAction[] = [];
+  private redoStack: UndoableAction[] = [];
   private maxHistory: number;
   private options: HistoryManagerOptions;
 
@@ -32,63 +56,50 @@ export class HistoryManager {
   }
 
   /**
-   * Save a checkpoint (snapshot of state)
-   * @param snapshot - JSON stringified state
+   * Record an action with its inverse
+   * @param forwardEvent - Event that performs the action
+   * @param backwardEvent - Event that undoes the action
    */
-  saveCheckpoint(snapshot: string): void {
-    // Don't save if same as last checkpoint
-    if (this.history.length > 0 && this.history[this.history.length - 1] === snapshot) {
-      return;
-    }
-
-    this.history.push(snapshot);
+  recordAction(forwardEvent: QueuedEvent, backwardEvent: QueuedEvent): void {
+    this.undoStack.push({ forward: forwardEvent, backward: backwardEvent });
+    this.redoStack = []; // Clear redo on new action
     
     // Limit history size
-    if (this.history.length > this.maxHistory) {
-      this.history.shift();
+    if (this.undoStack.length > this.maxHistory) {
+      this.undoStack.shift();
     }
-
-    // Clear future when new checkpoint saved
-    this.future = [];
+    
     this._notifyStateChange();
   }
 
   /**
-   * Undo - restore previous state
-   * @param currentSnapshot - Current state snapshot
-   * @returns Previous state snapshot or undefined
+   * Undo last action
+   * @returns Backward event to apply, or null if nothing to undo
    */
-  undo(currentSnapshot: string): string | undefined {
-    if (this.history.length === 0) {
-      return undefined;
+  undo(): QueuedEvent | null {
+    const action = this.undoStack.pop();
+    if (!action) {
+      return null;
     }
-
-    // Save current state to future
-    this.future.push(currentSnapshot);
-
-    // Restore previous state
-    const previous = this.history.pop();
+    
+    this.redoStack.push(action);
     this._notifyStateChange();
-    return previous;
+    return action.backward;
   }
 
   /**
-   * Redo - restore next state
-   * @param currentSnapshot - Current state snapshot
-   * @returns Next state snapshot or undefined
+   * Redo last undone action
+   * @returns Forward event to apply, or null if nothing to redo
    */
-  redo(currentSnapshot: string): string | undefined {
-    if (this.future.length === 0) {
-      return undefined;
+  redo(): QueuedEvent | null {
+    const action = this.redoStack.pop();
+    if (!action) {
+      return null;
     }
-
-    // Save current state to history
-    this.history.push(currentSnapshot);
-
-    // Restore next state
-    const next = this.future.pop();
+    
+    this.undoStack.push(action);
     this._notifyStateChange();
-    return next;
+    return action.forward;
   }
 
   /**
@@ -96,7 +107,7 @@ export class HistoryManager {
    * @returns True if undo is possible
    */
   canUndo(): boolean {
-    return this.history.length > 0;
+    return this.undoStack.length > 0;
   }
 
   /**
@@ -104,15 +115,15 @@ export class HistoryManager {
    * @returns True if redo is possible
    */
   canRedo(): boolean {
-    return this.future.length > 0;
+    return this.redoStack.length > 0;
   }
 
   /**
    * Clear all history
    */
   clear(): void {
-    this.history = [];
-    this.future = [];
+    this.undoStack = [];
+    this.redoStack = [];
     this._notifyStateChange();
   }
 

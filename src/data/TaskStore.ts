@@ -6,6 +6,7 @@
 import type { Task, Callback } from '../types';
 import { OrderingService } from '../services/OrderingService';
 import type { PersistenceService } from './PersistenceService';
+import type { HistoryManager, QueuedEvent } from './HistoryManager';
 
 /**
  * Task store options
@@ -22,6 +23,8 @@ export class TaskStore {
   private tasks: Task[] = [];
   private options: TaskStoreOptions;
   private persistenceService: PersistenceService | null = null;
+  private historyManager: HistoryManager | null = null;
+  private isUndoRedo: boolean = false; // Flag to prevent recording history during undo/redo
 
   /**
    * @param options - Configuration
@@ -44,6 +47,14 @@ export class TaskStore {
    */
   setPersistenceService(service: PersistenceService): void {
     this.persistenceService = service;
+  }
+
+  /**
+   * Set history manager (injected post-construction to avoid circular dependencies)
+   * @param manager - HistoryManager instance
+   */
+  setHistoryManager(manager: HistoryManager): void {
+    this.historyManager = manager;
   }
 
   /**
@@ -73,9 +84,11 @@ export class TaskStore {
   add(task: Task): Task {
     this.tasks.push(task);
     
-    // Queue TASK_CREATED event
-    if (this.persistenceService) {
-      this.persistenceService.queueEvent('TASK_CREATED', task.id, {
+    // Create forward event (TASK_CREATED)
+    const forwardEvent: QueuedEvent = {
+      type: 'TASK_CREATED',
+      targetId: task.id,
+      payload: {
         id: task.id,
         parent_id: task.parentId ?? null,
         sort_key: task.sortKey,
@@ -84,7 +97,26 @@ export class TaskStore {
         constraint_type: task.constraintType || 'asap',
         dependencies: task.dependencies || [],
         is_collapsed: task._collapsed || false,
-      });
+      },
+      timestamp: new Date(),
+    };
+    
+    // Create backward event (TASK_DELETED - inverse)
+    const backwardEvent: QueuedEvent = {
+      type: 'TASK_DELETED',
+      targetId: task.id,
+      payload: {},
+      timestamp: new Date(),
+    };
+    
+    // Queue persistence event
+    if (this.persistenceService) {
+      this.persistenceService.queueEvent(forwardEvent.type, forwardEvent.targetId, forwardEvent.payload);
+    }
+    
+    // Record action in history (unless this is an undo/redo operation)
+    if (!this.isUndoRedo && this.historyManager) {
+      this.historyManager.recordAction(forwardEvent, backwardEvent);
     }
     
     this._notifyChange();
@@ -95,35 +127,61 @@ export class TaskStore {
    * Update a task
    * @param id - Task ID
    * @param updates - Partial task updates
+   * @param skipHistory - If true, don't record in history (for undo/redo)
    * @returns Updated task or undefined
    */
-  update(id: string, updates: Partial<Task>): Task | undefined {
+  update(id: string, updates: Partial<Task>, skipHistory: boolean = false): Task | undefined {
     const task = this.getById(id);
     if (!task) return undefined;
 
     // Store old values for event payload
     const oldValues: Record<string, unknown> = {};
     
-    // Queue events for each non-calculated field
-    if (this.persistenceService) {
-      for (const [field, newValue] of Object.entries(updates)) {
-        // Skip calculated fields
-        if (this.isCalculatedField(field)) {
-          continue;
-        }
-        
-        // Store old value
-        oldValues[field] = (task as any)[field];
-        
-        // Map field names for database (camelCase to snake_case for some fields)
-        const dbField = this.mapFieldToDb(field);
-        
-        // Queue TASK_UPDATED event
-        this.persistenceService.queueEvent('TASK_UPDATED', id, {
+    // Process each non-calculated field
+    for (const [field, newValue] of Object.entries(updates)) {
+      // Skip calculated fields
+      if (this.isCalculatedField(field)) {
+        continue;
+      }
+      
+      // Store old value
+      oldValues[field] = (task as any)[field];
+      
+      // Map field names for database (camelCase to snake_case for some fields)
+      const dbField = this.mapFieldToDb(field);
+      
+      // Create forward event (TASK_UPDATED with new value)
+      const forwardEvent: QueuedEvent = {
+        type: 'TASK_UPDATED',
+        targetId: id,
+        payload: {
           field: dbField,
           old_value: oldValues[field],
           new_value: newValue,
-        });
+        },
+        timestamp: new Date(),
+      };
+      
+      // Create backward event (TASK_UPDATED with old value - inverse)
+      const backwardEvent: QueuedEvent = {
+        type: 'TASK_UPDATED',
+        targetId: id,
+        payload: {
+          field: dbField,
+          old_value: newValue,
+          new_value: oldValues[field],
+        },
+        timestamp: new Date(),
+      };
+      
+      // Queue persistence event
+      if (this.persistenceService) {
+        this.persistenceService.queueEvent(forwardEvent.type, forwardEvent.targetId, forwardEvent.payload);
+      }
+      
+      // Record action in history (unless this is an undo/redo operation)
+      if (!this.isUndoRedo && !skipHistory && this.historyManager) {
+        this.historyManager.recordAction(forwardEvent, backwardEvent);
       }
     }
 
@@ -135,16 +193,19 @@ export class TaskStore {
   /**
    * Delete a task
    * @param id - Task ID
+   * @param skipHistory - If true, don't record in history (for undo/redo)
    * @returns True if deleted
    */
-  delete(id: string): boolean {
+  delete(id: string, skipHistory: boolean = false): boolean {
     const index = this.tasks.findIndex(t => t.id === id);
     if (index === -1) return false;
 
+    const task = this.tasks[index];
+    
     // CRITICAL: Clean up "ghost links" - remove dependencies referencing this task
-    if (this.persistenceService) {
-      const tasksWithDependency = this.tasks.filter(task => 
-        task.dependencies && task.dependencies.some(dep => dep.id === id)
+    if (this.persistenceService && !this.isUndoRedo) {
+      const tasksWithDependency = this.tasks.filter(t => 
+        t.dependencies && t.dependencies.some(dep => dep.id === id)
       );
 
       for (const dependentTask of tasksWithDependency) {
@@ -161,9 +222,51 @@ export class TaskStore {
         // Update in memory
         dependentTask.dependencies = updatedDependencies;
       }
+    }
 
-      // Queue TASK_DELETED event
-      this.persistenceService.queueEvent('TASK_DELETED', id, {});
+    // Create forward event (TASK_DELETED)
+    const forwardEvent: QueuedEvent = {
+      type: 'TASK_DELETED',
+      targetId: id,
+      payload: {},
+      timestamp: new Date(),
+    };
+    
+    // Create backward event (TASK_CREATED - inverse)
+    // Need to store full task data for recreation
+    const backwardEvent: QueuedEvent = {
+      type: 'TASK_CREATED',
+      targetId: id,
+      payload: {
+        id: task.id,
+        parent_id: task.parentId ?? null,
+        sort_key: task.sortKey,
+        name: task.name,
+        duration: task.duration,
+        constraint_type: task.constraintType || 'asap',
+        constraint_date: task.constraintDate,
+        dependencies: task.dependencies || [],
+        progress: task.progress || 0,
+        notes: task.notes || '',
+        actual_start: task.actualStart ?? null,
+        actual_finish: task.actualFinish ?? null,
+        remaining_duration: task.remainingDuration ?? null,
+        baseline_start: task.baselineStart ?? null,
+        baseline_finish: task.baselineFinish ?? null,
+        baseline_duration: task.baselineDuration ?? null,
+        is_collapsed: task._collapsed || false,
+      },
+      timestamp: new Date(),
+    };
+    
+    // Queue persistence event
+    if (this.persistenceService) {
+      this.persistenceService.queueEvent(forwardEvent.type, forwardEvent.targetId, forwardEvent.payload);
+    }
+    
+    // Record action in history (unless this is an undo/redo operation)
+    if (!this.isUndoRedo && !skipHistory && this.historyManager) {
+      this.historyManager.recordAction(forwardEvent, backwardEvent);
     }
 
     this.tasks.splice(index, 1);
@@ -278,13 +381,38 @@ export class TaskStore {
       const oldSortKey = task.sortKey;
       task.sortKey = sortKey;
       
-      // Queue TASK_UPDATED event
-      if (this.persistenceService) {
-        this.persistenceService.queueEvent('TASK_UPDATED', taskId, {
+      // Create forward event
+      const forwardEvent: QueuedEvent = {
+        type: 'TASK_UPDATED',
+        targetId: taskId,
+        payload: {
           field: 'sort_key',
           old_value: oldSortKey,
           new_value: sortKey,
-        });
+        },
+        timestamp: new Date(),
+      };
+      
+      // Create backward event (inverse)
+      const backwardEvent: QueuedEvent = {
+        type: 'TASK_UPDATED',
+        targetId: taskId,
+        payload: {
+          field: 'sort_key',
+          old_value: sortKey,
+          new_value: oldSortKey,
+        },
+        timestamp: new Date(),
+      };
+      
+      // Queue persistence event
+      if (this.persistenceService) {
+        this.persistenceService.queueEvent(forwardEvent.type, forwardEvent.targetId, forwardEvent.payload);
+      }
+      
+      // Record action in history (unless this is an undo/redo operation)
+      if (!this.isUndoRedo && this.historyManager) {
+        this.historyManager.recordAction(forwardEvent, backwardEvent);
       }
       
       this._notifyChange();
@@ -302,6 +430,160 @@ export class TaskStore {
     return () => {
       this.options.onChange = originalOnChange;
     };
+  }
+
+  /**
+   * Apply an event from undo/redo (without recording history)
+   * @param event - Event to apply
+   */
+  applyEvent(event: QueuedEvent): void {
+    const wasUndoRedo = this.isUndoRedo;
+    this.isUndoRedo = true; // Prevent recording history
+    
+    try {
+      switch (event.type) {
+        case 'TASK_CREATED':
+          // Recreate task from payload
+          const taskData = event.payload;
+          const task: Task = {
+            id: taskData.id as string,
+            parentId: (taskData.parent_id as string | null) ?? null,
+            sortKey: (taskData.sort_key as string) || '',
+            name: (taskData.name as string) || 'New Task',
+            notes: (taskData.notes as string) || '',
+            duration: (taskData.duration as number) || 1,
+            constraintType: (taskData.constraint_type as string) || 'asap',
+            constraintDate: (taskData.constraint_date as string | null) ?? null,
+            dependencies: Array.isArray(taskData.dependencies)
+              ? taskData.dependencies
+              : [],
+            progress: (taskData.progress as number) || 0,
+            actualStart: (taskData.actual_start as string | null) ?? null,
+            actualFinish: (taskData.actual_finish as string | null) ?? null,
+            remainingDuration: (taskData.remaining_duration as number | null) ?? null,
+            baselineStart: (taskData.baseline_start as string | null) ?? null,
+            baselineFinish: (taskData.baseline_finish as string | null) ?? null,
+            baselineDuration: (taskData.baseline_duration as number | null) ?? null,
+            _collapsed: Boolean(taskData.is_collapsed),
+            level: 0,
+            start: '',
+            end: '',
+          };
+          
+          // Add task directly without recording history
+          this.tasks.push(task);
+          
+          // Queue persistence event (but don't record history)
+          if (this.persistenceService) {
+            this.persistenceService.queueEvent('TASK_CREATED', task.id, {
+              id: task.id,
+              parent_id: task.parentId ?? null,
+              sort_key: task.sortKey,
+              name: task.name,
+              duration: task.duration,
+              constraint_type: task.constraintType || 'asap',
+              dependencies: task.dependencies || [],
+              is_collapsed: task._collapsed || false,
+            });
+          }
+          
+          this._notifyChange();
+          break;
+          
+        case 'TASK_UPDATED':
+          const field = event.payload.field as string;
+          const newValue = event.payload.new_value;
+          
+          // Map database field name back to camelCase
+          const camelField = this.mapDbFieldToCamel(field);
+          
+          // Handle special cases
+          if (field === 'dependencies') {
+            const taskToUpdate = this.getById(event.targetId!);
+            if (taskToUpdate) {
+              taskToUpdate.dependencies = newValue as any[];
+              // Queue persistence event
+              if (this.persistenceService) {
+                this.persistenceService.queueEvent('TASK_UPDATED', event.targetId!, {
+                  field: 'dependencies',
+                  old_value: taskToUpdate.dependencies,
+                  new_value: newValue,
+                });
+              }
+              this._notifyChange();
+            }
+          } else if (field === 'sort_key') {
+            const taskToUpdate = this.getById(event.targetId!);
+            if (taskToUpdate) {
+              taskToUpdate.sortKey = newValue as string;
+              // Queue persistence event
+              if (this.persistenceService) {
+                this.persistenceService.queueEvent('TASK_UPDATED', event.targetId!, {
+                  field: 'sort_key',
+                  old_value: taskToUpdate.sortKey,
+                  new_value: newValue,
+                });
+              }
+              this._notifyChange();
+            }
+          } else {
+            const updates: Partial<Task> = { [camelField]: newValue } as Partial<Task>;
+            const taskToUpdate = this.getById(event.targetId!);
+            if (taskToUpdate) {
+              const oldValue = (taskToUpdate as any)[camelField];
+              Object.assign(taskToUpdate, updates);
+              // Queue persistence event
+              if (this.persistenceService) {
+                this.persistenceService.queueEvent('TASK_UPDATED', event.targetId!, {
+                  field: field,
+                  old_value: oldValue,
+                  new_value: newValue,
+                });
+              }
+              this._notifyChange();
+            }
+          }
+          break;
+          
+        case 'TASK_DELETED':
+          const index = this.tasks.findIndex(t => t.id === event.targetId);
+          if (index !== -1) {
+            this.tasks.splice(index, 1);
+            // Queue persistence event
+            if (this.persistenceService) {
+              this.persistenceService.queueEvent('TASK_DELETED', event.targetId!, {});
+            }
+            this._notifyChange();
+          }
+          break;
+          
+        default:
+          console.warn(`[TaskStore] Unknown event type in applyEvent: ${event.type}`);
+      }
+    } finally {
+      this.isUndoRedo = wasUndoRedo; // Restore flag
+    }
+  }
+
+  /**
+   * Map snake_case database field names to camelCase Task properties
+   */
+  private mapDbFieldToCamel(field: string): string {
+    const mapping: Record<string, string> = {
+      'actual_start': 'actualStart',
+      'actual_finish': 'actualFinish',
+      'remaining_duration': 'remainingDuration',
+      'baseline_start': 'baselineStart',
+      'baseline_finish': 'baselineFinish',
+      'baseline_duration': 'baselineDuration',
+      'constraint_type': 'constraintType',
+      'constraint_date': 'constraintDate',
+      'is_collapsed': '_collapsed',
+      'parent_id': 'parentId',
+      'sort_key': 'sortKey',
+    };
+
+    return mapping[field] || field;
   }
 
   /**

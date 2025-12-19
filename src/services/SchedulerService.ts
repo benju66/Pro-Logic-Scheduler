@@ -104,6 +104,7 @@ export class SchedulerService {
     private persistenceService: PersistenceService | null = null;
     private dataLoader: DataLoader | null = null;
     private snapshotService: SnapshotService | null = null;
+    private initPromise: Promise<void> | null = null; // Store init promise to avoid race condition
 
     // UI components (initialized in init())
     public grid: VirtualScrollGridFacade | null = null;  // Public for access from AppInitializer and UIEventManager
@@ -148,10 +149,10 @@ export class SchedulerService {
         this.isTauri = options.isTauri || false;
 
         // Initialize services (async - will be awaited in init())
-        // Note: _initServices is now async, but constructor can't be async
-        // Services will be initialized when init() is called
-        this._initServices().catch(error => {
+        // Store the promise to avoid race conditions
+        this.initPromise = this._initServices().catch(error => {
             console.error('[SchedulerService] Service initialization failed:', error);
+            throw error;
         });
 
         // Note: init() is now async and must be called separately by the caller
@@ -211,6 +212,11 @@ export class SchedulerService {
             maxHistory: 50
         });
 
+        // 6. Inject history manager into task store (must be after both are created)
+        if (this.taskStore && this.historyManager) {
+            this.taskStore.setHistoryManager(this.historyManager);
+        }
+
         // UI services
         this.toastService = new ToastService({
             container: document.body
@@ -226,10 +232,9 @@ export class SchedulerService {
      * Initialize the scheduler with UI components
      */
     async init(): Promise<void> {
-        // Ensure services are initialized first
-        if (!this.persistenceService && this.isTauri) {
-            // Wait for _initServices to complete
-            await new Promise(resolve => setTimeout(resolve, 100));
+        // Ensure services are initialized first (await the stored promise)
+        if (this.initPromise) {
+            await this.initPromise;
         }
         
         const { gridContainer, ganttContainer, drawerContainer, modalContainer } = this.options;
@@ -4028,66 +4033,79 @@ export class SchedulerService {
     // =========================================================================
 
     /**
-     * Save checkpoint for undo/redo
+     * Save checkpoint for undo/redo (deprecated - now handled by Event Sourcing)
+     * Kept as no-op for backward compatibility
+     * @deprecated Events are automatically recorded via TaskStore
      */
     saveCheckpoint(): void {
-        const snapshot = JSON.stringify({
-            tasks: this.taskStore.getAll(),
-            calendar: this.calendarStore.get(),
-        });
-        this.historyManager.saveCheckpoint(snapshot);
+        // No-op: Events are now automatically recorded via TaskStore.recordAction()
+        // This method is kept for backward compatibility with existing code
     }
 
     /**
-     * Undo last action
+     * Undo last action (Event Sourcing Command Pattern)
      */
     undo(): void {
-        const currentSnapshot = JSON.stringify({
-            tasks: this.taskStore.getAll(),
-            calendar: this.calendarStore.get(),
-        });
+        if (!this.historyManager) {
+            this.toastService.info('History manager not available');
+            return;
+        }
 
-        const previousSnapshot = this.historyManager.undo(currentSnapshot);
-        if (!previousSnapshot) {
+        // Get backward event from history manager
+        const backwardEvent = this.historyManager.undo();
+        if (!backwardEvent) {
             this.toastService.info('Nothing to undo');
             return;
         }
 
-        const previous = JSON.parse(previousSnapshot) as { tasks: Task[]; calendar?: Calendar };
-        this.taskStore.setAll(previous.tasks);
-        if (previous.calendar) {
-            this.calendarStore.set(previous.calendar);
+        // Apply backward event to TaskStore (updates RAM and queues persistence)
+        this.taskStore.applyEvent(backwardEvent);
+
+        // Queue persistence event (TaskStore.applyEvent already does this, but ensure it's queued)
+        if (this.persistenceService) {
+            this.persistenceService.queueEvent(
+                backwardEvent.type,
+                backwardEvent.targetId,
+                backwardEvent.payload
+            );
         }
 
+        // Recalculate and render
         this.recalculateAll();
-        this.saveData();
         this.render();
         this.toastService.info('Undone');
     }
 
     /**
-     * Redo last undone action
+     * Redo last undone action (Event Sourcing Command Pattern)
      */
     redo(): void {
-        const currentSnapshot = JSON.stringify({
-            tasks: this.taskStore.getAll(),
-            calendar: this.calendarStore.get(),
-        });
+        if (!this.historyManager) {
+            this.toastService.info('History manager not available');
+            return;
+        }
 
-        const nextSnapshot = this.historyManager.redo(currentSnapshot);
-        if (!nextSnapshot) {
+        // Get forward event from history manager
+        const forwardEvent = this.historyManager.redo();
+        if (!forwardEvent) {
             this.toastService.info('Nothing to redo');
             return;
         }
 
-        const next = JSON.parse(nextSnapshot) as { tasks: Task[]; calendar?: Calendar };
-        this.taskStore.setAll(next.tasks);
-        if (next.calendar) {
-            this.calendarStore.set(next.calendar);
+        // Apply forward event to TaskStore (updates RAM and queues persistence)
+        this.taskStore.applyEvent(forwardEvent);
+
+        // Queue persistence event (TaskStore.applyEvent already does this, but ensure it's queued)
+        if (this.persistenceService) {
+            this.persistenceService.queueEvent(
+                forwardEvent.type,
+                forwardEvent.targetId,
+                forwardEvent.payload
+            );
         }
 
+        // Recalculate and render
         this.recalculateAll();
-        this.saveData();
         this.render();
         this.toastService.info('Redone');
     }
