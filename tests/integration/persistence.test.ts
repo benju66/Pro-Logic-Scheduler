@@ -6,9 +6,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { PersistenceService } from '../../src/data/PersistenceService';
 
-// Mock Tauri SQL plugin
+// Mock Tauri SQL plugin at module level
 const mockDb = {
   execute: vi.fn(),
   select: vi.fn(),
@@ -17,10 +16,17 @@ const mockDb = {
 
 const mockDatabaseLoad = vi.fn().mockResolvedValue(mockDb);
 
-// Mock window.__TAURI__ for Tauri environment detection
-const mockTauri = {
-  __TAURI__: true,
-};
+// Mock the SQL plugin import (Tauri v1) - must be at top level
+// The plugin exports a default object with a load method
+vi.mock('tauri-plugin-sql-api', () => {
+  return {
+    default: {
+      load: mockDatabaseLoad,
+    },
+  };
+});
+
+import { PersistenceService } from '../../src/data/PersistenceService';
 
 describe('PersistenceService Integration Tests', () => {
   let persistenceService: PersistenceService;
@@ -38,21 +44,19 @@ describe('PersistenceService Integration Tests', () => {
 
     // Mock Tauri environment
     originalWindow = global.window;
+    const intervalCallbacks: Array<{ fn: () => void; ms: number }> = [];
     (global as any).window = {
       ...originalWindow,
       __TAURI__: true,
       setInterval: vi.fn((fn: () => void, ms: number) => {
-        // Return a mock timer ID
-        return 123 as any;
+        // Store callback to execute it manually in tests
+        intervalCallbacks.push({ fn, ms });
+        // Also execute immediately for faster tests
+        setTimeout(() => fn(), ms);
+        return intervalCallbacks.length as any;
       }),
       clearInterval: vi.fn(),
     };
-
-    // Mock the SQL plugin import (Tauri v1)
-    vi.mock('tauri-plugin-sql-api', () => ({
-      default: mockDatabaseLoad,
-      load: mockDatabaseLoad,
-    }));
 
     persistenceService = new PersistenceService();
   });
@@ -171,12 +175,12 @@ describe('PersistenceService Integration Tests', () => {
 
       expect(persistenceService.getQueueSize()).toBe(1);
 
-      // Wait for flush (with timeout)
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // Wait for flush loop to execute (flush interval is 100ms, wait 250ms to be safe)
+      await new Promise(resolve => setTimeout(resolve, 250));
 
       // Verify event was persisted
       const insertCalls = mockDb.execute.mock.calls.filter(call =>
-        call[0].includes('INSERT INTO events')
+        call[0] && call[0].includes && call[0].includes('INSERT INTO events')
       );
       expect(insertCalls.length).toBeGreaterThan(0);
 
@@ -214,12 +218,12 @@ describe('PersistenceService Integration Tests', () => {
         new_value: 10,
       });
 
-      // Wait for flush
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // Wait for flush loop to execute (flush interval is 100ms, wait 250ms to be safe)
+      await new Promise(resolve => setTimeout(resolve, 250));
 
       // Verify tasks table was updated
       const updateCalls = mockDb.execute.mock.calls.filter(call =>
-        call[0].includes('UPDATE tasks')
+        call[0] && call[0].includes && call[0].includes('UPDATE tasks')
       );
       expect(updateCalls.length).toBeGreaterThan(0);
 
@@ -247,12 +251,12 @@ describe('PersistenceService Integration Tests', () => {
         new_value: '2024-01-02',
       });
 
-      // Wait for flush
-      await new Promise(resolve => setTimeout(resolve, 200));
+      // Wait for flush loop to execute (flush interval is 100ms, wait 250ms to be safe)
+      await new Promise(resolve => setTimeout(resolve, 250));
 
       // Verify tasks table was NOT updated (only events table)
       const updateCalls = mockDb.execute.mock.calls.filter(call =>
-        call[0].includes('UPDATE tasks')
+        call[0] && call[0].includes && call[0].includes('UPDATE tasks')
       );
       expect(updateCalls.length).toBe(0);
     });
