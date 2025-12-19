@@ -8,9 +8,7 @@
  * - Events are queued and flushed in batches
  */
 
-// Note: For Tauri v1, we'll need to check the exact import path
-// The spec shows '@tauri-apps/plugin-sql' but v1 might use a different path
-// This will be adjusted based on actual Tauri plugin availability
+// Tauri v1 SQL plugin - using tauri-plugin-sql-api
 
 interface QueuedEvent {
   type: string;
@@ -59,21 +57,11 @@ export class PersistenceService {
         return;
       }
 
-      // Load database - Tauri SQL plugin
-      // Note: For Tauri v1, the plugin API may differ from v2
-      // If plugin is not available, this will gracefully degrade
-      try {
-        // Try Tauri v2 API first
-        const sqlModule = await import('@tauri-apps/plugin-sql');
-        const Database = sqlModule.default || sqlModule;
-        this.db = await Database.load('sqlite:scheduler.db') as Database;
-      } catch (importError) {
-        // Try Tauri v1 API (if different)
-        // Note: tauri-plugin-sql may not be available for v1
-        // In that case, persistence will be disabled
-        console.warn('[PersistenceService] SQL plugin not available - persistence disabled');
-        throw new Error('SQL plugin not available - may require Tauri v2 or plugin installation');
-      }
+      // Load database - Tauri v1 SQL plugin
+      const sqlModule = await import('tauri-plugin-sql-api');
+      // Handle both default export and named export patterns
+      const Database = sqlModule.default || sqlModule;
+      this.db = await Database.load('sqlite:scheduler.db') as Database;
 
       // Run schema migrations
       await this.runMigrations();

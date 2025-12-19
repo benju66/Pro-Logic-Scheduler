@@ -48,9 +48,10 @@ describe('PersistenceService Integration Tests', () => {
       clearInterval: vi.fn(),
     };
 
-    // Mock the SQL plugin import
-    vi.mock('@tauri-apps/plugin-sql', () => ({
+    // Mock the SQL plugin import (Tauri v1)
+    vi.mock('tauri-plugin-sql-api', () => ({
       default: mockDatabaseLoad,
+      load: mockDatabaseLoad,
     }));
 
     persistenceService = new PersistenceService();
