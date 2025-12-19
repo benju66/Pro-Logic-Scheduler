@@ -9,6 +9,7 @@
  */
 
 // Tauri v1 SQL plugin - using tauri-plugin-sql-api
+import Database from 'tauri-plugin-sql-api';
 
 interface QueuedEvent {
   type: string;
@@ -58,9 +59,6 @@ export class PersistenceService {
       }
 
       // Load database - Tauri v1 SQL plugin
-      const sqlModule = await import('tauri-plugin-sql-api');
-      // Handle both default export and named export patterns
-      const Database = sqlModule.default || sqlModule;
       this.db = await Database.load('sqlite:scheduler.db') as Database;
 
       // Run schema migrations

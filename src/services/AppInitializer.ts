@@ -9,6 +9,8 @@
 
 import { SchedulerService } from './SchedulerService';
 import { StatsService } from './StatsService';
+import { PersistenceService } from '../data/PersistenceService';
+import { MigrationService } from '../data/MigrationService';
 import type { SchedulerServiceOptions } from '../types';
 
 /**
@@ -26,6 +28,8 @@ export class AppInitializer {
   private isTauri: boolean;
   private scheduler: SchedulerService | null = null;
   private statsService: StatsService | null = null;
+  private persistenceService: PersistenceService | null = null;
+  private migrationService: MigrationService | null = null;
   private isInitializing: boolean = false;
   public isInitialized: boolean = false;  // Public for access from main.ts
 
@@ -70,6 +74,12 @@ export class AppInitializer {
         await new Promise(resolve => setTimeout(resolve, 200));
       }
       
+      // Initialize persistence service (for SQLite)
+      await this._initializePersistence();
+      
+      // Run migration from localStorage to SQLite (if needed)
+      await this._runMigration();
+      
       // Initialize scheduler
       await this._initializeScheduler();
       
@@ -102,6 +112,53 @@ export class AppInitializer {
       delete window.scheduler;
       alert('Failed to initialize scheduler. Check console for details.');
       throw error;
+    }
+  }
+
+  /**
+   * Initialize persistence service
+   * @private
+   */
+  private async _initializePersistence(): Promise<void> {
+    if (!this.isTauri) {
+      console.log('[AppInitializer] Skipping persistence (not Tauri environment)');
+      return;
+    }
+
+    try {
+      console.log('[AppInitializer] Initializing PersistenceService...');
+      this.persistenceService = new PersistenceService();
+      await this.persistenceService.init();
+      console.log('[AppInitializer] ✅ PersistenceService initialized');
+    } catch (error) {
+      console.error('[AppInitializer] Failed to initialize PersistenceService:', error);
+      // Continue without persistence - app can still work
+    }
+  }
+
+  /**
+   * Run migration from localStorage to SQLite
+   * @private
+   */
+  private async _runMigration(): Promise<void> {
+    if (!this.isTauri || !this.persistenceService) {
+      console.log('[AppInitializer] Skipping migration (not Tauri or persistence not available)');
+      return;
+    }
+
+    try {
+      console.log('[AppInitializer] Running migration from localStorage to SQLite...');
+      this.migrationService = new MigrationService(this.persistenceService);
+      const migrated = await this.migrationService.migrateFromLocalStorage();
+      
+      if (migrated) {
+        console.log('[AppInitializer] ✅ Migration completed successfully');
+      } else {
+        console.log('[AppInitializer] No migration needed (no localStorage data found)');
+      }
+    } catch (error) {
+      console.error('[AppInitializer] Migration failed:', error);
+      // Continue anyway - migration failure shouldn't block app startup
     }
   }
 
