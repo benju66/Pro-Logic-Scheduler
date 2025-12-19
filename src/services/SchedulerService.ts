@@ -55,8 +55,11 @@ import type {
     ViewMode,
     LinkType,
     ConstraintType,
-    ColumnPreferences
+    ColumnPreferences,
+    CPMResult
 } from '../types';
+import type { ISchedulingEngine, TaskHierarchyContext } from '../core/ISchedulingEngine';
+import { JavaScriptEngine } from '../core/engines/JavaScriptEngine';
 
 /**
  * Main scheduler service - orchestrates the entire application
@@ -135,6 +138,9 @@ export class SchedulerService {
 
     // Operation queue for serializing task operations
     private operationQueue: OperationQueue = new OperationQueue();
+
+    // Scheduling engine (JavaScript or Rust)
+    private engine: ISchedulingEngine | null = null;
 
     // Initialization flag
     public isInitialized: boolean = false;  // Public for access from UIEventManager
@@ -226,6 +232,55 @@ export class SchedulerService {
             isTauri: this.isTauri,
             onToast: (msg, type) => this.toastService.show(msg, type)
         });
+
+        // 7. Initialize Dual Engine
+        await this._initializeEngine();
+    }
+
+    /**
+     * Initialize the appropriate scheduling engine based on environment
+     * @private
+     */
+    private async _initializeEngine(): Promise<void> {
+        const hierarchyContext: TaskHierarchyContext = {
+            isParent: (id: string) => this.taskStore.isParent(id),
+            getDepth: (id: string) => this.taskStore.getDepth(id),
+        };
+
+        if (this.isTauri) {
+            console.log('[SchedulerService] Initializing Rust engine...');
+            try {
+                // Dynamic import to avoid loading Tauri in browser
+                const { RustEngine } = await import('../core/engines/RustEngine');
+                this.engine = new RustEngine();
+                
+                // Initialize with current data (if available)
+                const tasks = this.taskStore.getAll();
+                const calendar = this.calendarStore.get();
+                if (tasks.length > 0 || Object.keys(calendar.exceptions).length > 0) {
+                    await this.engine.initialize(tasks, calendar, hierarchyContext);
+                }
+                
+                console.log('[SchedulerService] Rust engine ready');
+            } catch (error) {
+                console.error('[SchedulerService] Rust engine failed, falling back to JS:', error);
+                this._initializeJavaScriptEngine(hierarchyContext);
+            }
+        } else {
+            console.log('[SchedulerService] Initializing JavaScript engine (browser mode)');
+            this._initializeJavaScriptEngine(hierarchyContext);
+        }
+    }
+
+    /**
+     * Initialize JavaScript engine
+     * @private
+     */
+    private _initializeJavaScriptEngine(context: TaskHierarchyContext): void {
+        const jsEngine = new JavaScriptEngine();
+        this.engine = jsEngine;
+        
+        // Will be initialized with data in loadData()
     }
 
     /**
@@ -1504,6 +1559,14 @@ export class SchedulerService {
                 // This is standard CPM behavior - no constraint needed
                 const newDuration = Math.max(1, parseInt(String(value)) || 1);
                 this.taskStore.update(taskId, { duration: newDuration });
+                
+                // Sync update to engine
+                if (this.engine) {
+                    this.engine.updateTask(taskId, { duration: newDuration }).catch(error => {
+                        console.warn('[SchedulerService] Failed to sync task update to engine:', error);
+                    });
+                }
+                
                 needsRecalc = true;
                 break;
                 
@@ -1518,11 +1581,20 @@ export class SchedulerService {
                         return { needsRecalc: false, needsRender: false, success: false };
                     }
                     
-                    this.taskStore.update(taskId, { 
+                    const updates: Partial<Task> = { 
                         start: startValue,
-                        constraintType: 'snet',
+                        constraintType: 'snet' as ConstraintType,
                         constraintDate: startValue 
-                    });
+                    };
+                    this.taskStore.update(taskId, updates);
+                    
+                    // Sync update to engine
+                    if (this.engine) {
+                        this.engine.updateTask(taskId, updates).catch(error => {
+                            console.warn('[SchedulerService] Failed to sync task update to engine:', error);
+                        });
+                    }
+                    
                     this.toastService.info('Start constraint (SNET) applied');
                     needsRecalc = true;
                 }
@@ -1544,10 +1616,19 @@ export class SchedulerService {
                         this.toastService.warning('Deadline is earlier than start date - schedule may be impossible');
                     }
                     
-                    this.taskStore.update(taskId, { 
-                        constraintType: 'fnlt',
+                    const endUpdates: Partial<Task> = { 
+                        constraintType: 'fnlt' as ConstraintType,
                         constraintDate: endValue 
-                    });
+                    };
+                    this.taskStore.update(taskId, endUpdates);
+                    
+                    // Sync update to engine
+                    if (this.engine) {
+                        this.engine.updateTask(taskId, endUpdates).catch(error => {
+                            console.warn('[SchedulerService] Failed to sync task update to engine:', error);
+                        });
+                    }
+                    
                     this.toastService.info('Finish deadline (FNLT) applied');
                     needsRecalc = true;
                 }
@@ -1772,6 +1853,14 @@ export class SchedulerService {
     private _handleDependenciesSave(taskId: string, dependencies: Array<{ id: string; type: LinkType; lag: number }>): void {
         this.saveCheckpoint();
         this.taskStore.update(taskId, { dependencies });
+        
+        // Sync update to engine
+        if (this.engine) {
+            this.engine.updateTask(taskId, { dependencies }).catch(error => {
+                console.warn('[SchedulerService] Failed to sync task update to engine:', error);
+            });
+        }
+        
         this.recalculateAll();
         this.saveData();
         this.render();
@@ -1785,6 +1874,19 @@ export class SchedulerService {
     private _handleCalendarSave(calendar: Calendar): void {
         this.saveCheckpoint();
         this.calendarStore.set(calendar);
+        
+        // Sync calendar to engine (reinitialize with new calendar)
+        if (this.engine) {
+            const tasks = this.taskStore.getAll();
+            const context: TaskHierarchyContext = {
+                isParent: (id: string) => this.taskStore.isParent(id),
+                getDepth: (id: string) => this.taskStore.getDepth(id),
+            };
+            this.engine.initialize(tasks, calendar, context).catch(error => {
+                console.warn('[SchedulerService] Failed to sync calendar to engine:', error);
+            });
+        }
+        
         this.recalculateAll();
         this.saveData();
         this.render();
@@ -3512,85 +3614,121 @@ export class SchedulerService {
      * Recalculate all tasks using CPM
      */
     recalculateAll(): void {
-        // Prevent infinite recursion
+        // Prevent infinite recursion / overlapping calculations
         if (this._isRecalculating) {
-            console.warn('[SchedulerService] Recursion detected - skipping recalculateAll()');
+            // console.warn('[SchedulerService] Skipping overlap calculation');
             return;
         }
         
         this._isRecalculating = true;
         const startTime = performance.now();
-        
-        try {
-            const tasks = this.taskStore.getAll();
-            const calendar = this.calendarStore.get();
+        const tasks = this.taskStore.getAll();
+        const calendar = this.calendarStore.get();
 
-            if (tasks.length === 0) {
-                this._lastCalcTime = 0;
-                return;
-            }
-
-            const result = CPM.calculate(tasks, calendar, {
-                isParent: (id) => this.taskStore.isParent(id),
-                getDepth: (id) => this.taskStore.getDepth(id),
-            });
-
-            // Temporarily disable onChange to prevent recursion
-            const restoreNotifications = this.taskStore.disableNotifications();
-
-            // Update tasks with calculated values
-            result.tasks.forEach(calculatedTask => {
-                const task = this.taskStore.getById(calculatedTask.id);
-                if (task) {
-                    // Update directly without triggering onChange
-                    Object.assign(task, {
-                        start: calculatedTask.start,
-                        end: calculatedTask.end,
-                        duration: calculatedTask.duration,
-                        _isCritical: calculatedTask._isCritical || false,
-                        _totalFloat: calculatedTask._totalFloat || 0,
-                        _freeFloat: calculatedTask._freeFloat || 0,
-                        lateStart: calculatedTask.lateStart,
-                        lateFinish: calculatedTask.lateFinish,
-                        totalFloat: calculatedTask.totalFloat,
-                        freeFloat: calculatedTask.freeFloat,
-                        _health: calculatedTask._health,
-                    });
-                }
-            });
-
-            // Restore onChange
-            restoreNotifications();
-
-            // Roll up parent dates
-            this._rollupParentDates();
-
-            // Check for constraint violations and warn user
-            const criticalTasks = result.tasks.filter(t => 
-                t._health?.status === 'critical'
-            );
-
-            if (criticalTasks.length > 0) {
-                const deadlineViolations = criticalTasks.filter(t => t.constraintType === 'fnlt');
-                
-                if (deadlineViolations.length > 0) {
-                    const names = deadlineViolations.slice(0, 2).map(t => `"${t.name}"`).join(', ');
-                    const moreCount = deadlineViolations.length > 2 ? ` +${deadlineViolations.length - 2} more` : '';
-                    this.toastService.warning(`Deadline at risk: ${names}${moreCount}`);
-                } else {
-                    const names = criticalTasks.slice(0, 2).map(t => `"${t.name}"`).join(', ');
-                    const moreCount = criticalTasks.length > 2 ? ` +${criticalTasks.length - 2} more` : '';
-                    this.toastService.warning(`Schedule issues: ${names}${moreCount}`);
-                }
-            }
-
-            this._lastCalcTime = performance.now() - startTime;
-        } catch (error) {
-            console.error('[SchedulerService] Error in recalculateAll:', error);
-            throw error;
-        } finally {
+        if (tasks.length === 0) {
+            this._lastCalcTime = 0;
             this._isRecalculating = false;
+            return;
         }
+
+        // === CHANGED: Handle Async Engine Properly ===
+        if (this.engine) {
+            // Sync tasks to engine -> Calculate -> Apply
+            this.engine.syncTasks(tasks)
+                .then(() => this.engine!.recalculateAll())
+                .then((result) => {
+                    this._applyCalculationResult(result);
+                    this._lastCalcTime = performance.now() - startTime;
+                })
+                .catch((error) => {
+                    console.error('[SchedulerService] Engine calculation failed:', error);
+                    // Fallback to direct CPM call if engine dies
+                    this._fallbackCalculation(tasks, calendar);
+                })
+                .finally(() => {
+                    // CRITICAL: Only release the lock when the async chain is DONE
+                    this._isRecalculating = false;
+                });
+        } else {
+            // No engine - use direct CPM (synchronous)
+            try {
+                this._fallbackCalculation(tasks, calendar);
+            } finally {
+                this._isRecalculating = false;
+            }
+        }
+    }
+
+    /**
+     * Apply calculation result to task store
+     * @private
+     */
+    private _applyCalculationResult(result: CPMResult): void {
+        // Temporarily disable onChange to prevent recursion
+        const restoreNotifications = this.taskStore.disableNotifications();
+
+        // Update tasks with calculated values
+        result.tasks.forEach(calculatedTask => {
+            const task = this.taskStore.getById(calculatedTask.id);
+            if (task) {
+                Object.assign(task, {
+                    start: calculatedTask.start,
+                    end: calculatedTask.end,
+                    duration: calculatedTask.duration,
+                    _isCritical: calculatedTask._isCritical || false,
+                    _totalFloat: calculatedTask._totalFloat || 0,
+                    _freeFloat: calculatedTask._freeFloat || 0,
+                    lateStart: calculatedTask.lateStart,
+                    lateFinish: calculatedTask.lateFinish,
+                    totalFloat: calculatedTask.totalFloat,
+                    freeFloat: calculatedTask.freeFloat,
+                    _health: calculatedTask._health,
+                });
+            }
+        });
+
+        // Restore onChange
+        restoreNotifications();
+
+        // Roll up parent dates
+        this._rollupParentDates();
+        
+        // Trigger render updates
+        this.render();
+
+        // Check for constraint violations and warn user
+        const criticalTasks = result.tasks.filter(t => 
+            t._health?.status === 'critical'
+        );
+
+        if (criticalTasks.length > 0) {
+            const deadlineViolations = criticalTasks.filter(t => t.constraintType === 'fnlt');
+            
+            if (deadlineViolations.length > 0) {
+                const names = deadlineViolations.slice(0, 2).map(t => `"${t.name}"`).join(', ');
+                const moreCount = deadlineViolations.length > 2 ? ` +${deadlineViolations.length - 2} more` : '';
+                this.toastService.warning(`Deadline at risk: ${names}${moreCount}`);
+            } else {
+                const names = criticalTasks.slice(0, 2).map(t => `"${t.name}"`).join(', ');
+                const moreCount = criticalTasks.length > 2 ? ` +${criticalTasks.length - 2} more` : '';
+                this.toastService.warning(`Schedule issues: ${names}${moreCount}`);
+            }
+        }
+    }
+
+    /**
+     * Fallback to direct CPM calculation (if engine fails)
+     * @private
+     */
+    private _fallbackCalculation(tasks: Task[], calendar: Calendar): void {
+        // console.warn('[SchedulerService] Using fallback CPM calculation');
+        
+        const result = CPM.calculate(tasks, calendar, {
+            isParent: (id) => this.taskStore.isParent(id),
+            getDepth: (id) => this.taskStore.getDepth(id),
+        });
+        
+        this._applyCalculationResult(result);
     }
 
     /**
@@ -3629,6 +3767,14 @@ export class SchedulerService {
         // Prevent recursion - if we're already recalculating, skip
         if (this._isRecalculating) {
             return;
+        }
+        
+        // Sync engine with latest tasks before recalculating
+        if (this.engine) {
+            const tasks = this.taskStore.getAll();
+            this.engine.syncTasks(tasks).catch(error => {
+                console.warn('[SchedulerService] Failed to sync tasks to engine:', error);
+            });
         }
         
         // Tasks changed - trigger recalculation and render
@@ -3709,6 +3855,15 @@ export class SchedulerService {
                     // Set calendar without queuing event (skipEvent = true)
                     this.calendarStore.set(calendar, true);
                     
+                    // Sync engine with loaded data
+                    if (this.engine) {
+                        const context: TaskHierarchyContext = {
+                            isParent: (id: string) => this.taskStore.isParent(id),
+                            getDepth: (id: string) => this.taskStore.getDepth(id),
+                        };
+                        await this.engine.initialize(tasksWithSortKeys, calendar, context);
+                    }
+                    
                     // Run CPM to populate calculated fields (start, end, etc.)
                     this.recalculateAll();
                     
@@ -3751,8 +3906,21 @@ export class SchedulerService {
                     this.calendarStore.set(parsed.calendar, true); // skipEvent = true
                 }
                 
+                // Sync engine with loaded data
+                if (this.engine && (parsed.tasks?.length ?? 0) > 0) {
+                    const context: TaskHierarchyContext = {
+                        isParent: (id: string) => this.taskStore.isParent(id),
+                        getDepth: (id: string) => this.taskStore.getDepth(id),
+                    };
+                    const tasks = this.taskStore.getAll();
+                    const calendar = this.calendarStore.get();
+                    await this.engine.initialize(tasks, calendar, context);
+                }
+                
                 // Run CPM to populate calculated fields
-                this.recalculateAll();
+                if ((parsed.tasks?.length ?? 0) > 0) {
+                    this.recalculateAll();
+                }
             } else {
                 console.log('[SchedulerService] No saved data found - creating sample data');
                 this._createSampleData();

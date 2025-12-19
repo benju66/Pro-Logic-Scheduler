@@ -1,11 +1,25 @@
 // Prevents additional console window on Windows in release
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod types;
+mod engine_state;
+mod commands;
+
 use tauri::Manager;
+use engine_state::AppState;
+use commands::{
+    initialize_engine,
+    update_engine_task,
+    sync_engine_tasks,
+    calculate_cpm,
+    get_engine_status,
+    clear_engine,
+};
 
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_sql::Builder::default().build())
+        .manage(AppState::new())
         .setup(|app| {
             // Automatically open DevTools in debug mode
             #[cfg(debug_assertions)]
@@ -16,6 +30,14 @@ fn main() {
             }
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![
+            initialize_engine,
+            update_engine_task,
+            sync_engine_tasks,
+            calculate_cpm,
+            get_engine_status,
+            clear_engine,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

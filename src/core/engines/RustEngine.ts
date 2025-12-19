@@ -1,0 +1,150 @@
+/**
+ * RustEngine.ts - Tauri Desktop CPM Engine
+ * 
+ * Communicates with stateful Rust backend via Tauri commands.
+ * Phase 3a: Plumbing only - returns passthrough results
+ * Phase 3b: Will use actual Rust CPM calculations
+ * 
+ * @author Pro Logic Scheduler
+ * @version 3.0.0 - Phase 3 Dual Engine
+ */
+
+import { invoke } from '@tauri-apps/api/tauri';
+import type { ISchedulingEngine, TaskHierarchyContext } from '../ISchedulingEngine';
+import type { Task, Calendar, CPMResult } from '../../types';
+
+/**
+ * Rust-based scheduling engine
+ * 
+ * Maintains state in Rust backend via Tauri commands.
+ * Designed for high performance with 10k+ tasks.
+ */
+export class RustEngine implements ISchedulingEngine {
+    /** Initialization flag */
+    private initialized = false;
+    
+    /** Context functions (kept for potential JS fallback) */
+    private context: TaskHierarchyContext | null = null;
+
+    /**
+     * Initialize engine with project data
+     * Sends all tasks and calendar to Rust backend
+     */
+    async initialize(
+        tasks: Task[], 
+        calendar: Calendar,
+        context: TaskHierarchyContext
+    ): Promise<void> {
+        this.context = context;
+        
+        try {
+            const tasksJson = JSON.stringify(tasks);
+            const calendarJson = JSON.stringify(calendar);
+            
+            const result = await invoke<string>('initialize_engine', {
+                tasksJson,
+                calendarJson,
+            });
+            
+            this.initialized = true;
+            console.log(`[RustEngine] ${result}`);
+        } catch (error) {
+            console.error('[RustEngine] Initialization failed:', error);
+            throw new Error(`RustEngine initialization failed: ${error}`);
+        }
+    }
+
+    /**
+     * Update a single task in Rust state
+     */
+    async updateTask(id: string, updates: Partial<Task>): Promise<void> {
+        if (!this.initialized) {
+            console.warn('[RustEngine] updateTask called before initialization');
+            return;
+        }
+
+        try {
+            const updatesJson = JSON.stringify(updates);
+            await invoke<string>('update_engine_task', { id, updatesJson });
+        } catch (error) {
+            console.error(`[RustEngine] Failed to update task ${id}:`, error);
+            // Don't throw - allow graceful degradation
+        }
+    }
+
+    /**
+     * Bulk sync all tasks to Rust state
+     */
+    async syncTasks(tasks: Task[]): Promise<void> {
+        if (!this.initialized) {
+            console.warn('[RustEngine] syncTasks called before initialization');
+            return;
+        }
+
+        try {
+            const tasksJson = JSON.stringify(tasks);
+            const result = await invoke<string>('sync_engine_tasks', { tasksJson });
+            console.log(`[RustEngine] ${result}`);
+        } catch (error) {
+            console.error('[RustEngine] Failed to sync tasks:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Run CPM calculation
+     * 
+     * Phase 3a: Returns passthrough result from Rust (no actual CPM)
+     * Phase 3b: Will return full Rust CPM calculation
+     */
+    async recalculateAll(): Promise<CPMResult> {
+        if (!this.initialized) {
+            throw new Error('[RustEngine] Cannot recalculate: not initialized');
+        }
+
+        try {
+            const resultJson = await invoke<string>('calculate_cpm');
+            const result: CPMResult = JSON.parse(resultJson);
+            
+            // Log if we got passthrough result
+            if (result.stats.error?.includes('passthrough')) {
+                console.log('[RustEngine] Using passthrough result (Rust CPM not yet implemented)');
+            }
+            
+            return result;
+        } catch (error) {
+            console.error('[RustEngine] CPM calculation failed:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Clean up resources
+     */
+    async dispose(): Promise<void> {
+        if (this.initialized) {
+            try {
+                await invoke<string>('clear_engine');
+            } catch (error) {
+                console.error('[RustEngine] Failed to clear engine:', error);
+            }
+        }
+        
+        this.initialized = false;
+        this.context = null;
+        console.log('[RustEngine] Disposed');
+    }
+
+    /**
+     * Get engine status (for debugging)
+     */
+    async getStatus(): Promise<{ initialized: boolean; taskCount: number; hasCalendar: boolean }> {
+        try {
+            const statusJson = await invoke<string>('get_engine_status');
+            return JSON.parse(statusJson);
+        } catch (error) {
+            return { initialized: false, taskCount: 0, hasCalendar: false };
+        }
+    }
+}
+
