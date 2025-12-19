@@ -5,6 +5,7 @@ use tauri::Manager;
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_sql::Builder::default().build())
         .setup(|app| {
             // Automatically open DevTools in debug mode
             #[cfg(debug_assertions)]
