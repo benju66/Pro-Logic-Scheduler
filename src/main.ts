@@ -88,6 +88,17 @@ window.addEventListener('load', () => {
     }
 });
 
+// Register shutdown handler to ensure events aren't lost on close
+window.addEventListener('beforeunload', async (e) => {
+    if (window.scheduler) {
+        try {
+            await window.scheduler.onShutdown();
+        } catch (error) {
+            console.error('[main] Shutdown handler failed:', error);
+        }
+    }
+});
+
 // ================================================================
 // UI HELPER FUNCTIONS (Backward Compatibility)
 // ================================================================

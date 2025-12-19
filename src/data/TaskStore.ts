@@ -5,6 +5,7 @@
 
 import type { Task, Callback } from '../types';
 import { OrderingService } from '../services/OrderingService';
+import type { PersistenceService } from './PersistenceService';
 
 /**
  * Task store options
@@ -20,6 +21,7 @@ export interface TaskStoreOptions {
 export class TaskStore {
   private tasks: Task[] = [];
   private options: TaskStoreOptions;
+  private persistenceService: PersistenceService | null = null;
 
   /**
    * @param options - Configuration
@@ -37,8 +39,17 @@ export class TaskStore {
   }
 
   /**
+   * Set persistence service (injected post-construction to avoid circular dependencies)
+   * @param service - PersistenceService instance
+   */
+  setPersistenceService(service: PersistenceService): void {
+    this.persistenceService = service;
+  }
+
+  /**
    * Set all tasks (replaces existing)
    * @param tasks - New tasks array
+   * @note Does NOT queue events - used for loading data
    */
   setAll(tasks: Task[]): void {
     this.tasks = tasks || [];
@@ -61,6 +72,21 @@ export class TaskStore {
    */
   add(task: Task): Task {
     this.tasks.push(task);
+    
+    // Queue TASK_CREATED event
+    if (this.persistenceService) {
+      this.persistenceService.queueEvent('TASK_CREATED', task.id, {
+        id: task.id,
+        parent_id: task.parentId ?? null,
+        sort_key: task.sortKey,
+        name: task.name,
+        duration: task.duration,
+        constraint_type: task.constraintType || 'asap',
+        dependencies: task.dependencies || [],
+        is_collapsed: task._collapsed || false,
+      });
+    }
+    
     this._notifyChange();
     return task;
   }
@@ -75,6 +101,32 @@ export class TaskStore {
     const task = this.getById(id);
     if (!task) return undefined;
 
+    // Store old values for event payload
+    const oldValues: Record<string, unknown> = {};
+    
+    // Queue events for each non-calculated field
+    if (this.persistenceService) {
+      for (const [field, newValue] of Object.entries(updates)) {
+        // Skip calculated fields
+        if (this.isCalculatedField(field)) {
+          continue;
+        }
+        
+        // Store old value
+        oldValues[field] = (task as any)[field];
+        
+        // Map field names for database (camelCase to snake_case for some fields)
+        const dbField = this.mapFieldToDb(field);
+        
+        // Queue TASK_UPDATED event
+        this.persistenceService.queueEvent('TASK_UPDATED', id, {
+          field: dbField,
+          old_value: oldValues[field],
+          new_value: newValue,
+        });
+      }
+    }
+
     Object.assign(task, updates);
     this._notifyChange();
     return task;
@@ -88,6 +140,31 @@ export class TaskStore {
   delete(id: string): boolean {
     const index = this.tasks.findIndex(t => t.id === id);
     if (index === -1) return false;
+
+    // CRITICAL: Clean up "ghost links" - remove dependencies referencing this task
+    if (this.persistenceService) {
+      const tasksWithDependency = this.tasks.filter(task => 
+        task.dependencies && task.dependencies.some(dep => dep.id === id)
+      );
+
+      for (const dependentTask of tasksWithDependency) {
+        // Remove the dependency
+        const updatedDependencies = dependentTask.dependencies.filter(dep => dep.id !== id);
+        
+        // Queue TASK_UPDATED event to remove the dependency
+        this.persistenceService.queueEvent('TASK_UPDATED', dependentTask.id, {
+          field: 'dependencies',
+          old_value: dependentTask.dependencies,
+          new_value: updatedDependencies,
+        });
+        
+        // Update in memory
+        dependentTask.dependencies = updatedDependencies;
+      }
+
+      // Queue TASK_DELETED event
+      this.persistenceService.queueEvent('TASK_DELETED', id, {});
+    }
 
     this.tasks.splice(index, 1);
     this._notifyChange();
@@ -198,7 +275,18 @@ export class TaskStore {
   updateSortKey(taskId: string, sortKey: string): void {
     const task = this.tasks.find(t => t.id === taskId);
     if (task) {
+      const oldSortKey = task.sortKey;
       task.sortKey = sortKey;
+      
+      // Queue TASK_UPDATED event
+      if (this.persistenceService) {
+        this.persistenceService.queueEvent('TASK_UPDATED', taskId, {
+          field: 'sort_key',
+          old_value: oldSortKey,
+          new_value: sortKey,
+        });
+      }
+      
       this._notifyChange();
     }
   }
@@ -214,6 +302,52 @@ export class TaskStore {
     return () => {
       this.options.onChange = originalOnChange;
     };
+  }
+
+  /**
+   * Check if field is calculated (not persisted)
+   * @param field - Field name
+   * @returns True if field is calculated
+   */
+  private isCalculatedField(field: string): boolean {
+    return [
+      'start',
+      'end',
+      'level',
+      'lateStart',
+      'lateFinish',
+      'totalFloat',
+      'freeFloat',
+      '_isCritical',
+      '_health',
+      '_earlyStart',
+      '_earlyFinish',
+      '_totalFloat',
+      '_freeFloat',
+    ].includes(field);
+  }
+
+  /**
+   * Map camelCase field names to snake_case database column names
+   * @param field - Field name in camelCase
+   * @returns Database column name in snake_case
+   */
+  private mapFieldToDb(field: string): string {
+    const mapping: Record<string, string> = {
+      'actualStart': 'actual_start',
+      'actualFinish': 'actual_finish',
+      'remainingDuration': 'remaining_duration',
+      'baselineStart': 'baseline_start',
+      'baselineFinish': 'baseline_finish',
+      'baselineDuration': 'baseline_duration',
+      'constraintType': 'constraint_type',
+      'constraintDate': 'constraint_date',
+      'parentId': 'parent_id',
+      'sortKey': 'sort_key',
+      '_collapsed': 'is_collapsed',
+    };
+
+    return mapping[field] || field;
   }
 
   /**

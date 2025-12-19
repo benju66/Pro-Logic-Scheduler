@@ -227,7 +227,11 @@ export class AppInitializer {
     
     this.scheduler = new SchedulerService(options);
     
-    console.log('✅ SchedulerService created');
+    // Wait for scheduler to fully initialize (init() is now async)
+    console.log('⏳ Waiting for scheduler to fully initialize...');
+    await this.scheduler.init();
+    
+    console.log('✅ SchedulerService initialized');
     console.log('  - grid:', !!this.scheduler.grid);
     console.log('  - gantt:', !!this.scheduler.gantt);
     
@@ -240,11 +244,6 @@ export class AppInitializer {
     // Make scheduler available globally (for button handlers)
     window.scheduler = this.scheduler;
     console.log('✅ window.scheduler set');
-    
-    // Wait a moment for scheduler to fully initialize
-    console.log('⏳ Waiting for scheduler to fully initialize...');
-    await new Promise(resolve => setTimeout(resolve, 100));
-    console.log('✅ Wait complete');
   }
 
     /**

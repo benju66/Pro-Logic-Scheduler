@@ -26,6 +26,9 @@ import { OperationQueue } from '../core/OperationQueue';
 import { TaskStore } from '../data/TaskStore';
 import { CalendarStore } from '../data/CalendarStore';
 import { HistoryManager } from '../data/HistoryManager';
+import { PersistenceService } from '../data/PersistenceService';
+import { DataLoader } from '../data/DataLoader';
+import { SnapshotService } from '../data/SnapshotService';
 import { ToastService } from '../ui/services/ToastService';
 import { FileService } from '../ui/services/FileService';
 import { KeyboardService } from '../ui/services/KeyboardService';
@@ -96,6 +99,11 @@ export class SchedulerService {
     public toastService!: ToastService;  // Public for access from main.ts
     private fileService!: FileService;
     private keyboardService: KeyboardService | null = null;
+    
+    // SQLite persistence services
+    private persistenceService: PersistenceService | null = null;
+    private dataLoader: DataLoader | null = null;
+    private snapshotService: SnapshotService | null = null;
 
     // UI components (initialized in init())
     public grid: VirtualScrollGridFacade | null = null;  // Public for access from AppInitializer and UIEventManager
@@ -139,21 +147,35 @@ export class SchedulerService {
         this.options = options;
         this.isTauri = options.isTauri || false;
 
-        // Initialize services
-        this._initServices();
+        // Initialize services (async - will be awaited in init())
+        // Note: _initServices is now async, but constructor can't be async
+        // Services will be initialized when init() is called
+        this._initServices().catch(error => {
+            console.error('[SchedulerService] Service initialization failed:', error);
+        });
 
-        // Initialize if containers provided
-        if (options.gridContainer && options.ganttContainer) {
-            this.init();
-        }
+        // Note: init() is now async and must be called separately by the caller
+        // Don't call it here - let AppInitializer handle it
     }
 
     /**
      * Initialize all services
      * @private
      */
-    private _initServices(): void {
-        // Data stores
+    private async _initServices(): Promise<void> {
+        // 1. Initialize PersistenceService first (if Tauri environment)
+        if (this.isTauri) {
+            try {
+                this.persistenceService = new PersistenceService();
+                await this.persistenceService.init();
+                console.log('[SchedulerService] ✅ PersistenceService initialized');
+            } catch (error) {
+                console.error('[SchedulerService] Failed to initialize PersistenceService:', error);
+                // Continue without persistence - app can still work
+            }
+        }
+
+        // 2. Initialize stores (TaskStore/CalendarStore) normally
         this.taskStore = new TaskStore({
             onChange: () => this._onTasksChanged()
         });
@@ -162,6 +184,29 @@ export class SchedulerService {
             onChange: () => this._onCalendarChanged()
         });
 
+        // 3. Inject persistence into stores (if available)
+        if (this.persistenceService) {
+            this.taskStore.setPersistenceService(this.persistenceService);
+            this.calendarStore.setPersistenceService(this.persistenceService);
+        }
+
+        // 4. Initialize DataLoader and SnapshotService (if Tauri environment)
+        if (this.isTauri) {
+            try {
+                this.dataLoader = new DataLoader();
+                await this.dataLoader.init();
+                console.log('[SchedulerService] ✅ DataLoader initialized');
+
+                this.snapshotService = new SnapshotService();
+                await this.snapshotService.init();
+                console.log('[SchedulerService] ✅ SnapshotService initialized');
+            } catch (error) {
+                console.error('[SchedulerService] Failed to initialize SQLite services:', error);
+                // Continue without SQLite - will fall back to localStorage
+            }
+        }
+
+        // 5. Initialize other services
         this.historyManager = new HistoryManager({
             maxHistory: 50
         });
@@ -180,7 +225,13 @@ export class SchedulerService {
     /**
      * Initialize the scheduler with UI components
      */
-    init(): void {
+    async init(): Promise<void> {
+        // Ensure services are initialized first
+        if (!this.persistenceService && this.isTauri) {
+            // Wait for _initServices to complete
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        
         const { gridContainer, ganttContainer, drawerContainer, modalContainer } = this.options;
 
         if (!gridContainer || !ganttContainer) {
@@ -310,7 +361,7 @@ export class SchedulerService {
             const taskCountBeforeLoad = this.taskStore.getAll().length;
             console.log('[SchedulerService] 🔍 Before loadData() - task count:', taskCountBeforeLoad);
             
-            this.loadData();
+            await this.loadData();
             
             const taskCountAfterLoad = this.taskStore.getAll().length;
             console.log('[SchedulerService] ✅ After loadData() - task count:', taskCountAfterLoad);
@@ -3631,15 +3682,38 @@ export class SchedulerService {
     // =========================================================================
 
     /**
-     * Load data from localStorage
+     * Load data from SQLite (with localStorage fallback)
      */
-    /**
-     * Load data from localStorage
-     */
-    loadData(): void {
+    async loadData(): Promise<void> {
         console.log('[SchedulerService] 🔍 loadData() called');
         
         try {
+            // Try SQLite first (Tauri environment)
+            if (this.dataLoader) {
+                const { tasks, calendar } = await this.dataLoader.loadData();
+                
+                if (tasks.length > 0 || Object.keys(calendar.exceptions).length > 0) {
+                    // Migrate tasks to have sortKey (if needed)
+                    const tasksWithSortKeys = this._assignSortKeysToImportedTasks(tasks);
+                    
+                    // CRITICAL: Disable notifications during load to prevent "change" events
+                    const restoreNotifications = this.taskStore.disableNotifications();
+                    this.taskStore.setAll(tasksWithSortKeys);
+                    restoreNotifications();
+                    
+                    // Set calendar without queuing event (skipEvent = true)
+                    this.calendarStore.set(calendar, true);
+                    
+                    // Run CPM to populate calculated fields (start, end, etc.)
+                    this.recalculateAll();
+                    
+                    console.log('[SchedulerService] ✅ Loaded from SQLite:', tasks.length, 'tasks');
+                    return;
+                }
+            }
+            
+            // Fallback to localStorage logic if SQLite is empty or unavailable
+            console.log('[SchedulerService] SQLite empty or unavailable - trying localStorage');
             const saved = localStorage.getItem(SchedulerService.STORAGE_KEY);
             if (saved) {
                 const parsed = JSON.parse(saved) as { 
@@ -3649,7 +3723,7 @@ export class SchedulerService {
                     version?: string;
                 };
                 
-                console.log('[SchedulerService] Loading data', {
+                console.log('[SchedulerService] Loading data from localStorage', {
                     taskCount: parsed.tasks?.length ?? 0,
                     hasCalendar: !!parsed.calendar,
                     savedAt: parsed.savedAt,
@@ -3665,12 +3739,15 @@ export class SchedulerService {
                     this.taskStore.setAll(tasksWithSortKeys);
                     restoreNotifications();
                     
-                    console.log('[SchedulerService] ✅ Loaded', tasksWithSortKeys.length, 'tasks');
+                    console.log('[SchedulerService] ✅ Loaded', tasksWithSortKeys.length, 'tasks from localStorage');
                 }
                 
                 if (parsed.calendar) {
-                    this.calendarStore.set(parsed.calendar);
+                    this.calendarStore.set(parsed.calendar, true); // skipEvent = true
                 }
+                
+                // Run CPM to populate calculated fields
+                this.recalculateAll();
             } else {
                 console.log('[SchedulerService] No saved data found - creating sample data');
                 this._createSampleData();
@@ -3679,26 +3756,68 @@ export class SchedulerService {
             console.error('[SchedulerService] Load data failed:', err);
             // Clear corrupted data and start fresh
             console.log('[SchedulerService] Clearing corrupted localStorage data');
-            localStorage.removeItem(SchedulerService.STORAGE_KEY);
+            try {
+                localStorage.removeItem(SchedulerService.STORAGE_KEY);
+            } catch (e) {
+                // Ignore localStorage errors
+            }
             this._createSampleData();
         }
     }
 
     /**
-     * Save data to localStorage
+     * Save data (creates snapshot checkpoint)
+     * Events are auto-persisted via queue - this just creates a checkpoint
      */
-    saveData(): void {
-        try {
-            const data = {
-                tasks: this.taskStore.getAll(),
-                calendar: this.calendarStore.get(),
-                savedAt: new Date().toISOString(),
-                version: '2.1.0'  // Track data format version
-            };
-            localStorage.setItem(SchedulerService.STORAGE_KEY, JSON.stringify(data));
-        } catch (err) {
-            console.error('[SchedulerService] Save data failed:', err);
+    async saveData(): Promise<void> {
+        // Create snapshot checkpoint
+        if (this.snapshotService) {
+            try {
+                await this.snapshotService.createSnapshot(
+                    this.taskStore.getAll(),
+                    this.calendarStore.get()
+                );
+                console.log('[SchedulerService] ✅ Snapshot checkpoint created');
+            } catch (error) {
+                console.error('[SchedulerService] Failed to create snapshot:', error);
+            }
         }
+        
+        // Keep localStorage save logic as backup for browser mode
+        if (!this.isTauri) {
+            try {
+                const data = {
+                    tasks: this.taskStore.getAll(),
+                    calendar: this.calendarStore.get(),
+                    savedAt: new Date().toISOString(),
+                    version: '2.1.0'  // Track data format version
+                };
+                localStorage.setItem(SchedulerService.STORAGE_KEY, JSON.stringify(data));
+            } catch (err) {
+                console.error('[SchedulerService] Save data failed:', err);
+            }
+        }
+    }
+    
+    /**
+     * Shutdown handler - flush all pending events and create final snapshot
+     */
+    async onShutdown(): Promise<void> {
+        console.log('[SchedulerService] Shutting down...');
+        
+        if (this.persistenceService) {
+            await this.persistenceService.flushNow();
+        }
+        
+        if (this.snapshotService) {
+            await this.snapshotService.createSnapshot(
+                this.taskStore.getAll(),
+                this.calendarStore.get()
+            );
+            this.snapshotService.stopPeriodicSnapshots();
+        }
+        
+        console.log('[SchedulerService] ✅ Shutdown complete');
     }
 
     /**

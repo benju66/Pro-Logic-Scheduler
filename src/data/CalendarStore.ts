@@ -5,6 +5,7 @@
 
 import type { Calendar, CalendarException, Callback } from '../types';
 import { DEFAULT_WORKING_DAYS } from '../core/Constants';
+import type { PersistenceService } from './PersistenceService';
 
 /**
  * Calendar store options
@@ -20,6 +21,7 @@ export interface CalendarStoreOptions {
 export class CalendarStore {
   private calendar: Calendar;
   private options: CalendarStoreOptions;
+  private persistenceService: PersistenceService | null = null;
 
   /**
    * @param options - Configuration
@@ -41,14 +43,34 @@ export class CalendarStore {
   }
 
   /**
+   * Set persistence service (injected post-construction to avoid circular dependencies)
+   * @param service - PersistenceService instance
+   */
+  setPersistenceService(service: PersistenceService): void {
+    this.persistenceService = service;
+  }
+
+  /**
    * Set calendar configuration
    * @param calendar - Calendar configuration
+   * @param skipEvent - If true, don't queue event (used for loading data)
    */
-  set(calendar: Calendar): void {
+  set(calendar: Calendar, skipEvent: boolean = false): void {
+    const oldCalendar = { ...this.calendar };
+    
     this.calendar = {
       workingDays: calendar.workingDays || [...DEFAULT_WORKING_DAYS],
       exceptions: calendar.exceptions || {},
     };
+    
+    // Queue CALENDAR_UPDATED event (unless loading data)
+    if (!skipEvent && this.persistenceService) {
+      this.persistenceService.queueEvent('CALENDAR_UPDATED', null, {
+        working_days: this.calendar.workingDays,
+        exceptions: this.calendar.exceptions,
+      });
+    }
+    
     this._notifyChange();
   }
 
