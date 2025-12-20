@@ -227,6 +227,12 @@ export class SchedulerViewport {
             bufferRows: this.bufferRows,
         });
 
+        // Propagate existing data to the newly created renderer
+        // This ensures data is available even if setData() was called before initGrid()
+        if (this.tasks.length > 0) {
+            this.gridRenderer.setData(this.tasks);
+        }
+
         this.gridReady = true;
         this._tryStart();
     }
@@ -247,6 +253,12 @@ export class SchedulerViewport {
             headerHeight: this.headerHeight,
             onNeedsRender: () => this._scheduleRender(), // FIX: Notify viewport when gantt needs render
         });
+
+        // Propagate existing data to the newly created renderer
+        // This ensures data is available even if setData() was called before initGantt()
+        if (this.tasks.length > 0) {
+            this.ganttRenderer.setData(this.tasks);
+        }
 
         this.ganttReady = true;
         this._tryStart();

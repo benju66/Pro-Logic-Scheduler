@@ -1689,8 +1689,8 @@ export class VirtualScrollGrid {
                 (input as HTMLInputElement).style.paddingRight = `${totalPadding}px`;
                 this._bindConstraintIcon(cell, col, task, meta);
             } else {
-                // Reserve space for calendar icon only
-                const totalPadding = iconMargin + iconSize;
+                // Reserve space for calendar icon only (with gap for visual breathing room)
+                const totalPadding = iconMargin + iconSize + iconGap;
                 (input as HTMLInputElement).style.paddingRight = `${totalPadding}px`;
             }
         }
@@ -1839,12 +1839,16 @@ export class VirtualScrollGrid {
             height: ${iconSize}px;
             color: #94a3b8;
             opacity: 0.6;
-            pointer-events: none;
+            pointer-events: auto;
+            cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 1;
+            z-index: 3;
             flex-shrink: 0;
+            padding: 4px;
+            margin: -4px;
+            box-sizing: content-box;
         `;
         
         // Create calendar icon using Lucide - 12px to match date text size (13px)
@@ -1861,9 +1865,48 @@ export class VirtualScrollGrid {
             svg.style.width = `${iconSize}px`;
             svg.style.height = `${iconSize}px`;
             svg.style.display = 'block';
+            svg.style.pointerEvents = 'none'; // Let clicks pass through to span
         }
         
         iconEl.appendChild(svg);
+        
+        // Add hover effect
+        iconEl.addEventListener('mouseenter', () => {
+            iconEl.style.opacity = '1';
+            iconEl.style.color = '#6366f1';
+            if (svg instanceof SVGElement) {
+                svg.style.stroke = '#6366f1';
+            }
+        });
+        iconEl.addEventListener('mouseleave', () => {
+            iconEl.style.opacity = '0.6';
+            iconEl.style.color = '#94a3b8';
+            if (svg instanceof SVGElement) {
+                svg.style.stroke = '#94a3b8';
+            }
+        });
+        
+        // Click handler to open date picker
+        iconEl.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            if (!input || input.disabled) return;
+            
+            input.focus();
+            
+            if (typeof input.showPicker === 'function') {
+                try {
+                    input.showPicker();
+                } catch (err) {
+                    console.debug('[VirtualScrollGrid] showPicker() not available, falling back to click');
+                    input.click();
+                }
+            } else {
+                input.click();
+            }
+        });
+        
         cell.appendChild(iconEl);
     }
 

@@ -3883,6 +3883,8 @@ export class SchedulerService {
                     
                     // Run CPM to populate calculated fields (start, end, etc.)
                     this.recalculateAll();
+                    // Note: render() is automatically triggered by _applyCalculationResult() 
+                    // when recalculateAll() completes
                     
                     console.log('[SchedulerService] ✅ Loaded from SQLite:', tasks.length, 'tasks');
                     return;
@@ -3937,6 +3939,8 @@ export class SchedulerService {
                 // Run CPM to populate calculated fields
                 if ((parsed.tasks?.length ?? 0) > 0) {
                     this.recalculateAll();
+                    // Note: render() is automatically triggered by _applyCalculationResult() 
+                    // when recalculateAll() completes
                 }
             } else {
                 console.log('[SchedulerService] No saved data found - creating sample data');

@@ -124,8 +124,8 @@ export class BindingSystem {
                 (cell.input as HTMLInputElement).style.paddingRight = `${totalPadding}px`;
                 this._bindConstraintIcon(cell, col, task, ctx);
             } else {
-                const totalPadding = iconMargin + iconSize;
-                (cell.input as HTMLInputElement).style.paddingRight = `${totalPadding}px`;
+                const totalPadding = iconMargin + iconSize + iconGap; // Add gap for visual breathing room
+                (cell.input as HTMLInputElement).style.paddingRight = `${totalPadding}px`; // FIXED: Apply padding
             }
         }
 
@@ -237,13 +237,53 @@ export class BindingSystem {
             height: ${iconSize}px;
             color: #94a3b8;
             opacity: 0.6;
-            pointer-events: none;
+            pointer-events: auto;
+            cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
-            z-index: 1;
+            z-index: 3;
             flex-shrink: 0;
+            padding: 4px;
+            margin: -4px;
+            box-sizing: content-box;
         `;
+
+        // Add hover effect
+        iconEl.addEventListener('mouseenter', () => {
+            iconEl.style.opacity = '1';
+            iconEl.style.color = '#6366f1';
+        });
+        iconEl.addEventListener('mouseleave', () => {
+            iconEl.style.opacity = '0.6';
+            iconEl.style.color = '#94a3b8';
+        });
+
+        // Click handler to open date picker
+        iconEl.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const input = cell.input as HTMLInputElement;
+            if (!input || input.disabled) return;
+            
+            // Focus the input first
+            input.focus();
+            
+            // Use showPicker() if available (Chrome 99+, Safari 16+, Firefox 101+)
+            if (typeof input.showPicker === 'function') {
+                try {
+                    input.showPicker();
+                } catch (err) {
+                    // showPicker() can throw if called without user gesture in some browsers
+                    console.debug('[BindingSystem] showPicker() not available, falling back to click');
+                    input.click();
+                }
+            } else {
+                // Fallback for older browsers
+                input.click();
+            }
+        });
 
         cell.container.appendChild(iconEl);
     }

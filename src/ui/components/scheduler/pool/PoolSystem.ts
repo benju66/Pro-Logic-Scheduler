@@ -330,6 +330,42 @@ export class PoolSystem {
     }
 
     /**
+     * Rebuild the entire pool with new column definitions
+     * Used when columns structurally change (e.g., baseline columns added/removed)
+     * @param columns - New column definitions
+     */
+    rebuildPool(columns: GridColumn[]): void {
+        console.log('[PoolSystem] Rebuilding pool with new columns:', columns.length);
+        
+        // Store current pool size
+        const poolSize = this.pool.length;
+        
+        // Clear tracking
+        this.activeRows.clear();
+        this.availableRows = [];
+        
+        // Remove all existing row elements from DOM
+        for (const row of this.pool) {
+            row.element.remove();
+        }
+        this.pool = [];
+        
+        // Update columns reference
+        this.columns = columns;
+        
+        // Recreate pool with new column structure
+        for (let i = 0; i < poolSize; i++) {
+            const row = this._createRow();
+            row.element.classList.add('vsg-hidden');
+            this.pool.push(row);
+            this.availableRows.push(row);
+            this.container.appendChild(row.element);
+        }
+        
+        console.log(`[PoolSystem] ✅ Pool rebuilt: ${poolSize} rows with ${columns.length} columns`);
+    }
+
+    /**
      * Destroy the pool system
      */
     destroy(): void {

@@ -241,12 +241,29 @@ export class GridRenderer {
 
     /**
      * Update columns
+     * Rebuilds pool if column structure changed (columns added/removed)
      */
     updateColumns(columns: GridColumn[]): void {
+        const oldColumnIds = new Set(this.options.columns.map(c => c.id));
+        const newColumnIds = new Set(columns.map(c => c.id));
+        
+        // Check if columns structurally changed (added or removed)
+        const structureChanged = 
+            oldColumnIds.size !== newColumnIds.size ||
+            [...newColumnIds].some(id => !oldColumnIds.has(id)) ||
+            [...oldColumnIds].some(id => !newColumnIds.has(id));
+        
+        // Update options
         this.options.columns = columns;
+        
+        // Update binder's column map
         this.binder.updateColumns(columns);
-        // Note: Pool would need to be rebuilt for new columns - this is expensive
-        // For now, we assume columns don't change structure, only data
+        
+        if (structureChanged) {
+            console.log('[GridRenderer] Column structure changed, rebuilding pool');
+            // Rebuild pool with new column structure
+            this.pool.rebuildPool(columns);
+        }
     }
 
     /**
