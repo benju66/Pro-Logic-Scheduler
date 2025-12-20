@@ -8,7 +8,7 @@
  * NO SINGLETON PATTERN - constructor-based.
  */
 
-import type { Task, GridColumn } from '../../../types';
+import type { Task, GridColumn, Calendar } from '../../../types';
 import type { ViewportState, SchedulerViewportOptions, GridRendererOptions, GanttRendererOptions, PerformanceMetrics } from './types';
 import { GridRenderer } from './GridRenderer';
 import { GanttRenderer } from './GanttRenderer';

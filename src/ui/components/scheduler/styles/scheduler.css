@@ -467,3 +467,154 @@
     background: #fefce8; /* Light yellow to indicate pending */
 }
 
+/* =============================================================================
+   Flatpickr Theme Customization
+   Match Pro Logic Scheduler design system
+   ============================================================================= */
+
+/* Container */
+.flatpickr-calendar {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px;
+    border-radius: 8px;
+    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+    border: 1px solid #e2e8f0;
+}
+
+/* Header (month/year navigation) */
+.flatpickr-months {
+    background: #f8fafc;
+    border-radius: 8px 8px 0 0;
+    padding: 8px 0;
+}
+
+.flatpickr-months .flatpickr-month {
+    color: #1e293b;
+    fill: #1e293b;
+}
+
+.flatpickr-current-month {
+    font-weight: 600;
+}
+
+.flatpickr-months .flatpickr-prev-month,
+.flatpickr-months .flatpickr-next-month {
+    color: #64748b;
+    fill: #64748b;
+    padding: 8px;
+    border-radius: 6px;
+}
+
+.flatpickr-months .flatpickr-prev-month:hover,
+.flatpickr-months .flatpickr-next-month:hover {
+    background: #e2e8f0;
+    color: #1e293b;
+    fill: #1e293b;
+}
+
+/* Weekday headers */
+.flatpickr-weekdays {
+    background: #f8fafc;
+}
+
+.flatpickr-weekday {
+    color: #64748b;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+}
+
+/* Days */
+.flatpickr-day {
+    color: #334155;
+    border-radius: 6px;
+    font-weight: 500;
+}
+
+.flatpickr-day:hover {
+    background: #f1f5f9;
+    border-color: #f1f5f9;
+}
+
+/* Selected day */
+.flatpickr-day.selected,
+.flatpickr-day.selected:hover {
+    background: #6366f1;
+    border-color: #6366f1;
+    color: white;
+}
+
+/* Today */
+.flatpickr-day.today {
+    border-color: #6366f1;
+}
+
+.flatpickr-day.today:hover {
+    background: #6366f1;
+    color: white;
+}
+
+/* Disabled days (non-working days from calendar) */
+.flatpickr-day.flatpickr-disabled,
+.flatpickr-day.flatpickr-disabled:hover {
+    color: #cbd5e1;
+    background: #f8fafc;
+    text-decoration: line-through;
+    cursor: not-allowed;
+}
+
+/* Weekend days (if not in working days) */
+.flatpickr-day.flatpickr-disabled.weekend {
+    color: #fca5a5;
+    background: #fef2f2;
+}
+
+/* Adjacent month days */
+.flatpickr-day.prevMonthDay,
+.flatpickr-day.nextMonthDay {
+    color: #94a3b8;
+}
+
+/* Input styling */
+.vsg-date-input {
+    cursor: text;
+}
+
+.vsg-date-input:focus {
+    background: white;
+    border: 1px solid #6366f1;
+    border-radius: 3px;
+    box-shadow: none;
+}
+
+/* Alt input (display format) */
+.flatpickr-input.flatpickr-mobile {
+    /* Mobile-specific styling if needed */
+}
+
+/* Cell with open date picker */
+.vsg-cell.date-picker-open {
+    z-index: 10;
+}
+
+.vsg-cell.date-picker-open .vsg-calendar-icon {
+    color: #6366f1;
+    opacity: 1;
+}
+
+/* Animation */
+.flatpickr-calendar.animate.open {
+    animation: flatpickrFadeIn 0.15s ease-out;
+}
+
+@keyframes flatpickrFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+

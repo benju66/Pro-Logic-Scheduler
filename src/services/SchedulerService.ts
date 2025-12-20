@@ -454,6 +454,13 @@ export class SchedulerService {
             console.error('[SchedulerService] Error loading persisted data:', error);
         }
         
+        // TODO: Calendar integration for Flatpickr - add setCalendar to GridRenderer
+        // Pass calendar to grid for date picker integration
+        // const calendar = this.calendarStore.get();
+        // if (this.grid) {
+        //     this.grid.setCalendar(calendar);
+        // }
+        
         // Mark initialization as complete
         this.isInitialized = true;
         console.log('[SchedulerService] ✅ Initialization complete - isInitialized set to true');
@@ -483,6 +490,7 @@ export class SchedulerService {
             updateRow: (taskId: string) => viewport.updateRow(taskId),
             setScrollTop: (scrollTop: number) => viewport.setScrollTop(scrollTop),
             getScrollTop: () => viewport.getScrollTop(),
+            setCalendar: (calendar: Calendar) => viewport.setCalendar(calendar),
             getStats: () => ({
                 totalTasks: viewport.getData().length,
                 visibleRange: '0-0',
@@ -3879,6 +3887,14 @@ export class SchedulerService {
      */
     private _onCalendarChanged(): void {
         // Calendar changed - trigger recalculation
+        // TODO: Calendar integration for Flatpickr - add setCalendar to GridRenderer
+        // const calendar = this.calendarStore.get();
+        // 
+        // // Update grid's date picker calendar
+        // if (this.grid) {
+        //     this.grid.setCalendar(calendar);
+        // }
+        
         this.recalculateAll();
         this.render();
     }

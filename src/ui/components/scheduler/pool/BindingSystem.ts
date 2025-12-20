@@ -6,22 +6,41 @@
  * Updates accessibility attributes.
  */
 
-import type { Task, GridColumn } from '../../../../types';
+import type { Task, GridColumn, Calendar } from '../../../../types';
 import type { PooledRow, PooledCell, BindingContext } from '../types';
 import { getTaskFieldValue } from '../../../../types';
 import { ICONS } from '../icons';
+import flatpickr from 'flatpickr';
+import type { Instance } from 'flatpickr/dist/types/instance';
+import { createDatePickerOptions, destroyDatePicker, formatDateISO } from '../datepicker/DatePickerConfig';
 
 /**
  * Binding System - Updates pooled DOM elements with task data
  */
 export class BindingSystem {
     private columnMap: Map<string, GridColumn>;
+    private calendar: Calendar | null = null;
+    private onDateChange: ((taskId: string, field: string, value: string) => void) | null = null;
 
     constructor(columns: GridColumn[]) {
         this.columnMap = new Map();
         columns.forEach(col => {
             this.columnMap.set(col.field, col);
         });
+    }
+    
+    /**
+     * Set the calendar for working day integration
+     */
+    setCalendar(calendar: Calendar): void {
+        this.calendar = calendar;
+    }
+    
+    /**
+     * Set the date change callback
+     */
+    setOnDateChange(callback: (taskId: string, field: string, value: string) => void): void {
+        this.onDateChange = callback;
     }
 
     /**
@@ -108,29 +127,57 @@ export class BindingSystem {
             this._bindNameCell(cell, ctx);
         }
 
-        // Handle date inputs - add calendar icon
-        if (col.type === 'date' && cell.input && (cell.input as HTMLInputElement).type === 'date') {
+        // Handle date inputs - initialize Flatpickr
+        if (col.type === 'date' && cell.input) {
+            const input = cell.input as HTMLInputElement;
+            const taskId = ctx.task.id;
+            const field = col.field;
+            
             cell.container.style.position = 'relative';
             const hasConstraintIcon = col.showConstraintIcon && (col.field === 'start' || col.field === 'end');
-            this._bindCalendarIcon(cell, hasConstraintIcon);
-
+            
+            // Initialize or update Flatpickr
+            this._initializeDatePicker(cell, col, ctx, hasConstraintIcon);
+            
+            // Set value
+            const value = getTaskFieldValue(ctx.task, col.field);
+            if (value) {
+                input.value = String(value);
+                // Update Flatpickr's internal date
+                if (cell.flatpickr) {
+                    cell.flatpickr.setDate(String(value), false); // false = don't trigger onChange
+                }
+            } else {
+                input.value = '';
+                if (cell.flatpickr) {
+                    cell.flatpickr.clear();
+                }
+            }
+            
+            // Handle readonly state
+            const isReadonly = col.editable === false || (col.readonlyForParent && ctx.isParent);
+            input.disabled = isReadonly;
+            if (isReadonly) {
+                input.classList.add('cell-readonly');
+            } else {
+                input.classList.remove('cell-readonly');
+            }
+            
+            // Add constraint icon if needed
+            if (hasConstraintIcon) {
+                this._bindConstraintIcon(cell, col, ctx.task, ctx);
+            }
+            
             // Reserve padding space for icons
             const iconSize = 12;
             const iconGap = 4;
             const iconMargin = 4;
-
-            if (hasConstraintIcon) {
-                const totalPadding = iconMargin + iconSize + iconGap + iconSize;
-                (cell.input as HTMLInputElement).style.paddingRight = `${totalPadding}px`;
-                this._bindConstraintIcon(cell, col, task, ctx);
-            } else {
-                const totalPadding = iconMargin + iconSize + iconGap; // Add gap for visual breathing room
-                (cell.input as HTMLInputElement).style.paddingRight = `${totalPadding}px`; // FIXED: Apply padding
-            }
-
-            // Add focus class to cell for styling (fallback for browsers without :has())
-            const input = cell.input as HTMLInputElement;
+            const totalPadding = hasConstraintIcon 
+                ? iconMargin + iconSize + iconGap + iconSize + iconGap
+                : iconMargin + iconSize + iconGap;
+            input.style.paddingRight = `${totalPadding}px`;
             
+            // Add focus class to cell for styling (fallback for browsers without :has())
             // Remove existing listeners to prevent duplicates (pooled elements get reused)
             const existingFocusHandler = (input as any)._focusHandler;
             const existingBlurHandler = (input as any)._blurHandler;
@@ -155,6 +202,8 @@ export class BindingSystem {
             
             input.addEventListener('focus', focusHandler);
             input.addEventListener('blur', blurHandler);
+            
+            return; // Early return - we've handled this cell completely
         }
 
         // Handle constraint icons on non-date cells
@@ -237,9 +286,64 @@ export class BindingSystem {
     }
 
     /**
-     * Bind calendar icon to date input cell
+     * Initialize Flatpickr on a date cell
+     * Reuses existing instance if present (pooled elements)
      */
-    private _bindCalendarIcon(cell: PooledCell, hasConstraintIcon: boolean): void {
+    private _initializeDatePicker(
+        cell: PooledCell, 
+        col: GridColumn, 
+        ctx: BindingContext,
+        hasConstraintIcon: boolean
+    ): void {
+        const input = cell.input as HTMLInputElement;
+        const taskId = ctx.task.id;
+        const field = col.field;
+        const isReadonly = col.editable === false || (col.readonlyForParent && ctx.isParent);
+        
+        // Destroy existing instance if configuration changed significantly
+        // (e.g., different task might have different readonly state)
+        if (cell.flatpickr) {
+            // Check if we need to reinitialize
+            const currentDisabled = (cell.flatpickr as any)._disabled;
+            if (currentDisabled !== isReadonly) {
+                destroyDatePicker(cell.flatpickr);
+                cell.flatpickr = null;
+            }
+        }
+        
+        // Create new instance if needed
+        if (!cell.flatpickr && !isReadonly) {
+            const options = createDatePickerOptions({
+                calendar: this.calendar || undefined,
+                disabled: isReadonly,
+                onChange: (dateStr) => {
+                    // Get current task ID from the row (may have changed due to pooling)
+                    const row = cell.container.closest('.vsg-row') as HTMLElement;
+                    const currentTaskId = row?.dataset.taskId;
+                    if (currentTaskId && this.onDateChange) {
+                        this.onDateChange(currentTaskId, field, dateStr);
+                    }
+                },
+                onOpen: () => {
+                    cell.container.classList.add('date-picker-open');
+                },
+                onClose: () => {
+                    cell.container.classList.remove('date-picker-open');
+                },
+            });
+            
+            cell.flatpickr = flatpickr(input, options);
+            (cell.flatpickr as any)._disabled = isReadonly;
+        }
+        
+        // Add calendar icon (clickable to open picker)
+        this._bindCalendarIconWithPicker(cell, hasConstraintIcon);
+    }
+
+    /**
+     * Bind calendar icon that opens the Flatpickr picker
+     */
+    private _bindCalendarIconWithPicker(cell: PooledCell, hasConstraintIcon: boolean): void {
         // Remove existing calendar icon if present
         const existingIcon = cell.container.querySelector('.vsg-calendar-icon');
         if (existingIcon) {
@@ -287,7 +391,7 @@ export class BindingSystem {
             iconEl.style.color = '#94a3b8';
         });
 
-        // Click handler to open date picker
+        // Click handler to open Flatpickr picker
         iconEl.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -295,21 +399,12 @@ export class BindingSystem {
             const input = cell.input as HTMLInputElement;
             if (!input || input.disabled) return;
             
-            // Focus the input first
-            input.focus();
-            
-            // Use showPicker() if available (Chrome 99+, Safari 16+, Firefox 101+)
-            if (typeof input.showPicker === 'function') {
-                try {
-                    input.showPicker();
-                } catch (err) {
-                    // showPicker() can throw if called without user gesture in some browsers
-                    console.debug('[BindingSystem] showPicker() not available, falling back to click');
-                    input.click();
-                }
+            // Open Flatpickr calendar
+            if (cell.flatpickr) {
+                cell.flatpickr.open();
             } else {
-                // Fallback for older browsers
-                input.click();
+                // Fallback: focus the input
+                input.focus();
             }
         });
 

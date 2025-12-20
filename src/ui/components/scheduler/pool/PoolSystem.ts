@@ -83,6 +83,14 @@ export class PoolSystem {
         const row = this.activeRows.get(dataIndex);
         if (!row) return;
 
+        // Clean up Flatpickr instances before releasing
+        for (const [field, cell] of row.cells) {
+            if (cell.flatpickr) {
+                // Don't destroy - just close if open (reuse instance)
+                cell.flatpickr.close();
+            }
+        }
+
         this.activeRows.delete(dataIndex);
         row.dataIndex = -1;
         row.element.classList.add('vsg-hidden');
@@ -146,6 +154,11 @@ export class PoolSystem {
             const cell = this._createCell(col);
             cells.set(col.field, cell);
             row.appendChild(cell.container);
+            
+            // Initialize flatpickr property as null (will be set during binding)
+            if (col.type === 'date') {
+                cell.flatpickr = null;
+            }
         });
 
         return {
@@ -209,12 +222,11 @@ export class PoolSystem {
 
             case 'date':
                 input = document.createElement('input');
-                input.type = 'date';
-                input.className = 'vsg-input';
+                input.type = 'text';  // Use text input for Flatpickr
+                input.className = 'vsg-input vsg-date-input';
                 input.setAttribute('data-field', col.field);
-                // Hide native calendar icon
-                input.style.setProperty('-webkit-appearance', 'none');
-                input.style.setProperty('appearance', 'none');
+                input.setAttribute('placeholder', 'mm/dd/yyyy');
+                input.setAttribute('autocomplete', 'off');
                 container.appendChild(input);
                 break;
 
@@ -369,11 +381,27 @@ export class PoolSystem {
      * Destroy the pool system
      */
     destroy(): void {
-        // Remove all rows from DOM
-        this.pool.forEach(row => {
-            if (row.element.parentNode) {
-                row.element.parentNode.removeChild(row.element);
+        // Import destroyDatePicker dynamically to avoid circular dependency
+        import('../datepicker/DatePickerConfig').then(({ destroyDatePicker }) => {
+            // Destroy all Flatpickr instances
+            for (const row of this.pool) {
+                for (const [field, cell] of row.cells) {
+                    if (cell.flatpickr) {
+                        destroyDatePicker(cell.flatpickr);
+                        cell.flatpickr = null;
+                    }
+                }
+                if (row.element.parentNode) {
+                    row.element.parentNode.removeChild(row.element);
+                }
             }
+        }).catch(() => {
+            // Fallback if import fails - just remove DOM elements
+            this.pool.forEach(row => {
+                if (row.element.parentNode) {
+                    row.element.parentNode.removeChild(row.element);
+                }
+            });
         });
 
         this.pool = [];

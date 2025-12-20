@@ -8,7 +8,7 @@
  * Owns horizontal scroll for columns.
  */
 
-import type { Task, GridColumn } from '../../../types';
+import type { Task, GridColumn, Calendar } from '../../../types';
 import type { ViewportState, GridRendererOptions, BindingContext } from './types';
 import { PoolSystem } from './pool/PoolSystem';
 import { BindingSystem } from './pool/BindingSystem';
@@ -84,6 +84,13 @@ export class GridRenderer {
         });
 
         this.binder = new BindingSystem(options.columns);
+        
+        // Wire up date change callback
+        this.binder.setOnDateChange((taskId, field, value) => {
+            if (this.options.onCellChange) {
+                this.options.onCellChange(taskId, field, value);
+            }
+        });
 
         // Event delegation
         this._bindEventListeners();
@@ -265,6 +272,13 @@ export class GridRenderer {
             this.pool.rebuildPool(columns);
         }
     }
+    
+    /**
+     * Update the calendar for working day integration
+     */
+    setCalendar(calendar: Calendar): void {
+        this.binder.setCalendar(calendar);
+    }
 
     /**
      * Focus a specific cell
@@ -434,7 +448,12 @@ export class GridRenderer {
     private _onInput(e: Event): void {
         const input = e.target as HTMLInputElement;
         if (!input.classList.contains('vsg-input')) return;
-        if (input.type !== 'date') return; // Only handle date inputs specially
+        if (!input.classList.contains('vsg-date-input')) return; // Only handle Flatpickr date inputs
+        
+        // Skip if this is a Flatpickr input - it handles its own input events
+        if ((input as any)._flatpickr) {
+            return;
+        }
         
         const row = input.closest('.vsg-row') as HTMLElement | null;
         if (!row) return;
@@ -457,6 +476,12 @@ export class GridRenderer {
      */
     private _onChange(e: Event): void {
         const input = e.target as HTMLInputElement | HTMLSelectElement;
+        
+        // Skip if this is a Flatpickr input - it has its own onChange handler
+        if (input.classList.contains('vsg-date-input') && (input as any)._flatpickr) {
+            return;
+        }
+        
         const field = input.getAttribute('data-field');
         if (!field) return;
 

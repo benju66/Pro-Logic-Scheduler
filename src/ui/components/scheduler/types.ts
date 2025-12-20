@@ -53,6 +53,8 @@ export interface PooledRow {
     dataIndex: number;
 }
 
+import type { Instance } from 'flatpickr/dist/types/instance';
+
 /**
  * Pooled cell element
  */
@@ -65,6 +67,7 @@ export interface PooledCell {
     actionButtons: HTMLButtonElement[];
     collapseBtn: HTMLButtonElement | null;
     indent: HTMLSpanElement | null;
+    flatpickr?: Instance | null;  // Flatpickr instance for date cells
 }
 
 /**
@@ -181,6 +184,8 @@ export interface PerformanceMetrics {
     avgRenderTime: number;
 }
 
+import type { Calendar } from '../../../types';
+
 /**
  * Facade interface for VirtualScrollGrid API compatibility
  * Used when SchedulerViewport wraps grid functionality
@@ -200,6 +205,7 @@ export interface VirtualScrollGridFacade {
     updateRow(taskId: string): void;
     setScrollTop(scrollTop: number): void;
     getScrollTop(): number;
+    setCalendar(calendar: Calendar): void;
     getStats(): {
         totalTasks: number;
         visibleRange: string;
