@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pro Logic Scheduler | Ferrari Engine v2.0</title>
+    <title>Pro Logic Scheduler</title>
     
     <style>
         /* ============================================================
@@ -1853,6 +1853,217 @@
         }
         
         /* ============================================================
+           ACTIVITY BAR
+           ============================================================ */
+        .app-body {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        .activity-bar {
+            width: 48px;
+            background: #1e293b;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            flex-shrink: 0;
+            border-right: 1px solid #334155;
+        }
+
+        .activity-bar-top,
+        .activity-bar-bottom {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 8px 0;
+            gap: 4px;
+        }
+
+        .activity-btn {
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: none;
+            border-radius: 8px;
+            color: #94a3b8;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            position: relative;
+        }
+
+        .activity-btn:hover:not(:disabled) {
+            background: #334155;
+            color: #e2e8f0;
+        }
+
+        .activity-btn.active {
+            color: #ffffff;
+            background: #334155;
+        }
+
+        /* Active indicator bar on left edge */
+        .activity-btn.active::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 8px;
+            bottom: 8px;
+            width: 2px;
+            background: #6366f1;
+            border-radius: 0 2px 2px 0;
+        }
+
+        .activity-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .activity-btn svg {
+            width: 22px;
+            height: 22px;
+            stroke-width: 1.5;
+        }
+
+        /* Settings button specific styling */
+        .activity-bar-bottom .activity-btn:hover:not(:disabled) {
+            color: #f8fafc;
+        }
+
+        /* ============================================================
+           SETTINGS MODAL
+           ============================================================ */
+        .settings-modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(2px);
+        }
+
+        .settings-modal {
+            width: 700px;
+            max-width: 90vw;
+            height: 500px;
+            max-height: 80vh;
+            background: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .settings-header {
+            height: 56px;
+            padding: 0 20px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid #e2e8f0;
+            flex-shrink: 0;
+        }
+
+        .settings-header h2 {
+            font-size: 16px;
+            font-weight: 600;
+            color: #1e293b;
+            margin: 0;
+        }
+
+        .settings-close-btn {
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: transparent;
+            border: none;
+            border-radius: 6px;
+            color: #64748b;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .settings-close-btn:hover {
+            background: #f1f5f9;
+            color: #1e293b;
+        }
+
+        .settings-body {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        .settings-sidebar {
+            width: 180px;
+            background: #f8fafc;
+            border-right: 1px solid #e2e8f0;
+            padding: 12px 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        .settings-nav-btn {
+            padding: 10px 12px;
+            text-align: left;
+            background: transparent;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            color: #475569;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .settings-nav-btn:hover {
+            background: #e2e8f0;
+            color: #1e293b;
+        }
+
+        .settings-nav-btn.active {
+            background: #ffffff;
+            color: #1e293b;
+            font-weight: 500;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        }
+
+        .settings-content {
+            flex: 1;
+            padding: 24px;
+            overflow-y: auto;
+        }
+
+        .settings-section {
+            display: none;
+        }
+
+        .settings-section.active {
+            display: block;
+        }
+
+        .settings-section h3 {
+            font-size: 15px;
+            font-weight: 600;
+            color: #1e293b;
+            margin: 0 0 16px 0;
+        }
+
+        .settings-placeholder {
+            color: #64748b;
+            font-size: 14px;
+        }
+
+        /* ============================================================
            STICKY COLUMNS
            ============================================================ */
         .grid-header-cell.pinned {
@@ -1909,8 +2120,7 @@
         <div class="header-left">
             <div class="logo">PL</div>
             <div>
-                <div class="title">Pro Logic Scheduler <span>Ferrari Engine v2.0</span></div>
-                <div class="subtitle">Double-click row for details</div>
+                <div class="title">Pro Logic Scheduler</div>
             </div>
         </div>
         
@@ -2081,8 +2291,6 @@
         </div>
         
         <div class="header-right">
-            <button class="btn btn-success" data-action="generate-1000">+ 1,000 Tasks</button>
-            <div class="divider"></div>
             <button class="btn btn-secondary" data-action="clear-tasks">Clear All</button>
             <button class="btn btn-secondary" data-action="toggle-gantt" id="gantt-toggle-btn" title="Toggle Gantt Chart">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" id="gantt-toggle-icon">
@@ -2110,8 +2318,47 @@
         </div>
     </header>
     
-    <!-- Main Content -->
-    <main class="main">
+    <!-- App Body (Activity Bar + Main Content) -->
+    <div class="app-body">
+        <!-- Activity Bar -->
+        <aside class="activity-bar" id="activity-bar">
+            <div class="activity-bar-top">
+                <button class="activity-btn active" data-view="schedule" title="Schedule">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                    </svg>
+                </button>
+                <button class="activity-btn" data-view="resources" title="Resources" disabled>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="9" cy="7" r="4"></circle>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                    </svg>
+                </button>
+                <button class="activity-btn" data-view="reports" title="Reports" disabled>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="18" y1="20" x2="18" y2="10"></line>
+                        <line x1="12" y1="20" x2="12" y2="4"></line>
+                        <line x1="6" y1="20" x2="6" y2="14"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="activity-bar-bottom">
+                <button class="activity-btn" data-action="open-settings" title="Settings">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"></circle>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+                    </svg>
+                </button>
+            </div>
+        </aside>
+        
+        <!-- Main Content -->
+        <main class="main" id="main-content">
         <!-- Grid Pane -->
         <div class="grid-pane" id="grid-pane">
             <!-- Grid header is built dynamically by SchedulerService._buildGridHeader() -->
@@ -2142,6 +2389,7 @@
         <!-- Side Drawer Container -->
         <div id="drawer-container"></div>
     </main>
+    </div>
     
     <!-- Stats Bar -->
     <div class="stats-bar">
@@ -2189,6 +2437,50 @@
     <input type="file" id="file-input-json" accept=".json" style="display: none;">
     <input type="file" id="file-input-xml" accept=".xml" style="display: none;">
     
+    <!-- Settings Modal -->
+    <div class="settings-modal-overlay" id="settings-modal-overlay" style="display: none;">
+        <div class="settings-modal" id="settings-modal" tabindex="-1">
+            <div class="settings-header">
+                <h2>Settings</h2>
+                <button class="settings-close-btn" data-action="close-settings">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="settings-body">
+                <div class="settings-sidebar">
+                    <button class="settings-nav-btn active" data-settings-section="general">General</button>
+                    <button class="settings-nav-btn" data-settings-section="display">Display</button>
+                    <button class="settings-nav-btn" data-settings-section="calendar">Calendar</button>
+                    <button class="settings-nav-btn" data-settings-section="data">Data</button>
+                </div>
+                <div class="settings-content">
+                    <!-- General Section (default) -->
+                    <div class="settings-section active" id="settings-general">
+                        <h3>General Settings</h3>
+                        <p class="settings-placeholder">Settings will be added in a future update.</p>
+                    </div>
+                    <!-- Display Section -->
+                    <div class="settings-section" id="settings-display">
+                        <h3>Display Settings</h3>
+                        <p class="settings-placeholder">Display options coming soon.</p>
+                    </div>
+                    <!-- Calendar Section -->
+                    <div class="settings-section" id="settings-calendar">
+                        <h3>Calendar Settings</h3>
+                        <p class="settings-placeholder">Calendar configuration coming soon.</p>
+                    </div>
+                    <!-- Data Section -->
+                    <div class="settings-section" id="settings-data">
+                        <h3>Data Management</h3>
+                        <p class="settings-placeholder">Import/Export options coming soon.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
     
     <!-- Scripts (ES Modules) -->
     <script type="module" src="/src/main.ts"></script>

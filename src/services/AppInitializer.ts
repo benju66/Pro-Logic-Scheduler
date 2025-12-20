@@ -11,6 +11,8 @@ import { SchedulerService } from './SchedulerService';
 import { StatsService } from './StatsService';
 import { PersistenceService } from '../data/PersistenceService';
 import { MigrationService } from '../data/MigrationService';
+import { ActivityBar } from '../ui/components/ActivityBar';
+import { SettingsModal } from '../ui/components/SettingsModal';
 import type { SchedulerServiceOptions } from '../types';
 
 /**
@@ -30,6 +32,8 @@ export class AppInitializer {
   private statsService: StatsService | null = null;
   private persistenceService: PersistenceService | null = null;
   private migrationService: MigrationService | null = null;
+  private activityBar: ActivityBar | null = null;
+  private settingsModal: SettingsModal | null = null;
   private isInitializing: boolean = false;
   public isInitialized: boolean = false;  // Public for access from main.ts
 
@@ -85,6 +89,9 @@ export class AppInitializer {
       
       // Initialize UI handlers
       this._initializeUIHandlers();
+      
+      // Initialize activity bar and settings modal
+      this._initializeActivityBar();
       
       // Initialize stats service
       this._initializeStatsService();
@@ -258,6 +265,44 @@ export class AppInitializer {
         // This method is kept for future refactoring
         
         console.log('  ✅ UI handlers will be initialized from main.ts');
+    }
+
+    /**
+     * Initialize activity bar and settings modal
+     * @private
+     */
+    private _initializeActivityBar(): void {
+        const activityBarEl = document.getElementById('activity-bar');
+        const settingsOverlay = document.getElementById('settings-modal-overlay');
+        const settingsModal = document.getElementById('settings-modal');
+
+        if (!activityBarEl || !settingsOverlay || !settingsModal) {
+            console.warn('[AppInitializer] Activity bar or settings modal elements not found');
+            return;
+        }
+
+        // Initialize settings modal first
+        this.settingsModal = new SettingsModal({
+            overlay: settingsOverlay,
+            modal: settingsModal,
+            onClose: () => {
+                console.log('[Settings] Modal closed');
+            }
+        });
+
+        // Initialize activity bar
+        this.activityBar = new ActivityBar({
+            container: activityBarEl,
+            onViewChange: (view) => {
+                console.log('[ActivityBar] View changed to:', view);
+                // Future: implement view switching logic
+            },
+            onSettingsClick: () => {
+                this.settingsModal?.open();
+            }
+        });
+
+        console.log('[AppInitializer] ✅ Activity bar initialized');
     }
 
   /**
