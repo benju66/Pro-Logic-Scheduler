@@ -8,9 +8,9 @@ use crate::date_utils::{add_work_days, calc_work_days, calc_work_days_difference
 use std::collections::HashMap;
 
 const MAX_CPM_ITERATIONS: usize = 50;
-const DEFAULT_LINK_TYPE: &str = "FS";
 
 /// Successor map entry
+#[derive(Clone)]
 struct SuccessorEntry {
     id: String,
     link_type: String,
@@ -70,71 +70,90 @@ fn build_successor_map(tasks: &[Task]) -> HashMap<String, Vec<SuccessorEntry>> {
 
 /// Forward pass - calculate Early Start (ES) and Early Finish (EF)
 pub fn forward_pass(tasks: &mut [Task], calendar: &Calendar) {
-    let mut changed = true;
     let mut iterations = 0;
+    let mut changed = true;
+    
+    // Collect parent IDs upfront to avoid borrow issues
+    let parent_ids: Vec<String> = tasks.iter()
+        .filter(|t| is_parent(&t.id, tasks))
+        .map(|t| t.id.clone())
+        .collect();
     
     while changed && iterations < MAX_CPM_ITERATIONS {
         changed = false;
         iterations += 1;
         
-        for task in tasks.iter_mut() {
-            if is_parent(&task.id, tasks) {
+        // Build a map of task IDs to their current dates for dependency lookup
+        let task_dates: HashMap<String, (String, String)> = tasks.iter()
+            .map(|t| (t.id.clone(), (t.start.clone(), t.end.clone())))
+            .collect();
+        
+        for i in 0..tasks.len() {
+            let task_id = tasks[i].id.clone();
+            
+            // Skip parent tasks - their dates are calculated from children
+            if parent_ids.contains(&task_id) {
                 continue;
             }
             
             let mut earliest_start: Option<String> = None;
             
-            // Calculate based on dependencies (predecessors)
-            if !task.dependencies.is_empty() {
-                for dep in &task.dependencies {
-                    let pred = tasks.iter().find(|t| t.id == dep.id);
-                    if let Some(pred) = pred {
-                        if pred.start.is_empty() || pred.end.is_empty() {
-                            continue;
+            // Process dependencies
+            for dep in &tasks[i].dependencies.clone() {
+                if let Some((pred_start, pred_end)) = task_dates.get(&dep.id) {
+                    if pred_start.is_empty() || pred_end.is_empty() {
+                        continue;
+                    }
+                    
+                    let link_type = &dep.link_type;
+                    let lag = dep.lag;
+                    
+                    let dep_start = match link_type.as_str() {
+                        "FS" => add_work_days(pred_end, 1 + lag, calendar),
+                        "SS" => add_work_days(pred_start, lag, calendar),
+                        "FF" => {
+                            let duration = tasks[i].duration;
+                            add_work_days(pred_end, -get_duration_offset(duration) + lag, calendar)
                         }
-                        
-                        let lag = dep.lag;
-                        let dep_start = match dep.link_type.as_str() {
-                            "FS" => add_work_days(&pred.end, 1 + lag, calendar),
-                            "SS" => add_work_days(&pred.start, lag, calendar),
-                            "FF" => add_work_days(&pred.end, lag - get_duration_offset(task.duration), calendar),
-                            "SF" => add_work_days(&pred.start, lag - get_duration_offset(task.duration), calendar),
-                            _ => add_work_days(&pred.end, 1 + lag, calendar),
-                        };
-                        
-                        // Take the maximum (latest) start date from all predecessors
-                        if earliest_start.is_none() || dep_start > earliest_start.as_ref().unwrap() {
-                            earliest_start = Some(dep_start);
+                        "SF" => {
+                            let duration = tasks[i].duration;
+                            add_work_days(pred_start, -get_duration_offset(duration) + lag, calendar)
                         }
+                        _ => add_work_days(pred_end, 1 + lag, calendar),
+                    };
+                    
+                    if earliest_start.is_none() || dep_start > *earliest_start.as_ref().unwrap() {
+                        earliest_start = Some(dep_start);
                     }
                 }
             }
             
             // Apply constraints
-            let const_type = task.constraint_type.as_str();
-            let const_date = task.constraint_date.as_ref();
-            
             let mut final_start = earliest_start;
+            let constraint_type = tasks[i].constraint_type.to_lowercase();
+            let const_date = tasks[i].constraint_date.clone();
             
-            match const_type {
+            match constraint_type.as_str() {
                 "snet" => {
-                    if let Some(cd) = const_date {
-                        if final_start.is_none() || cd > final_start.as_ref().unwrap() {
-                            final_start = Some(cd.clone());
+                    if let Some(cd) = const_date.clone() {
+                        if final_start.is_none() || cd > *final_start.as_ref().unwrap() {
+                            final_start = Some(cd);
                         }
                     }
                 }
                 "snlt" => {
-                    if let Some(cd) = const_date {
-                        if final_start.is_none() || final_start.as_ref().unwrap() > cd {
-                            final_start = Some(cd.clone());
+                    if let Some(cd) = const_date.clone() {
+                        let current = final_start.clone().unwrap_or_else(|| tasks[i].start.clone());
+                        if !current.is_empty() && cd < current {
+                            final_start = Some(cd);
                         }
                     }
                 }
                 "fnet" => {
-                    if let Some(cd) = const_date {
-                        let implied_start = add_work_days(cd, -get_duration_offset(task.duration), calendar);
-                        if final_start.is_none() || implied_start > final_start.as_ref().unwrap() {
+                    if let Some(cd) = const_date.clone() {
+                        let duration = tasks[i].duration;
+                        let implied_start = add_work_days(&cd, -get_duration_offset(duration), calendar);
+                        if final_start.is_none() || implied_start > *final_start.as_ref().unwrap() {
                             final_start = Some(implied_start);
                         }
                     }
@@ -144,35 +163,37 @@ pub fn forward_pass(tasks: &mut [Task], calendar: &Calendar) {
                 }
                 "mfo" => {
                     if let Some(cd) = const_date {
-                        task.end = cd.clone();
-                        task.start = add_work_days(cd, -get_duration_offset(task.duration), calendar);
+                        let duration = tasks[i].duration;
+                        tasks[i].end = cd.clone();
+                        tasks[i].start = add_work_days(&cd, -get_duration_offset(duration), calendar);
                         continue; // Skip normal calculation
                     }
                 }
                 _ => {
                     // ASAP or default
-                    if final_start.is_none() && task.start.is_empty() {
+                    if final_start.is_none() && tasks[i].start.is_empty() {
                         final_start = Some(today());
                     }
                 }
             }
             
             if final_start.is_none() {
-                final_start = if task.start.is_empty() { None } else { Some(task.start.clone()) };
+                final_start = if tasks[i].start.is_empty() { None } else { Some(tasks[i].start.clone()) };
             }
             
             // Update if changed
             if let Some(fs) = final_start {
-                if task.start != fs {
-                    task.start = fs.clone();
+                if tasks[i].start != fs {
+                    tasks[i].start = fs.clone();
                     changed = true;
                 }
                 
                 // Calculate end date (Early Finish)
-                if !task.start.is_empty() && task.duration >= 0 {
-                    let new_end = add_work_days(&task.start, get_duration_offset(task.duration), calendar);
-                    if task.end != new_end {
-                        task.end = new_end;
+                let duration = tasks[i].duration;
+                if !tasks[i].start.is_empty() && duration >= 0 {
+                    let new_end = add_work_days(&tasks[i].start, get_duration_offset(duration), calendar);
+                    if tasks[i].end != new_end {
+                        tasks[i].end = new_end;
                         changed = true;
                     }
                 }
@@ -186,41 +207,69 @@ pub fn forward_pass(tasks: &mut [Task], calendar: &Calendar) {
 }
 
 /// Calculate parent (summary) task dates from children
-fn calculate_parent_dates(tasks: &mut [Task], calendar: &Calendar) {
+pub fn calculate_parent_dates(tasks: &mut [Task], calendar: &Calendar) {
     let max_depth = tasks.iter()
         .map(|t| get_depth(&t.id, tasks, 0))
         .max()
         .unwrap_or(0);
     
+    // Collect parent info upfront
+    let parent_ids: Vec<String> = tasks.iter()
+        .filter(|t| is_parent(&t.id, tasks))
+        .map(|t| t.id.clone())
+        .collect();
+    
+    let task_depths: HashMap<String, i32> = tasks.iter()
+        .map(|t| (t.id.clone(), get_depth(&t.id, tasks, 0)))
+        .collect();
+    
     for depth in (0..=max_depth).rev() {
-        for parent in tasks.iter_mut() {
-            if !is_parent(&parent.id, tasks) {
+        // First, collect children dates for each parent at this depth
+        let mut parent_dates: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
+        
+        for task in tasks.iter() {
+            if !parent_ids.contains(&task.id) {
                 continue;
             }
-            if get_depth(&parent.id, tasks, 0) != depth {
+            if task_depths.get(&task.id) != Some(&depth) {
                 continue;
             }
             
-            let children: Vec<&Task> = tasks.iter()
-                .filter(|c| c.parent_id.as_ref().map_or(false, |pid| pid == &parent.id))
-                .filter(|c| !c.start.is_empty() && !c.end.is_empty())
-                .collect();
+            // Find children
+            let mut min_start: Option<String> = None;
+            let mut max_end: Option<String> = None;
             
-            if !children.is_empty() {
-                let mut starts: Vec<String> = children.iter()
-                    .map(|c| c.start.clone())
-                    .collect();
-                starts.sort();
+            for child in tasks.iter() {
+                if child.parent_id.as_ref().map_or(false, |pid| pid == &task.id) {
+                    if !child.start.is_empty() {
+                        if min_start.is_none() || child.start < *min_start.as_ref().unwrap() {
+                            min_start = Some(child.start.clone());
+                        }
+                    }
+                    if !child.end.is_empty() {
+                        if max_end.is_none() || child.end > *max_end.as_ref().unwrap() {
+                            max_end = Some(child.end.clone());
+                        }
+                    }
+                }
+            }
+            
+            parent_dates.insert(task.id.clone(), (min_start, max_end));
+        }
+        
+        // Now apply the dates
+        for task in tasks.iter_mut() {
+            if let Some((min_start, max_end)) = parent_dates.get(&task.id) {
+                if let Some(start) = min_start {
+                    task.start = start.clone();
+                }
+                if let Some(end) = max_end {
+                    task.end = end.clone();
+                }
                 
-                let mut ends: Vec<String> = children.iter()
-                    .map(|c| c.end.clone())
-                    .collect();
-                ends.sort();
-                
-                if !starts.is_empty() && !ends.is_empty() {
-                    parent.start = starts[0].clone();
-                    parent.end = ends[ends.len() - 1].clone();
-                    parent.duration = calc_work_days(&parent.start, &parent.end, calendar);
+                // Calculate duration from start to end
+                if !task.start.is_empty() && !task.end.is_empty() {
+                    task.duration = calc_work_days(&task.start, &task.end, calendar);
                 }
             }
         }
@@ -229,148 +278,125 @@ fn calculate_parent_dates(tasks: &mut [Task], calendar: &Calendar) {
 
 /// Backward pass - calculate Late Start (LS) and Late Finish (LF)
 pub fn backward_pass(tasks: &mut [Task], calendar: &Calendar, successor_map: &HashMap<String, Vec<SuccessorEntry>>) {
-    // Find project Late Finish (maximum end date of all leaf tasks)
-    let valid_ends: Vec<String> = tasks.iter()
-        .filter(|t| !t.end.is_empty() && !is_parent(&t.id, tasks))
-        .map(|t| t.end.clone())
+    // Find project end date (latest Early Finish among leaf tasks)
+    let parent_ids: Vec<String> = tasks.iter()
+        .filter(|t| is_parent(&t.id, tasks))
+        .map(|t| t.id.clone())
         .collect();
     
-    if valid_ends.is_empty() {
+    let mut project_end = String::new();
+    for task in tasks.iter() {
+        if !parent_ids.contains(&task.id) && !task.end.is_empty() {
+            if project_end.is_empty() || task.end > project_end {
+                project_end = task.end.clone();
+            }
+        }
+    }
+    
+    if project_end.is_empty() {
         return;
     }
     
-    let mut sorted_ends = valid_ends;
-    sorted_ends.sort();
-    sorted_ends.reverse();
-    let project_late_finish = sorted_ends[0].clone();
-    
-    // Initialize late dates for tasks with no successors
-    for task in tasks.iter_mut() {
-        if is_parent(&task.id, tasks) {
-            task.late_finish = None;
-            task.late_start = None;
-            continue;
-        }
-        
-        let successors = successor_map.get(&task.id).map_or(&Vec::new(), |v| v);
-        if successors.is_empty() {
-            // No successors - late finish equals project end
-            let mut late_finish = project_late_finish.clone();
-            
-            // Apply FNLT constraint if present
-            if task.constraint_type == "fnlt" {
-                if let Some(cd) = &task.constraint_date {
-                    if cd < &late_finish {
-                        late_finish = cd.clone();
-                    }
-                }
-            }
-            
-            task.late_finish = Some(late_finish.clone());
-            task.late_start = Some(add_work_days(&late_finish, -get_duration_offset(task.duration), calendar));
-        } else {
-            // Will be calculated in iteration
-            task.late_finish = None;
-            task.late_start = None;
-        }
-    }
-    
-    // Iterate until stable (propagate backwards from successors)
-    let mut changed = true;
     let mut iterations = 0;
+    let mut changed = true;
     
     while changed && iterations < MAX_CPM_ITERATIONS {
         changed = false;
         iterations += 1;
         
-        for task in tasks.iter_mut() {
-            if is_parent(&task.id, tasks) {
+        // Build map of current late dates for lookup
+        let late_dates: HashMap<String, (Option<String>, Option<String>)> = tasks.iter()
+            .map(|t| (t.id.clone(), (t.late_start.clone(), t.late_finish.clone())))
+            .collect();
+        
+        let task_data: HashMap<String, (String, String, i32, String, Option<String>)> = tasks.iter()
+            .map(|t| (t.id.clone(), (
+                t.start.clone(), 
+                t.end.clone(), 
+                t.duration,
+                t.constraint_type.clone(),
+                t.constraint_date.clone()
+            )))
+            .collect();
+        
+        for i in 0..tasks.len() {
+            let task_id = tasks[i].id.clone();
+            
+            // Skip parent tasks
+            if parent_ids.contains(&task_id) {
                 continue;
             }
             
-            let successors = successor_map.get(&task.id).map_or(&Vec::new(), |v| v);
+            let empty_vec = Vec::new();
+            let successors = successor_map.get(&task_id).unwrap_or(&empty_vec);
+            
             if successors.is_empty() {
-                continue; // Already initialized
-            }
-            
-            let mut min_late_finish: Option<String> = None;
-            let mut all_successors_calculated = true;
-            
-            for succ in successors {
-                let succ_task = tasks.iter().find(|t| t.id == succ.id);
-                if let Some(succ_task) = succ_task {
-                    // Skip parent tasks in successor calculations
-                    if is_parent(&succ_task.id, tasks) {
-                        continue;
-                    }
-                    
-                    if succ_task.late_start.is_none() || succ_task.late_finish.is_none() {
-                        all_successors_calculated = false;
-                        continue;
-                    }
-                    
-                    let lag = succ.lag;
-                    let constrained_finish = match succ.link_type.as_str() {
-                        "FS" => add_work_days(succ_task.late_start.as_ref().unwrap(), -1 - lag, calendar),
-                        "SS" => add_work_days(succ_task.late_start.as_ref().unwrap(), get_duration_offset(task.duration) - lag, calendar),
-                        "FF" => add_work_days(succ_task.late_finish.as_ref().unwrap(), -lag, calendar),
-                        "SF" => add_work_days(succ_task.late_finish.as_ref().unwrap(), get_duration_offset(task.duration) - lag, calendar),
-                        _ => add_work_days(succ_task.late_start.as_ref().unwrap(), -1 - lag, calendar),
-                    };
-                    
-                    // Take the minimum (earliest) late finish from all successors
-                    if min_late_finish.is_none() || constrained_finish < min_late_finish.as_ref().unwrap() {
-                        min_late_finish = Some(constrained_finish);
-                    }
-                }
-            }
-            
-            // Apply FNLT (Finish No Later Than) constraint
-            if task.constraint_type == "fnlt" {
-                if let Some(cd) = &task.constraint_date {
-                    if let Some(ref mlf) = min_late_finish {
-                        if cd < mlf {
-                            min_late_finish = Some(cd.clone());
-                        }
-                    } else {
-                        min_late_finish = Some(cd.clone());
-                    }
-                }
-            }
-            
-            // Update if we have a valid late finish
-            if let Some(mlf) = min_late_finish {
-                if task.late_finish.as_ref().map_or(true, |lf| lf != &mlf) {
-                    task.late_finish = Some(mlf.clone());
-                    task.late_start = Some(add_work_days(&mlf, -get_duration_offset(task.duration), calendar));
+                // No successors - Late Finish = Project End
+                if tasks[i].late_finish.as_ref() != Some(&project_end) {
+                    tasks[i].late_finish = Some(project_end.clone());
                     changed = true;
                 }
-            } else if !all_successors_calculated {
-                changed = true;
-            }
-        }
-    }
-    
-    // Handle any remaining tasks without late dates
-    for task in tasks.iter_mut() {
-        if is_parent(&task.id, tasks) {
-            continue;
-        }
-        
-        if task.late_finish.is_none() {
-            let mut late_finish = project_late_finish.clone();
-            
-            // Apply FNLT constraint if present
-            if task.constraint_type == "fnlt" {
-                if let Some(cd) = &task.constraint_date {
-                    if cd < &late_finish {
-                        late_finish = cd.clone();
+            } else {
+                let mut min_late_finish: Option<String> = None;
+                
+                for succ in successors {
+                    if let Some((succ_start, succ_end, succ_duration, _, _)) = task_data.get(&succ.id) {
+                        if succ_start.is_empty() || parent_ids.contains(&succ.id) {
+                            continue;
+                        }
+                        
+                        let (succ_late_start, _) = late_dates.get(&succ.id).cloned().unwrap_or((None, None));
+                        
+                        let succ_ls = succ_late_start.unwrap_or_else(|| succ_start.clone());
+                        if succ_ls.is_empty() {
+                            continue;
+                        }
+                        
+                        let constrained_finish = match succ.link_type.as_str() {
+                            "FS" => add_work_days(&succ_ls, -1 - succ.lag, calendar),
+                            "SS" => {
+                                let duration = tasks[i].duration;
+                                add_work_days(&succ_ls, get_duration_offset(duration) - succ.lag, calendar)
+                            }
+                            "FF" => add_work_days(&succ_ls, get_duration_offset(*succ_duration) - succ.lag, calendar),
+                            "SF" => add_work_days(&succ_ls, -succ.lag, calendar),
+                            _ => add_work_days(&succ_ls, -1 - succ.lag, calendar),
+                        };
+                        
+                        if min_late_finish.is_none() || constrained_finish < *min_late_finish.as_ref().unwrap() {
+                            min_late_finish = Some(constrained_finish);
+                        }
+                    }
+                }
+                
+                if let Some(lf) = min_late_finish {
+                    if tasks[i].late_finish.as_ref() != Some(&lf) {
+                        tasks[i].late_finish = Some(lf);
+                        changed = true;
                     }
                 }
             }
             
-            task.late_finish = Some(late_finish.clone());
-            task.late_start = Some(add_work_days(&late_finish, -get_duration_offset(task.duration), calendar));
+            // Apply FNLT constraint
+            let constraint_type = tasks[i].constraint_type.to_lowercase();
+            if constraint_type == "fnlt" {
+                if let Some(cd) = tasks[i].constraint_date.clone() {
+                    if tasks[i].late_finish.is_none() || cd < *tasks[i].late_finish.as_ref().unwrap() {
+                        tasks[i].late_finish = Some(cd);
+                        changed = true;
+                    }
+                }
+            }
+            
+            // Calculate Late Start from Late Finish
+            if let Some(ref lf) = tasks[i].late_finish {
+                let duration = tasks[i].duration;
+                let new_ls = add_work_days(lf, -get_duration_offset(duration), calendar);
+                if tasks[i].late_start.as_ref() != Some(&new_ls) {
+                    tasks[i].late_start = Some(new_ls);
+                    changed = true;
+                }
+            }
         }
     }
     
@@ -381,71 +407,65 @@ pub fn backward_pass(tasks: &mut [Task], calendar: &Calendar, successor_map: &Ha
 
 /// Calculate Total Float and Free Float for all tasks
 pub fn calculate_float(tasks: &mut [Task], calendar: &Calendar, successor_map: &HashMap<String, Vec<SuccessorEntry>>) {
-    for task in tasks.iter_mut() {
-        if is_parent(&task.id, tasks) {
-            // Parent tasks: calculate from children
-            let children: Vec<&Task> = tasks.iter()
-                .filter(|c| c.parent_id.as_ref().map_or(false, |pid| pid == &task.id))
-                .collect();
-            
-            if !children.is_empty() {
-                let child_floats: Vec<i32> = children.iter()
-                    .filter_map(|c| c.total_float_days)
-                    .collect();
-                
-                task.total_float_days = if child_floats.is_empty() {
-                    Some(0)
-                } else {
-                    Some(*child_floats.iter().min().unwrap())
-                };
-                task.total_float = task.total_float_days.map(|v| v as f64);
-                task.free_float_days = Some(0);
-                task.free_float = Some(0.0);
-            } else {
-                task.total_float_days = Some(0);
-                task.total_float = Some(0.0);
-                task.free_float_days = Some(0);
-                task.free_float = Some(0.0);
-            }
+    // Collect parent IDs upfront
+    let parent_ids: Vec<String> = tasks.iter()
+        .filter(|t| is_parent(&t.id, tasks))
+        .map(|t| t.id.clone())
+        .collect();
+    
+    // First pass: calculate float for leaf tasks
+    // Collect task data for lookup
+    let task_data: HashMap<String, (String, String, bool)> = tasks.iter()
+        .map(|t| (t.id.clone(), (t.start.clone(), t.end.clone(), parent_ids.contains(&t.id))))
+        .collect();
+    
+    for i in 0..tasks.len() {
+        let task_id = tasks[i].id.clone();
+        
+        if parent_ids.contains(&task_id) {
+            // Parent tasks: will calculate from children in second pass
             continue;
         }
         
         // Total Float = Late Start - Early Start (in work days)
-        if let (Some(ref ls), ref start) = (&task.late_start, &task.start) {
+        if let (Some(ref ls), ref start) = (&tasks[i].late_start, &tasks[i].start) {
             if !start.is_empty() {
-                task.total_float_days = Some(calc_work_days_difference(start, ls, calendar));
+                tasks[i].total_float_days = Some(calc_work_days_difference(start, ls, calendar));
             } else {
-                task.total_float_days = Some(0);
+                tasks[i].total_float_days = Some(0);
             }
         } else {
-            task.total_float_days = Some(0);
+            tasks[i].total_float_days = Some(0);
         }
-        task.total_float = task.total_float_days.map(|v| v as f64);
+        tasks[i].total_float = tasks[i].total_float_days.map(|v| v as f64);
         
         // Free Float calculation
-        let successors = successor_map.get(&task.id).map_or(&Vec::new(), |v| v);
+        let empty_vec = Vec::new();
+        let successors = successor_map.get(&task_id).unwrap_or(&empty_vec);
         
         if successors.is_empty() {
             // No successors - free float equals total float
-            task.free_float_days = task.total_float_days;
-            task.free_float = task.total_float;
+            tasks[i].free_float_days = tasks[i].total_float_days;
+            tasks[i].free_float = tasks[i].total_float;
         } else {
             let mut min_free_float: Option<i32> = None;
             
             for succ in successors {
-                let succ_task = tasks.iter().find(|t| t.id == succ.id);
-                if let Some(succ_task) = succ_task {
-                    if succ_task.start.is_empty() || is_parent(&succ_task.id, tasks) {
+                if let Some((succ_start, succ_end, is_parent)) = task_data.get(&succ.id) {
+                    if succ_start.is_empty() || *is_parent {
                         continue;
                     }
                     
                     let lag = succ.lag;
+                    let task_start = &tasks[i].start;
+                    let task_end = &tasks[i].end;
+                    
                     let free_float_for_succ = match succ.link_type.as_str() {
-                        "FS" => calc_work_days_difference(&task.end, &succ_task.start, calendar) - 1 - lag,
-                        "SS" => calc_work_days_difference(&task.start, &succ_task.start, calendar) - lag,
-                        "FF" => calc_work_days_difference(&task.end, &succ_task.end, calendar) - lag,
-                        "SF" => calc_work_days_difference(&task.start, &succ_task.end, calendar) - lag,
-                        _ => calc_work_days_difference(&task.end, &succ_task.start, calendar) - 1 - lag,
+                        "FS" => calc_work_days_difference(task_end, succ_start, calendar) - 1 - lag,
+                        "SS" => calc_work_days_difference(task_start, succ_start, calendar) - lag,
+                        "FF" => calc_work_days_difference(task_end, succ_end, calendar) - lag,
+                        "SF" => calc_work_days_difference(task_start, succ_end, calendar) - lag,
+                        _ => calc_work_days_difference(task_end, succ_start, calendar) - 1 - lag,
                     };
                     
                     if min_free_float.is_none() || free_float_for_succ < min_free_float.unwrap() {
@@ -455,20 +475,77 @@ pub fn calculate_float(tasks: &mut [Task], calendar: &Calendar, successor_map: &
             }
             
             // Free float cannot exceed total float
-            let total_float_val = task.total_float_days.unwrap_or(0);
-            task.free_float_days = min_free_float.map(|mff| {
+            let total_float_val = tasks[i].total_float_days.unwrap_or(0);
+            tasks[i].free_float_days = min_free_float.map(|mff| {
                 (mff.max(0)).min(total_float_val)
             }).or(Some(total_float_val));
-            task.free_float = task.free_float_days.map(|v| v as f64);
+            tasks[i].free_float = tasks[i].free_float_days.map(|v| v as f64);
+        }
+    }
+    
+    // Second pass: calculate parent task floats from children
+    let max_depth = tasks.iter()
+        .map(|t| get_depth(&t.id, tasks, 0))
+        .max()
+        .unwrap_or(0);
+    
+    let task_depths: HashMap<String, i32> = tasks.iter()
+        .map(|t| (t.id.clone(), get_depth(&t.id, tasks, 0)))
+        .collect();
+    
+    for depth in (0..=max_depth).rev() {
+        // Collect child floats for each parent at this depth
+        let mut parent_floats: HashMap<String, Option<i32>> = HashMap::new();
+        
+        for task in tasks.iter() {
+            if !parent_ids.contains(&task.id) {
+                continue;
+            }
+            if task_depths.get(&task.id) != Some(&depth) {
+                continue;
+            }
+            
+            let mut child_floats: Vec<i32> = Vec::new();
+            for child in tasks.iter() {
+                if child.parent_id.as_ref().map_or(false, |pid| pid == &task.id) {
+                    if let Some(tf) = child.total_float_days {
+                        child_floats.push(tf);
+                    }
+                }
+            }
+            
+            let min_float = if child_floats.is_empty() {
+                Some(0)
+            } else {
+                child_floats.iter().min().copied()
+            };
+            
+            parent_floats.insert(task.id.clone(), min_float);
+        }
+        
+        // Apply the floats
+        for task in tasks.iter_mut() {
+            if let Some(min_float) = parent_floats.get(&task.id) {
+                task.total_float_days = *min_float;
+                task.total_float = task.total_float_days.map(|v| v as f64);
+                task.free_float_days = Some(0);
+                task.free_float = Some(0.0);
+            }
         }
     }
 }
 
 /// Mark critical path based on Total Float
 pub fn mark_critical_path(tasks: &mut [Task]) {
+    // Collect parent IDs upfront
+    let parent_ids: Vec<String> = tasks.iter()
+        .filter(|t| is_parent(&t.id, tasks))
+        .map(|t| t.id.clone())
+        .collect();
+    
     // First pass: mark leaf tasks based on float
     for task in tasks.iter_mut() {
-        if is_parent(&task.id, tasks) {
+        if parent_ids.contains(&task.id) {
             task.is_critical = Some(false); // Will be set in second pass
         } else {
             task.is_critical = Some(task.total_float_days.map_or(false, |tf| tf <= 0));
@@ -481,20 +558,34 @@ pub fn mark_critical_path(tasks: &mut [Task]) {
         .max()
         .unwrap_or(0);
     
+    let task_depths: HashMap<String, i32> = tasks.iter()
+        .map(|t| (t.id.clone(), get_depth(&t.id, tasks, 0)))
+        .collect();
+    
     for depth in (0..=max_depth).rev() {
-        for task in tasks.iter_mut() {
-            if !is_parent(&task.id, tasks) {
+        // Collect critical status for parents at this depth
+        let mut parent_critical: HashMap<String, bool> = HashMap::new();
+        
+        for task in tasks.iter() {
+            if !parent_ids.contains(&task.id) {
                 continue;
             }
-            if get_depth(&task.id, tasks, 0) != depth {
+            if task_depths.get(&task.id) != Some(&depth) {
                 continue;
             }
             
-            let children: Vec<&Task> = tasks.iter()
+            let has_critical_child = tasks.iter()
                 .filter(|c| c.parent_id.as_ref().map_or(false, |pid| pid == &task.id))
-                .collect();
+                .any(|c| c.is_critical.unwrap_or(false));
             
-            task.is_critical = Some(children.iter().any(|c| c.is_critical.unwrap_or(false)));
+            parent_critical.insert(task.id.clone(), has_critical_child);
+        }
+        
+        // Apply critical status
+        for task in tasks.iter_mut() {
+            if let Some(&is_crit) = parent_critical.get(&task.id) {
+                task.is_critical = Some(is_crit);
+            }
         }
     }
 }
@@ -537,9 +628,15 @@ pub fn calculate(tasks: &mut [Task], calendar: &Calendar) -> CPMResult {
     
     let calc_time = start_time.elapsed().as_secs_f64() * 1000.0; // Convert to milliseconds
     
+    // Collect parent IDs for filtering
+    let parent_ids: Vec<String> = tasks.iter()
+        .filter(|t| is_parent(&t.id, tasks))
+        .map(|t| t.id.clone())
+        .collect();
+    
     // Find project end date
     let valid_ends: Vec<String> = tasks.iter()
-        .filter(|t| !t.end.is_empty() && !is_parent(&t.id, tasks))
+        .filter(|t| !t.end.is_empty() && !parent_ids.contains(&t.id))
         .map(|t| t.end.clone())
         .collect();
     
@@ -550,7 +647,7 @@ pub fn calculate(tasks: &mut [Task], calendar: &Calendar) -> CPMResult {
     
     // Calculate project duration in work days
     let leaf_tasks: Vec<&Task> = tasks.iter()
-        .filter(|t| !t.start.is_empty() && !is_parent(&t.id, tasks))
+        .filter(|t| !t.start.is_empty() && !parent_ids.contains(&t.id))
         .collect();
     
     let mut starts: Vec<String> = leaf_tasks.iter()
@@ -566,7 +663,7 @@ pub fn calculate(tasks: &mut [Task], calendar: &Calendar) -> CPMResult {
     };
     
     let critical_count = tasks.iter()
-        .filter(|t| t.is_critical.unwrap_or(false) && !is_parent(&t.id, tasks))
+        .filter(|t| t.is_critical.unwrap_or(false) && !parent_ids.contains(&t.id))
         .count();
     
     CPMResult {
@@ -581,4 +678,3 @@ pub fn calculate(tasks: &mut [Task], calendar: &Calendar) -> CPMResult {
         },
     }
 }
-

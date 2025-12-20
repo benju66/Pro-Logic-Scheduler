@@ -31,8 +31,9 @@ fn main() {
             // Automatically open DevTools in debug mode
             #[cfg(debug_assertions)]
             {
-                if let Some(window) = app.get_window("main") {
-                    window.open_devtools();
+                // Tauri 2.x uses get_webview_window instead of get_window
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.open_devtools();
                 }
             }
             Ok(())

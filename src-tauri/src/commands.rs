@@ -4,7 +4,7 @@
 
 use tauri::State;
 use crate::engine_state::AppState;
-use crate::types::{Task, Calendar, CPMResult};
+use crate::types::{Task, Calendar};
 
 /// Initialize the engine state with tasks and calendar
 /// 
@@ -179,7 +179,7 @@ pub fn get_engine_status(
         .map_err(|e| format!("Failed to lock state: {}", e))?;
 
     Ok(format!(
-        "{{ \"initialized\": {}, \"taskCount\": {}, \"hasCalendar\": {} }}",
+        r#"{{"initialized":{},"taskCount":{},"hasCalendar":{}}}"#,
         project.initialized,
         project.task_count(),
         project.calendar.is_some()
@@ -196,6 +196,6 @@ pub fn clear_engine(
 
     project.clear();
     
+    println!("[Rust Engine] Cleared");
     Ok("Cleared".to_string())
 }
-
