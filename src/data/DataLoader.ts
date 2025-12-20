@@ -8,7 +8,7 @@
  * - Returns data ready for CPM calculation
  */
 
-import Database from 'tauri-plugin-sql-api';
+import Database from '@tauri-apps/plugin-sql';
 import type { Task, Calendar, ConstraintType } from '../types';
 import { DEFAULT_WORKING_DAYS } from '../core/Constants';
 

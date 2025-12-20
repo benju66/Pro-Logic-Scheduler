@@ -8,8 +8,8 @@
  * - Events are queued and flushed in batches
  */
 
-// Tauri v1 SQL plugin - using tauri-plugin-sql-api
-import Database from 'tauri-plugin-sql-api';
+// Tauri v2 SQL plugin
+import Database from '@tauri-apps/plugin-sql';
 
 interface QueuedEvent {
   type: string;

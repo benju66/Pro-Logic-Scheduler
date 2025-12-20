@@ -8,7 +8,7 @@
  * - Archives localStorage (doesn't delete - safety net)
  */
 
-import Database from 'tauri-plugin-sql-api';
+import Database from '@tauri-apps/plugin-sql';
 import type { Task, Calendar } from '../types';
 import { PersistenceService } from './PersistenceService';
 

@@ -16,9 +16,9 @@ const mockDb = {
 
 const mockDatabaseLoad = vi.fn().mockResolvedValue(mockDb);
 
-// Mock the SQL plugin import (Tauri v1) - must be at top level
+// Mock the SQL plugin import (Tauri v2) - must be at top level
 // The plugin exports a default object with a load method
-vi.mock('tauri-plugin-sql-api', () => {
+vi.mock('@tauri-apps/plugin-sql', () => {
   return {
     default: {
       load: mockDatabaseLoad,

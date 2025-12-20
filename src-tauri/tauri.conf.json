@@ -1,72 +1,14 @@
 {
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Pro Logic Scheduler",
+  "version": "2.0.0",
+  "identifier": "com.prologic.scheduler",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
-    "devPath": "http://localhost:1420",
-    "distDir": "../dist"
+    "frontendDist": "../dist"
   },
-  "package": {
-    "productName": "Pro Logic Scheduler",
-    "version": "2.0.0"
-  },
-    "tauri": {
-      "allowlist": {
-        "all": false,
-        "dialog": {
-          "open": true,
-          "save": true,
-          "message": true,
-          "ask": true,
-          "confirm": true
-        },
-      "fs": {
-        "readFile": true,
-        "writeFile": true,
-        "scope": ["$APP/*", "$DOCUMENT/*", "$DOWNLOAD/*", "$HOME/*"]
-      },
-      "shell": {
-        "open": true
-      }
-    },
-    "bundle": {
-      "active": true,
-      "category": "DeveloperTool",
-      "copyright": "Copyright © 2024 Pro Logic",
-      "deb": {
-        "depends": []
-      },
-      "externalBin": [],
-      "icon": [
-        "icons/32x32.png",
-        "icons/128x128.png",
-        "icons/128x128@2x.png",
-        "icons/icon.icns",
-        "icons/icon.ico"
-      ],
-      "identifier": "com.prologic.scheduler",
-      "longDescription": "Professional construction project scheduling with Critical Path Method (CPM) analysis, Gantt charts, and MS Project compatibility.",
-      "macOS": {
-        "entitlements": null,
-        "exceptionDomain": "",
-        "frameworks": [],
-        "providerShortName": null,
-        "signingIdentity": null
-      },
-      "resources": [],
-      "shortDescription": "Construction Project Scheduler",
-      "targets": "all",
-      "windows": {
-        "certificateThumbprint": null,
-        "digestAlgorithm": "sha256",
-        "timestampUrl": ""
-      }
-    },
-    "security": {
-      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' http://localhost:* ws://localhost:*;"
-    },
-    "updater": {
-      "active": false
-    },
+  "app": {
     "windows": [
       {
         "fullscreen": false,
@@ -77,6 +19,44 @@
         "minWidth": 1000,
         "minHeight": 600
       }
-    ]
-  }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' http://localhost:* ws://localhost:*;"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns"
+    ],
+    "copyright": "Copyright © 2024 Pro Logic",
+    "category": "DeveloperTool",
+    "shortDescription": "Construction Project Scheduler",
+    "longDescription": "Professional construction project scheduling with Critical Path Method (CPM) analysis, Gantt charts, and MS Project compatibility.",
+    "externalBin": [],
+    "resources": [],
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
+    },
+    "macOS": {
+      "frameworks": [],
+      "minimumSystemVersion": "",
+      "exceptionDomain": "",
+      "signingIdentity": null,
+      "providerShortName": null,
+      "entitlements": null
+    },
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    }
+  },
+  "plugins": {}
 }

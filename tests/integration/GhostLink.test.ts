@@ -11,7 +11,7 @@ import { PersistenceService } from '../../src/data/PersistenceService';
 import type { Task } from '../../src/types';
 
 // Mock Tauri SQL plugin at module level
-vi.mock('tauri-plugin-sql-api', () => {
+vi.mock('@tauri-apps/plugin-sql', () => {
   const mockDb = {
     execute: vi.fn(),
     select: vi.fn(),
@@ -34,7 +34,7 @@ describe('Ghost Link Cleanup Tests', () => {
 
   beforeEach(async () => {
     // Get the mocked database from the module
-    const sqlModule = await import('tauri-plugin-sql-api');
+    const sqlModule = await import('@tauri-apps/plugin-sql');
     mockDb = (sqlModule as any).__mockDb;
 
     // Reset mocks

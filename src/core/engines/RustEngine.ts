@@ -9,7 +9,7 @@
  * @version 3.0.0 - Phase 3 Dual Engine
  */
 
-import { invoke } from '@tauri-apps/api/tauri';
+import { invoke } from '@tauri-apps/api/core';
 import type { ISchedulingEngine, TaskHierarchyContext } from '../ISchedulingEngine';
 import type { Task, Calendar, CPMResult } from '../../types';
 

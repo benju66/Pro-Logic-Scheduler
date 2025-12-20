@@ -8,13 +8,16 @@ repository = ""
 edition = "2021"
 
 [build-dependencies]
-tauri-build = { version = "1.5", features = [] }
+tauri-build = { version = "2.0", features = [] }
 
 [dependencies]
-tauri = { version = "1.5", features = [ "dialog-confirm", "dialog-message", "dialog-ask", "dialog-open", "dialog-save", "fs-read-file", "fs-write-file", "shell-open", "devtools"] }
+tauri = { version = "2.0", features = ["devtools"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tauri-plugin-sql = { version = "1.0.1", features = ["sqlite"] }
+tauri-plugin-sql = { version = "2.0", features = ["sqlite"] }
+tauri-plugin-fs = "2.0"
+tauri-plugin-shell = "2.0"
+tauri-plugin-dialog = "2.0"
 chrono = "0.4"
 
 [features]

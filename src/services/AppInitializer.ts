@@ -171,7 +171,7 @@ export class AppInitializer {
     
     // Import Tauri APIs when available
     try {
-      const { open, save } = await import('@tauri-apps/api/dialog');
+      const { open, save } = await import('@tauri-apps/plugin-dialog');
       // Window globals are typed in globals.d.ts - using type assertion for dynamic assignment
       (window as Window & { tauriDialog?: { open: (options?: unknown) => Promise<string | null>; save: (options?: unknown) => Promise<string | null> } }).tauriDialog = { 
         open: open as (options?: unknown) => Promise<string | null>,
@@ -182,7 +182,7 @@ export class AppInitializer {
     }
     
     try {
-      const { readTextFile, writeTextFile } = await import('@tauri-apps/api/fs');
+      const { readTextFile, writeTextFile } = await import('@tauri-apps/plugin-fs');
       // Window globals are typed in globals.d.ts - using type assertion for dynamic assignment
       (window as Window & { tauriFs?: { readTextFile: (path: string) => Promise<string>; writeTextFile: (path: string, contents: string) => Promise<void> } }).tauriFs = { 
         readTextFile: readTextFile as (path: string) => Promise<string>,
