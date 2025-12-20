@@ -155,6 +155,14 @@
     background: var(--input-bg, #ffffff);
 }
 
+/* Date inputs need special focus handling to avoid overlapping icons */
+.vsg-input[type="date"]:focus {
+    outline: none;
+    border-color: transparent; /* Remove inner border - cell-level ring handles focus */
+    background: var(--input-bg, #ffffff);
+    box-shadow: none;
+}
+
 .vsg-input:disabled,
 .vsg-select:disabled {
     opacity: 0.6;
@@ -401,5 +409,61 @@
     position: sticky;
     top: 0;
     left: 0;
+}
+
+/* =============================================================================
+   Date Input Focus - Respects Icon Space
+   ============================================================================= */
+
+/* Cell-level focus indicator for date cells */
+.vsg-cell:has(.vsg-input[type="date"]:focus) {
+    position: relative;
+}
+
+.vsg-cell:has(.vsg-input[type="date"]:focus)::after {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border: 2px solid var(--focus-ring, #3b82f6);
+    border-radius: 4px;
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* Ensure the focus ring doesn't extend under icons */
+.vsg-input[type="date"] {
+    /* Create space for icons on the right */
+    box-sizing: border-box;
+}
+
+/* When date input is focused, dim the icons slightly to show focus is on input */
+.vsg-cell:has(.vsg-input[type="date"]:focus) .vsg-calendar-icon,
+.vsg-cell:has(.vsg-input[type="date"]:focus) .vsg-constraint-icon {
+    opacity: 0.4;
+}
+
+/* Fallback focus styling for browsers without :has() support */
+.vsg-cell.date-cell-focused {
+    position: relative;
+}
+
+.vsg-cell.date-cell-focused::after {
+    content: '';
+    position: absolute;
+    inset: 2px;
+    border: 2px solid var(--focus-ring, #3b82f6);
+    border-radius: 4px;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.vsg-cell.date-cell-focused .vsg-calendar-icon,
+.vsg-cell.date-cell-focused .vsg-constraint-icon {
+    opacity: 0.4;
+}
+
+/* Visual indicator for date being edited (not yet saved) */
+.vsg-input[type="date"].editing {
+    background: #fefce8; /* Light yellow to indicate pending */
 }
 

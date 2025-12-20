@@ -300,6 +300,9 @@ export class GridRenderer {
         // Change events
         this.rowContainer.addEventListener('change', (e) => this._onChange(e));
         
+        // Input event for real-time feedback on date typing
+        this.rowContainer.addEventListener('input', (e) => this._onInput(e));
+        
         // Blur events
         this.rowContainer.addEventListener('blur', (e) => this._onBlur(e), true);
         
@@ -425,6 +428,31 @@ export class GridRenderer {
     }
 
     /**
+     * Handle input events (real-time typing feedback)
+     * Used for date inputs to show visual feedback without triggering full change
+     */
+    private _onInput(e: Event): void {
+        const input = e.target as HTMLInputElement;
+        if (!input.classList.contains('vsg-input')) return;
+        if (input.type !== 'date') return; // Only handle date inputs specially
+        
+        const row = input.closest('.vsg-row') as HTMLElement | null;
+        if (!row) return;
+        
+        const taskId = row.dataset.taskId;
+        if (!taskId) return;
+        
+        // Add visual indicator that value is being edited (not yet saved)
+        input.classList.add('editing');
+        
+        // Remove indicator after short delay if no more input
+        clearTimeout((input as any)._editingTimeout);
+        (input as any)._editingTimeout = setTimeout(() => {
+            input.classList.remove('editing');
+        }, 1000);
+    }
+
+    /**
      * Handle change events
      */
     private _onChange(e: Event): void {
@@ -441,6 +469,11 @@ export class GridRenderer {
         // Skip checkbox changes
         if ((input as HTMLInputElement).type === 'checkbox') {
             return;
+        }
+
+        // Remove editing class when change event fires (value committed)
+        if ((input as HTMLInputElement).type === 'date') {
+            input.classList.remove('editing');
         }
 
         const value = input.value;

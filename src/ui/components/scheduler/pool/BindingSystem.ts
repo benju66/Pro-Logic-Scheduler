@@ -127,6 +127,34 @@ export class BindingSystem {
                 const totalPadding = iconMargin + iconSize + iconGap; // Add gap for visual breathing room
                 (cell.input as HTMLInputElement).style.paddingRight = `${totalPadding}px`; // FIXED: Apply padding
             }
+
+            // Add focus class to cell for styling (fallback for browsers without :has())
+            const input = cell.input as HTMLInputElement;
+            
+            // Remove existing listeners to prevent duplicates (pooled elements get reused)
+            const existingFocusHandler = (input as any)._focusHandler;
+            const existingBlurHandler = (input as any)._blurHandler;
+            if (existingFocusHandler) {
+                input.removeEventListener('focus', existingFocusHandler);
+            }
+            if (existingBlurHandler) {
+                input.removeEventListener('blur', existingBlurHandler);
+            }
+            
+            // Create new handlers
+            const focusHandler = () => {
+                cell.container.classList.add('date-cell-focused');
+            };
+            const blurHandler = () => {
+                cell.container.classList.remove('date-cell-focused');
+            };
+            
+            // Store references for cleanup
+            (input as any)._focusHandler = focusHandler;
+            (input as any)._blurHandler = blurHandler;
+            
+            input.addEventListener('focus', focusHandler);
+            input.addEventListener('blur', blurHandler);
         }
 
         // Handle constraint icons on non-date cells

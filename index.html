@@ -575,6 +575,13 @@
             background: white;
             box-shadow: inset 0 0 0 2px #6366f1;
         }
+
+        /* Date inputs: Remove inner border - cell-level ring handles focus */
+        .vsg-input[type="date"]:focus {
+            background: white;
+            box-shadow: none;
+            border-color: transparent; /* Remove inner border - cell-level ring handles focus */
+        }
         
         .vsg-select {
             width: 100%;

@@ -60,6 +60,7 @@ import type {
 } from '../types';
 import type { ISchedulingEngine, TaskHierarchyContext } from '../core/ISchedulingEngine';
 import { JavaScriptEngine } from '../core/engines/JavaScriptEngine';
+import { debounce } from '../utils/debounce';
 
 /**
  * Main scheduler service - orchestrates the entire application
@@ -146,6 +147,19 @@ export class SchedulerService {
     public isInitialized: boolean = false;  // Public for access from UIEventManager
 
     /**
+     * Debounced recalculation for date inputs
+     * Prevents lag when typing by waiting until user stops typing
+     * @private
+     */
+    private _debouncedRecalc: ReturnType<typeof debounce> | null = null;
+
+    /**
+     * Pending date change to apply after debounce
+     * @private
+     */
+    private _pendingDateChange: { taskId: string; field: string; value: string } | null = null;
+
+    /**
      * Create a new SchedulerService instance
      * 
      * @param options - Configuration options
@@ -153,6 +167,17 @@ export class SchedulerService {
     constructor(options: SchedulerServiceOptions = {} as SchedulerServiceOptions) {
         this.options = options;
         this.isTauri = options.isTauri || false;
+
+        // Initialize debounced recalculation (300ms delay for responsive feel)
+        this._debouncedRecalc = debounce(() => {
+            if (this._pendingDateChange) {
+                const { taskId, field, value } = this._pendingDateChange;
+                this._pendingDateChange = null;
+                
+                // Apply the change and recalculate
+                this._applyDateChangeImmediate(taskId, field, value);
+            }
+        }, 300);
 
         // Initialize services (async - will be awaited in init())
         // Store the promise to avoid race conditions
@@ -1539,6 +1564,72 @@ export class SchedulerService {
      * @param value - New value
      * @returns Object indicating what follow-up actions are needed
      */
+    private _applyDateChangeImmediate(taskId: string, field: string, value: string): void {
+        const task = this.taskStore.getById(taskId);
+        if (!task) return;
+        
+        const isParent = this.taskStore.isParent(taskId);
+        if (isParent) return; // Parents don't have direct date edits
+        
+        // Validate date format
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+            console.warn('[SchedulerService] Invalid date format:', value);
+            return;
+        }
+        
+        if (field === 'start') {
+            const updates: Partial<Task> = { 
+                start: value,
+                constraintType: 'snet' as ConstraintType,
+                constraintDate: value 
+            };
+            this.taskStore.update(taskId, updates);
+            
+            if (this.engine) {
+                this.engine.updateTask(taskId, updates).catch(error => {
+                    console.warn('[SchedulerService] Failed to sync task update to engine:', error);
+                });
+            }
+            
+            this.toastService.info('Start constraint (SNET) applied');
+        } else if (field === 'end') {
+            if (task.start && value < task.start) {
+                this.toastService.warning('Deadline is earlier than start date - schedule may be impossible');
+            }
+            
+            const endUpdates: Partial<Task> = { 
+                constraintType: 'fnlt' as ConstraintType,
+                constraintDate: value 
+            };
+            this.taskStore.update(taskId, endUpdates);
+            
+            if (this.engine) {
+                this.engine.updateTask(taskId, endUpdates).catch(error => {
+                    console.warn('[SchedulerService] Failed to sync task update to engine:', error);
+                });
+            }
+            
+            this.toastService.info('Finish deadline (FNLT) applied');
+        } else if (field === 'actualStart' || field === 'actualFinish') {
+            // Actuals don't trigger CPM recalc, just update
+            this.taskStore.update(taskId, { [field]: value });
+            this.render(); // Just re-render to show variance
+            return;
+        }
+        
+        // Recalculate and render
+        this.recalculateAll();
+        this.render();
+    }
+
+    /**
+     * Apply a task edit (called from grid cell change handler)
+     * @private
+     * @param taskId - Task ID
+     * @param field - Field name
+     * @param value - New value
+     * @returns Object indicating what follow-up actions are needed
+     */
     private _applyTaskEdit(taskId: string, field: string, value: unknown): { 
         needsRecalc: boolean; 
         needsRender: boolean;
@@ -1572,7 +1663,7 @@ export class SchedulerService {
                 
             case 'start':
                 // Start edit: User is setting a start constraint
-                // Apply SNET (Start No Earlier Than) so CPM respects this date
+                // Use debounced update to prevent lag during typing
                 if (value && !isParent) {
                     const startValue = String(value);
                     // Validate date format
@@ -1581,28 +1672,23 @@ export class SchedulerService {
                         return { needsRecalc: false, needsRender: false, success: false };
                     }
                     
-                    const updates: Partial<Task> = { 
-                        start: startValue,
-                        constraintType: 'snet' as ConstraintType,
-                        constraintDate: startValue 
-                    };
-                    this.taskStore.update(taskId, updates);
+                    // Store pending change and debounce the recalculation
+                    this._pendingDateChange = { taskId, field: 'start', value: startValue };
                     
-                    // Sync update to engine
-                    if (this.engine) {
-                        this.engine.updateTask(taskId, updates).catch(error => {
-                            console.warn('[SchedulerService] Failed to sync task update to engine:', error);
-                        });
+                    // Optimistic UI update: show the value immediately in the input
+                    // (The actual recalc happens after debounce)
+                    if (this._debouncedRecalc) {
+                        this._debouncedRecalc();
                     }
                     
-                    this.toastService.info('Start constraint (SNET) applied');
-                    needsRecalc = true;
+                    // Don't set needsRecalc - the debounced function will handle it
+                    return { needsRecalc: false, needsRender: false, success: true };
                 }
                 break;
                 
             case 'end':
                 // End edit: User is setting a finish deadline
-                // Apply FNLT (Finish No Later Than) so CPM respects this date
+                // Use debounced update to prevent lag during typing
                 if (value && !isParent) {
                     const endValue = String(value);
                     // Validate date format
@@ -1611,26 +1697,14 @@ export class SchedulerService {
                         return { needsRecalc: false, needsRender: false, success: false };
                     }
                     
-                    // Check if deadline is earlier than current start (impossible constraint)
-                    if (task.start && endValue < task.start) {
-                        this.toastService.warning('Deadline is earlier than start date - schedule may be impossible');
+                    // Store pending change and debounce the recalculation
+                    this._pendingDateChange = { taskId, field: 'end', value: endValue };
+                    
+                    if (this._debouncedRecalc) {
+                        this._debouncedRecalc();
                     }
                     
-                    const endUpdates: Partial<Task> = { 
-                        constraintType: 'fnlt' as ConstraintType,
-                        constraintDate: endValue 
-                    };
-                    this.taskStore.update(taskId, endUpdates);
-                    
-                    // Sync update to engine
-                    if (this.engine) {
-                        this.engine.updateTask(taskId, endUpdates).catch(error => {
-                            console.warn('[SchedulerService] Failed to sync task update to engine:', error);
-                        });
-                    }
-                    
-                    this.toastService.info('Finish deadline (FNLT) applied');
-                    needsRecalc = true;
+                    return { needsRecalc: false, needsRender: false, success: true };
                 }
                 break;
                 
