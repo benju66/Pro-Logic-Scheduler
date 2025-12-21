@@ -71,6 +71,16 @@ export class GanttRenderer {
     private hoveredTaskId: string | null = null;
     private dragState: DragState | null = null;
 
+    // Dependency highlighting
+    private highlightedPredecessors: Set<string> = new Set();
+    private highlightedSuccessors: Set<string> = new Set();
+
+    // Driving path mode
+    private drivingPathMode: boolean = false;
+    private drivingPathRootId: string | null = null;
+    private drivingPathPredecessors: Set<string> = new Set();  // Full transitive chain
+    private drivingPathSuccessors: Set<string> = new Set();     // Full transitive chain
+
     // Pan state
     private isPanning: boolean = false;
     private panStartX: number = 0;
@@ -155,6 +165,11 @@ export class GanttRenderer {
         todayLine: '#ef4444',
         weekendBg: 'rgba(241, 245, 249, 0.5)',
         selectionBg: 'rgba(99, 102, 241, 0.1)',
+        // Dependency highlighting colors
+        predecessorHighlight: 'rgba(59, 130, 246, 0.35)',   // Blue tint
+        predecessorStroke: '#3b82f6',                       // Blue
+        successorHighlight: 'rgba(249, 115, 22, 0.35)',     // Orange tint
+        successorStroke: '#f97316',                         // Orange
     } as const;
 
     constructor(options: GanttRendererOptions) {
@@ -800,9 +815,7 @@ export class GanttRenderer {
         const barHeight = 20;
         const barPadding = 9;
 
-        ctx.strokeStyle = GanttRenderer.COLORS.dependency;
         ctx.fillStyle = GanttRenderer.COLORS.dependencyArrow;
-        ctx.lineWidth = 1.5;
 
         for (let i = firstRow; i <= lastRow; i++) {
             const task = this.data[i];
@@ -827,6 +840,25 @@ export class GanttRenderer {
                 const predEnd = this._parseDate(predTask.end);
                 if (!predEnd) return;
                 const predEndX = this._dateToX(predEnd) + this.pixelsPerDay;
+
+                // Check if this link should be highlighted
+                const isHighlightedLink = 
+                    this.highlightedPredecessors.has(dep.id) || 
+                    this.highlightedSuccessors.has(task.id) ||
+                    (this.drivingPathMode && (
+                        this.drivingPathPredecessors.has(dep.id) ||
+                        this.drivingPathSuccessors.has(task.id)
+                    ));
+
+                if (isHighlightedLink) {
+                    ctx.strokeStyle = this.highlightedPredecessors.has(dep.id) || this.drivingPathPredecessors.has(dep.id)
+                        ? GanttRenderer.COLORS.predecessorStroke 
+                        : GanttRenderer.COLORS.successorStroke;
+                    ctx.lineWidth = 3;
+                } else {
+                    ctx.strokeStyle = GanttRenderer.COLORS.dependency;
+                    ctx.lineWidth = 1.5;
+                }
 
                 this._drawDependencyArrow(ctx, predEndX, predY, taskX, taskY, dep.type);
             });
@@ -948,6 +980,38 @@ export class GanttRenderer {
                 barColor = GanttRenderer.COLORS.barHover;
             }
 
+            // Apply dependency highlighting (overrides hover/selected colors)
+            if (this.highlightedPredecessors.has(task.id)) {
+                barColor = GanttRenderer.COLORS.predecessorHighlight;
+                strokeColor = GanttRenderer.COLORS.predecessorStroke;
+            } else if (this.highlightedSuccessors.has(task.id)) {
+                barColor = GanttRenderer.COLORS.successorHighlight;
+                strokeColor = GanttRenderer.COLORS.successorStroke;
+            }
+
+            // Apply driving path highlighting (overrides hover highlighting)
+            if (this.drivingPathMode) {
+                if (this.drivingPathPredecessors.has(task.id)) {
+                    barColor = GanttRenderer.COLORS.predecessorHighlight;
+                    strokeColor = GanttRenderer.COLORS.predecessorStroke;
+                } else if (this.drivingPathSuccessors.has(task.id)) {
+                    barColor = GanttRenderer.COLORS.successorHighlight;
+                    strokeColor = GanttRenderer.COLORS.successorStroke;
+                }
+            }
+
+            // Apply driving path dimming
+            if (this.drivingPathMode && this.drivingPathRootId) {
+                const isInPath = 
+                    task.id === this.drivingPathRootId ||
+                    this.drivingPathPredecessors.has(task.id) ||
+                    this.drivingPathSuccessors.has(task.id);
+                
+                if (!isInPath) {
+                    ctx.globalAlpha = 0.3;
+                }
+            }
+
             // Draw bar background
             ctx.fillStyle = barColor;
             this._roundRect(ctx, startX, y, width, barHeight, barRadius);
@@ -964,13 +1028,16 @@ export class GanttRenderer {
                 ctx.globalAlpha = 1;
             }
 
-            // Draw stroke for critical tasks
+            // Draw stroke for critical tasks or highlighted dependencies
             if (strokeColor) {
                 ctx.strokeStyle = strokeColor;
                 ctx.lineWidth = 1;
                 this._roundRect(ctx, startX, y, width, barHeight, barRadius);
                 ctx.stroke();
             }
+
+            // Reset alpha after drawing
+            ctx.globalAlpha = 1;
 
             // Draw bar label if there's room
             if (width > 60) {
@@ -1076,6 +1143,7 @@ export class GanttRenderer {
 
         if (newHoveredId !== this.hoveredTaskId) {
             this.hoveredTaskId = newHoveredId;
+            this._computeHoverHighlights(newHoveredId);
             this.dirty = true;
 
             this.dom.mainCanvas.style.cursor = hitBar ? 'pointer' : 'default';
@@ -1083,6 +1151,37 @@ export class GanttRenderer {
 
         if (this.dragState) {
             this._handleDrag(x, y);
+        }
+    }
+
+    /**
+     * Compute highlighted predecessors and successors for a task
+     * @private
+     */
+    private _computeHoverHighlights(taskId: string | null): void {
+        this.highlightedPredecessors.clear();
+        this.highlightedSuccessors.clear();
+        
+        // Check if highlighting is enabled
+        if (!taskId || !this.options.getHighlightDependencies?.()) {
+            return;
+        }
+        
+        const task = this.taskMap.get(taskId);
+        if (!task) return;
+        
+        // Direct predecessors
+        if (task.dependencies) {
+            for (const dep of task.dependencies) {
+                this.highlightedPredecessors.add(dep.id);
+            }
+        }
+        
+        // Direct successors (tasks that depend on this one)
+        for (const t of this.data) {
+            if (t.dependencies?.some(d => d.id === taskId)) {
+                this.highlightedSuccessors.add(t.id);
+            }
         }
     }
 
@@ -1501,6 +1600,72 @@ export class GanttRenderer {
         const defaultZoom = GanttRenderer.VIEW_MODES[this.viewMode]?.pixelsPerDay 
             ?? GanttRenderer.ZOOM_LEVELS.default;
         this.setZoom(defaultZoom);
+    }
+
+    /**
+     * Set driving path mode
+     * @param enabled - Whether mode is enabled
+     * @param rootTaskId - The selected task to trace from
+     */
+    setDrivingPathMode(enabled: boolean, rootTaskId: string | null): void {
+        this.drivingPathMode = enabled;
+        this.drivingPathRootId = rootTaskId;
+        
+        if (enabled && rootTaskId) {
+            this._computeDrivingPath(rootTaskId);
+        } else {
+            this.drivingPathPredecessors.clear();
+            this.drivingPathSuccessors.clear();
+        }
+        
+        this.dirty = true;
+    }
+
+    /**
+     * Compute full transitive dependency chains using BFS
+     * @private
+     */
+    private _computeDrivingPath(rootId: string): void {
+        this.drivingPathPredecessors.clear();
+        this.drivingPathSuccessors.clear();
+        
+        // BFS for predecessors (walk backward through dependencies)
+        const predQueue: string[] = [rootId];
+        const predVisited = new Set<string>();
+        
+        while (predQueue.length > 0) {
+            const id = predQueue.shift()!;
+            if (predVisited.has(id)) continue;
+            predVisited.add(id);
+            
+            const task = this.taskMap.get(id);
+            if (task?.dependencies) {
+                for (const dep of task.dependencies) {
+                    if (!predVisited.has(dep.id)) {
+                        this.drivingPathPredecessors.add(dep.id);
+                        predQueue.push(dep.id);
+                    }
+                }
+            }
+        }
+        
+        // BFS for successors (walk forward - find tasks that depend on us)
+        const succQueue: string[] = [rootId];
+        const succVisited = new Set<string>();
+        
+        while (succQueue.length > 0) {
+            const id = succQueue.shift()!;
+            if (succVisited.has(id)) continue;
+            succVisited.add(id);
+            
+            // Find all tasks that have this task as a dependency
+            for (const task of this.data) {
+                if (task.dependencies?.some(d => d.id === id) && !succVisited.has(task.id)) {
+                    this.drivingPathSuccessors.add(task.id);
+                    succQueue.push(task.id);
+                }
+            }
+        }
     }
 
     /**

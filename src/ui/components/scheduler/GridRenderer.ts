@@ -546,113 +546,180 @@ export class GridRenderer {
 
     /**
      * Handle keydown events
+     * Supports keyboard navigation for all editable cells including Flatpickr date inputs
      */
     private _onKeyDown(e: KeyboardEvent): void {
-        const input = e.target as HTMLInputElement | HTMLSelectElement;
+        const target = e.target as HTMLInputElement | HTMLSelectElement;
 
-        // Tab navigation between cells
-        if (e.key === 'Tab' && (input.classList.contains('vsg-input') || input.classList.contains('vsg-select'))) {
+        // Check if this is an editable input (including Flatpickr alt inputs)
+        const isVsgInput = target.classList.contains('vsg-input');
+        const isVsgSelect = target.classList.contains('vsg-select');
+        const isFlatpickrInput = target.classList.contains('flatpickr-input');
+        
+        // Early exit if not an editable cell input
+        if (!isVsgInput && !isVsgSelect && !isFlatpickrInput) {
+            return;
+        }
+
+        // For Flatpickr inputs, we need to get data from the cell/row since the alt input
+        // doesn't have data-field attribute directly
+        let row: HTMLElement | null;
+        let taskId: string | undefined;
+        let currentField: string | undefined;
+        let originalDateInput: HTMLInputElement | null = null;
+
+        if (isFlatpickrInput) {
+            // Flatpickr alt input - find the original hidden input and get field from cell
+            const cell = target.closest('.vsg-cell') as HTMLElement | null;
+            row = target.closest('.vsg-row') as HTMLElement | null;
+            
+            if (!row || !cell) return;
+            
+            taskId = row.dataset.taskId;
+            currentField = cell.getAttribute('data-field') || undefined;
+            
+            // Get the original input (hidden by Flatpickr) to access its value
+            originalDateInput = cell.querySelector('.vsg-input[type="date"]') as HTMLInputElement | null;
+        } else {
+            // Standard vsg-input or vsg-select
+            row = target.closest('.vsg-row') as HTMLElement | null;
+            if (!row) return;
+            
+            taskId = row.dataset.taskId;
+            currentField = target.getAttribute('data-field') || undefined;
+        }
+
+        if (!taskId || !currentField) return;
+
+        // ========================================
+        // TAB / SHIFT+TAB: Horizontal navigation
+        // ========================================
+        if (e.key === 'Tab') {
             e.preventDefault();
 
-            const row = input.closest('.vsg-row') as HTMLElement | null;
-            if (!row) return;
+            // Close Flatpickr if open and save value
+            if (isFlatpickrInput && originalDateInput) {
+                const fp = (originalDateInput as any)?._flatpickr;
+                if (fp && fp.isOpen) {
+                    fp.close();
+                }
+                // Trigger change to save the value
+                if (this.options.onCellChange) {
+                    this.options.onCellChange(taskId, currentField, originalDateInput.value);
+                }
+            }
 
-            const taskId = row.dataset.taskId;
-            if (!taskId) return;
-
-            const currentField = input.getAttribute('data-field');
-            if (!currentField) return;
-
-            // Get all editable columns
+            // Get all editable columns (excluding checkbox, drag, actions, etc.)
             const editableColumns = this.options.columns.filter(col =>
                 col.type === 'text' || col.type === 'number' || col.type === 'date' || col.type === 'select'
             );
 
             const currentIndex = editableColumns.findIndex(col => col.field === currentField);
+            const taskIndex = this.data.findIndex(t => t.id === taskId);
 
             if (e.shiftKey) {
                 // Shift+Tab: move to previous cell
                 if (currentIndex > 0) {
                     const prevField = editableColumns[currentIndex - 1].field;
                     this.focusCell(taskId, prevField);
-                } else {
-                    // Move to previous row, last cell
-                    const taskIndex = this.data.findIndex(t => t.id === taskId);
-                    if (taskIndex > 0) {
-                        const prevTaskId = this.data[taskIndex - 1].id;
-                        const lastField = editableColumns[editableColumns.length - 1].field;
-                        this.focusCell(prevTaskId, lastField);
-                    }
+                } else if (taskIndex > 0) {
+                    // Move to previous row, last editable cell
+                    const prevTaskId = this.data[taskIndex - 1].id;
+                    const lastField = editableColumns[editableColumns.length - 1].field;
+                    this.focusCell(prevTaskId, lastField);
                 }
+                // If on first row, first cell - do nothing (stay in place)
             } else {
                 // Tab: move to next cell
                 if (currentIndex < editableColumns.length - 1) {
                     const nextField = editableColumns[currentIndex + 1].field;
                     this.focusCell(taskId, nextField);
-                } else {
-                    // Move to next row, first cell
-                    const taskIndex = this.data.findIndex(t => t.id === taskId);
-                    if (taskIndex < this.data.length - 1) {
-                        const nextTaskId = this.data[taskIndex + 1].id;
-                        const firstField = editableColumns[0].field;
-                        this.focusCell(nextTaskId, firstField);
-                    }
+                } else if (taskIndex < this.data.length - 1) {
+                    // Move to next row, first editable cell
+                    const nextTaskId = this.data[taskIndex + 1].id;
+                    const firstField = editableColumns[0].field;
+                    this.focusCell(nextTaskId, firstField);
                 }
+                // If on last row, last cell - do nothing (stay in place)
             }
             return;
         }
 
-        // Enter key: blur input and move to next/previous row (or create new task if on last row)
-        if (e.key === 'Enter' && input.classList.contains('vsg-input')) {
+        // ========================================
+        // ENTER / SHIFT+ENTER: Vertical navigation
+        // ========================================
+        if (e.key === 'Enter' && (isVsgInput || isFlatpickrInput)) {
             e.preventDefault();
 
-            const row = input.closest('.vsg-row') as HTMLElement | null;
-            const taskId = row?.dataset.taskId;
-            const field = input.getAttribute('data-field');
-
-            // Save current edit
-            if (this.options.onCellChange && field && taskId) {
-                this.options.onCellChange(taskId, field, input.value);
+            // Close Flatpickr if open and save value
+            if (isFlatpickrInput && originalDateInput) {
+                const fp = (originalDateInput as any)?._flatpickr;
+                if (fp && fp.isOpen) {
+                    fp.close();
+                }
+                // Trigger change to save the value
+                if (this.options.onCellChange) {
+                    this.options.onCellChange(taskId, currentField, originalDateInput.value);
+                }
+            } else if (isVsgInput) {
+                // Save current edit for non-Flatpickr inputs
+                if (this.options.onCellChange) {
+                    this.options.onCellChange(taskId, currentField, (target as HTMLInputElement).value);
+                }
             }
 
-            input.blur();
+            target.blur();
 
-            if (!taskId) return;
             const taskIndex = this.data.findIndex(t => t.id === taskId);
 
             if (e.shiftKey) {
                 // Shift+Enter: move to same cell in previous row
-                if (taskIndex > 0 && field) {
+                if (taskIndex > 0) {
                     const prevTaskId = this.data[taskIndex - 1].id;
-                    setTimeout(() => this.focusCell(prevTaskId, field), 50);
+                    setTimeout(() => this.focusCell(prevTaskId, currentField!), 50);
                 }
+                // If on first row - do nothing (already blurred)
             } else {
-                // Enter: move to same cell in next row, or create new task if on last row
-                if (taskIndex < this.data.length - 1 && field) {
-                    // Not on last row - move to next row
+                // Enter: move to same cell in next row
+                if (taskIndex < this.data.length - 1) {
                     const nextTaskId = this.data[taskIndex + 1].id;
-                    setTimeout(() => this.focusCell(nextTaskId, field), 50);
-                } else if (taskIndex === this.data.length - 1 && field) {
+                    setTimeout(() => this.focusCell(nextTaskId, currentField!), 50);
+                } else if (taskIndex === this.data.length - 1) {
                     // ON LAST ROW - trigger callback to create new task
                     if (this.options.onEnterLastRow) {
-                        this.options.onEnterLastRow(taskId, field);
+                        this.options.onEnterLastRow(taskId, currentField!);
                     }
                 }
             }
             return;
         }
 
-        // Escape key cancels edit
-        if (e.key === 'Escape' && input.classList.contains('vsg-input')) {
-            const row = input.closest('.vsg-row') as HTMLElement | null;
-            const taskId = row?.dataset.taskId;
-            const field = input.getAttribute('data-field');
-            const task = this.data.find(t => t.id === taskId);
-            if (task && field) {
-                const value = this._getTaskFieldValue(task, field);
-                (input as HTMLInputElement).value = value ? String(value) : '';
+        // ========================================
+        // ESCAPE: Cancel edit and close picker
+        // ========================================
+        if (e.key === 'Escape') {
+            // Close Flatpickr if open (without saving - user cancelled)
+            if (isFlatpickrInput && originalDateInput) {
+                const fp = (originalDateInput as any)?._flatpickr;
+                if (fp && fp.isOpen) {
+                    fp.close();
+                }
+                // Restore original value
+                const task = this.data.find(t => t.id === taskId);
+                if (task && currentField) {
+                    const originalValue = this._getTaskFieldValue(task, currentField);
+                    (target as HTMLInputElement).value = originalValue ? String(originalValue) : '';
+                }
+            } else if (isVsgInput) {
+                // Restore original value for regular inputs
+                const task = this.data.find(t => t.id === taskId);
+                if (task && currentField) {
+                    const originalValue = this._getTaskFieldValue(task, currentField);
+                    (target as HTMLInputElement).value = originalValue ? String(originalValue) : '';
+                }
             }
-            input.blur();
+            
+            target.blur();
             return;
         }
     }

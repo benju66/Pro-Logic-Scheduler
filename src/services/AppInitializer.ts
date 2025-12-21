@@ -287,6 +287,11 @@ export class AppInitializer {
             modal: settingsModal,
             onClose: () => {
                 console.log('[Settings] Modal closed');
+            },
+            onSettingChange: (setting, value) => {
+                if (setting === 'highlightDependenciesOnHover' && this.scheduler) {
+                    this.scheduler.setHighlightDependenciesOnHover(value);
+                }
             }
         });
 

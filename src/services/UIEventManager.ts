@@ -615,6 +615,9 @@ export class UIEventManager {
         case 'column-settings':
           this._openColumnSettings();
           break;
+        case 'toggle-driving-path':
+          this.getScheduler()?.toggleDrivingPathMode();
+          break;
         default:
           // Don't warn for grid actions or modal actions
           const gridActions = ['collapse', 'indent', 'outdent', 'links', 'delete'];

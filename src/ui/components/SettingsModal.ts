@@ -10,6 +10,7 @@ export interface SettingsModalOptions {
     overlay: HTMLElement;
     modal: HTMLElement;
     onClose?: () => void;
+    onSettingChange?: (setting: string, value: boolean) => void;
 }
 
 export class SettingsModal {
@@ -63,6 +64,14 @@ export class SettingsModal {
                 this.close();
             }
         });
+
+        // Settings toggles
+        const highlightDepsToggle = this.modal.querySelector('#setting-highlight-deps') as HTMLInputElement;
+        if (highlightDepsToggle) {
+            highlightDepsToggle.addEventListener('change', () => {
+                this.options.onSettingChange?.('highlightDependenciesOnHover', highlightDepsToggle.checked);
+            });
+        }
     }
 
     /**

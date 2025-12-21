@@ -56,7 +56,8 @@ import type {
     LinkType,
     ConstraintType,
     ColumnPreferences,
-    CPMResult
+    CPMResult,
+    Dependency
 } from '../types';
 import type { ISchedulingEngine, TaskHierarchyContext } from '../core/ISchedulingEngine';
 import { JavaScriptEngine } from '../core/engines/JavaScriptEngine';
@@ -120,11 +121,18 @@ export class SchedulerService {
 
     // Selection state (managed here, not in store - UI concern)
     public selectedIds: Set<string> = new Set();  // Public for access from UIEventManager
+    private selectionOrder: string[] = [];  // Track selection order for linking
     private focusedId: string | null = null;
     private anchorId: string | null = null;
 
     // View state
     public viewMode: ViewMode = 'Week';  // Public for access from StatsService
+    
+    // Display settings
+    private displaySettings = {
+        highlightDependenciesOnHover: true,
+        drivingPathMode: false
+    };
     
     // Clipboard state
     private clipboard: Task[] | null = null;              // Array of cloned tasks
@@ -392,6 +400,7 @@ export class SchedulerService {
             onBarDoubleClick: (taskId, e) => this._handleRowDoubleClick(taskId, e),
             onBarDrag: (task, start, end) => this._handleBarDrag(task, start, end),
             isParent: (id) => this.taskStore.isParent(id),
+            getHighlightDependencies: () => this.getHighlightDependenciesOnHover(),
         };
         viewport.initGantt(ganttOptions);
 
@@ -538,6 +547,15 @@ export class SchedulerService {
      */
     private _handleSelectionChange(selectedIds: string[]): void {
         const selectedSet = new Set(selectedIds);
+        
+        // Maintain selection order: remove deselected, add newly selected
+        this.selectionOrder = this.selectionOrder.filter(id => selectedSet.has(id));
+        for (const id of selectedIds) {
+            if (!this.selectionOrder.includes(id)) {
+                this.selectionOrder.push(id);
+            }
+        }
+        
         this.selectedIds = selectedSet;
         // Update other components that depend on selection
     }
@@ -585,7 +603,16 @@ export class SchedulerService {
             onCtrlArrowUp: () => this.moveSelectedTasks(-1),
             onCtrlArrowDown: () => this.moveSelectedTasks(1),
             onF2: () => this.enterEditMode(),
-            onEscape: () => this._handleEscape(),
+            onEscape: () => {
+                // Exit driving path mode on Escape
+                if (this.displaySettings.drivingPathMode) {
+                    this.toggleDrivingPathMode();
+                } else {
+                    this._handleEscape();
+                }
+            },
+            onLinkSelected: () => this.linkSelectedInOrder(),
+            onDrivingPath: () => this.toggleDrivingPathMode(),
         });
         
         console.log('[SchedulerService] ✅ Keyboard shortcuts initialized');
@@ -1520,23 +1547,32 @@ export class SchedulerService {
             
             if (anchorIndex !== -1 && targetIndex !== -1) {
                 this.selectedIds.clear();
+                this.selectionOrder = [];
                 const start = Math.min(anchorIndex, targetIndex);
                 const end = Math.max(anchorIndex, targetIndex);
                 for (let i = start; i <= end; i++) {
                     this.selectedIds.add(visibleTasks[i].id);
+                    this.selectionOrder.push(visibleTasks[i].id);
                 }
             }
         } else if (e.ctrlKey || e.metaKey) {
             // Toggle selection
             if (this.selectedIds.has(taskId)) {
+                // Removing - filter from order
                 this.selectedIds.delete(taskId);
+                this.selectionOrder = this.selectionOrder.filter(id => id !== taskId);
             } else {
+                // Adding - append to order
                 this.selectedIds.add(taskId);
+                if (!this.selectionOrder.includes(taskId)) {
+                    this.selectionOrder.push(taskId);
+                }
             }
             this.anchorId = taskId;
         } else {
-            // Single selection
+            // Single selection - reset order
             this.selectedIds.clear();
+            this.selectionOrder = [taskId];
             this.selectedIds.add(taskId);
             this.anchorId = taskId;
         }
@@ -2969,6 +3005,89 @@ export class SchedulerService {
     }
 
     /**
+     * Link selected tasks in selection order
+     * Creates FS (Finish-to-Start) dependencies with 0 lag
+     * Single undo reverses all created links
+     */
+    linkSelectedInOrder(): void {
+        const selectedArray = this.getSelectionInOrder();
+        
+        if (selectedArray.length < 2) {
+            this.toastService?.warning('Select 2 or more tasks to link');
+            return;
+        }
+        
+        // Filter out parent/summary tasks (can't link them)
+        const linkable = selectedArray.filter(id => !this.taskStore.isParent(id));
+        
+        if (linkable.length < 2) {
+            this.toastService?.warning('Need 2+ non-summary tasks to link');
+            return;
+        }
+        
+        // Track how many links we create
+        let linksCreated = 0;
+        const tasksToUpdate: Array<{ id: string; oldDeps: Dependency[]; newDeps: Dependency[] }> = [];
+        
+        // Create links: task[0] → task[1] → task[2] → ...
+        for (let i = 0; i < linkable.length - 1; i++) {
+            const predecessorId = linkable[i];
+            const successorId = linkable[i + 1];
+            const successor = this.taskStore.getById(successorId);
+            
+            if (!successor) continue;
+            
+            // Skip if link already exists
+            const existingDeps = successor.dependencies || [];
+            if (existingDeps.some(d => d.id === predecessorId)) {
+                continue;
+            }
+            
+            // Create new dependency
+            const newDep: Dependency = { 
+                id: predecessorId, 
+                type: 'FS' as LinkType, 
+                lag: 0 
+            };
+            
+            const newDeps = [...existingDeps, newDep];
+            
+            tasksToUpdate.push({
+                id: successorId,
+                oldDeps: existingDeps,
+                newDeps: newDeps
+            });
+            
+            linksCreated++;
+        }
+        
+        if (linksCreated === 0) {
+            this.toastService?.info('Tasks are already linked');
+            return;
+        }
+        
+        // Apply all updates (each creates its own history entry)
+        // The undo stack will have multiple entries, but that's acceptable
+        // For true batch undo, we'd need HistoryManager changes
+        for (const update of tasksToUpdate) {
+            this.taskStore.update(update.id, { dependencies: update.newDeps });
+            
+            // Sync to engine if available
+            if (this.engine) {
+                this.engine.updateTask(update.id, { dependencies: update.newDeps }).catch(err => {
+                    console.warn('[SchedulerService] Failed to sync dependency update to engine:', err);
+                });
+            }
+        }
+        
+        // Recalculate CPM (dates may change due to new dependencies)
+        this.recalculateAll();
+        this.render();
+        
+        this.toastService?.success(`Linked ${linkable.length} tasks in sequence`);
+    }
+
+    /**
      * Insert task above focused task
      */
     /**
@@ -3304,6 +3423,14 @@ export class SchedulerService {
     // =========================================================================
 
     /**
+     * Get selected task IDs in selection order
+     * @returns Array of task IDs in the order they were selected
+     */
+    getSelectionInOrder(): string[] {
+        return [...this.selectionOrder];
+    }
+
+    /**
      * Update selection in UI components
      * @private
      */
@@ -3316,6 +3443,11 @@ export class SchedulerService {
         }
         // Update header checkbox state
         this._updateHeaderCheckboxState();
+        
+        // Update driving path if mode is active
+        if (this.displaySettings.drivingPathMode) {
+            this._updateGanttDrivingPathMode();
+        }
     }
 
     /**

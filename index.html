@@ -314,6 +314,23 @@
             background: #e2e8f0;
         }
 
+        /* Driving path mode active state */
+        .tool-btn.driving-path-active {
+            background: #6366f1 !important;
+            color: white !important;
+        }
+
+        .tool-btn.driving-path-active:hover {
+            background: #4f46e5 !important;
+        }
+
+        .toolbar-divider {
+            width: 1px;
+            height: 24px;
+            background: #e2e8f0;
+            margin: 0 8px;
+        }
+
         #reset-zoom-btn {
             width: auto !important;
             min-width: 36px;
@@ -2070,6 +2087,82 @@
             font-size: 14px;
         }
 
+        /* Settings toggle switch */
+        .setting-row {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #e2e8f0;
+        }
+
+        .setting-row:last-child {
+            border-bottom: none;
+        }
+
+        .setting-info {
+            flex: 1;
+            padding-right: 16px;
+        }
+
+        .setting-label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #1e293b;
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        .setting-description {
+            font-size: 12px;
+            color: #64748b;
+            margin: 0;
+        }
+
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+            flex-shrink: 0;
+        }
+
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            inset: 0;
+            background-color: #cbd5e1;
+            transition: 0.2s;
+            border-radius: 24px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.2s;
+            border-radius: 50%;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: #6366f1;
+        }
+
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(20px);
+        }
+
         /* ============================================================
            STICKY COLUMNS
            ============================================================ */
@@ -2243,6 +2336,12 @@
                     </svg>
                 </button>
             </div>
+            <div class="toolbar-divider"></div>
+            <button class="tool-btn" id="driving-path-btn" data-action="toggle-driving-path" title="Driving Path Mode (D)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 12h4l3 9 4-18 3 9h4"/>
+                </svg>
+            </button>
             
             <!-- Gantt Zoom Controls -->
             <div class="gantt-zoom-controls" style="display: flex; align-items: center; gap: 4px; padding: 0 8px; border-left: 1px solid #e2e8f0;">
@@ -2472,7 +2571,17 @@
                     <!-- Display Section -->
                     <div class="settings-section" id="settings-display">
                         <h3>Display Settings</h3>
-                        <p class="settings-placeholder">Display options coming soon.</p>
+                        
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <label class="setting-label" for="setting-highlight-deps">Highlight Dependencies on Hover</label>
+                                <p class="setting-description">Show predecessor and successor chains when hovering over tasks</p>
+                            </div>
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="setting-highlight-deps" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
                     </div>
                     <!-- Calendar Section -->
                     <div class="settings-section" id="settings-calendar">

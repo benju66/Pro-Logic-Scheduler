@@ -119,6 +119,7 @@ export interface GanttRendererOptions {
     onBarDrag?: (task: Task, start: string, end: string) => void;
     onDependencyClick?: (taskId: string, depId: string, event: MouseEvent) => void;
     onNeedsRender?: () => void;  // Callback when gantt needs viewport to render
+    getHighlightDependencies?: () => boolean;  // Get whether dependency highlighting is enabled
     
     // Metadata providers
     isParent?: (taskId: string) => boolean;

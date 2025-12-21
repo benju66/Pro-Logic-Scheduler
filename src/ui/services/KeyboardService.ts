@@ -26,6 +26,8 @@ export interface KeyboardServiceOptions {
   onCtrlArrowDown?: () => void;
   onF2?: () => void;
   onEscape?: () => void;
+  onLinkSelected?: () => void;
+  onDrivingPath?: () => void;
   isAppReady?: () => boolean;
 }
 
@@ -236,6 +238,20 @@ export class KeyboardService {
     if (e.key === 'F2' && this.options.onF2) {
       e.preventDefault();
       this.options.onF2();
+      return;
+    }
+
+    // Link selected tasks (L)
+    if (e.key === 'l' || e.key === 'L') {
+      e.preventDefault();
+      if (this.options.onLinkSelected) this.options.onLinkSelected();
+      return;
+    }
+
+    // Driving path mode (D)
+    if (e.key === 'd' || e.key === 'D') {
+      e.preventDefault();
+      if (this.options.onDrivingPath) this.options.onDrivingPath();
       return;
     }
   }
