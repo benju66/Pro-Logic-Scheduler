@@ -10,9 +10,7 @@ import type { Task, GridColumn, Calendar } from '../../../../types';
 import type { PooledRow, PooledCell, BindingContext } from '../types';
 import { getTaskFieldValue } from '../../../../types';
 import { ICONS } from '../icons';
-import flatpickr from 'flatpickr';
-import type { Instance } from 'flatpickr/dist/types/instance';
-import { createDatePickerOptions, destroyDatePicker, formatDateISO } from '../datepicker/DatePickerConfig';
+import { formatDateForDisplay, parseFlexibleDate, formatDateISO } from '../datepicker/DatePickerConfig';
 
 /**
  * Binding System - Updates pooled DOM elements with task data
@@ -21,6 +19,7 @@ export class BindingSystem {
     private columnMap: Map<string, GridColumn>;
     private calendar: Calendar | null = null;
     private onDateChange: ((taskId: string, field: string, value: string) => void) | null = null;
+    private onOpenDatePicker: ((taskId: string, field: string, anchorEl: HTMLElement, currentValue: string) => void) | null = null;
 
     constructor(columns: GridColumn[]) {
         this.columnMap = new Map();
@@ -41,6 +40,13 @@ export class BindingSystem {
      */
     setOnDateChange(callback: (taskId: string, field: string, value: string) => void): void {
         this.onDateChange = callback;
+    }
+
+    /**
+     * Set callback for opening the shared date picker popup
+     */
+    setOnOpenDatePicker(callback: (taskId: string, field: string, anchorEl: HTMLElement, currentValue: string) => void): void {
+        this.onOpenDatePicker = callback;
     }
 
     /**
@@ -127,32 +133,26 @@ export class BindingSystem {
             this._bindNameCell(cell, ctx);
         }
 
-        // Handle date inputs - initialize Flatpickr
+        // Handle date inputs - text input with MM/DD/YYYY display format
         if (col.type === 'date' && cell.input) {
             const input = cell.input as HTMLInputElement;
-            const taskId = ctx.task.id;
             const field = col.field;
             
             cell.container.style.position = 'relative';
             const hasConstraintIcon = col.showConstraintIcon && (col.field === 'start' || col.field === 'end');
             
-            // Initialize or update Flatpickr
-            this._initializeDatePicker(cell, col, ctx, hasConstraintIcon);
+            // Get the stored value (YYYY-MM-DD format)
+            const storedValue = getTaskFieldValue(ctx.task, col.field);
             
-            // Set value
-            const value = getTaskFieldValue(ctx.task, col.field);
-            if (value) {
-                input.value = String(value);
-                // Update Flatpickr's internal date
-                if (cell.flatpickr) {
-                    cell.flatpickr.setDate(String(value), false); // false = don't trigger onChange
-                }
+            // Display in MM/DD/YYYY format
+            if (storedValue) {
+                input.value = formatDateForDisplay(String(storedValue));
             } else {
                 input.value = '';
-                if (cell.flatpickr) {
-                    cell.flatpickr.clear();
-                }
             }
+            
+            // Store the ISO value as a data attribute for retrieval
+            input.dataset.isoValue = storedValue ? String(storedValue) : '';
             
             // Handle readonly state
             const isReadonly = col.editable === false || (col.readonlyForParent && ctx.isParent);
@@ -167,6 +167,9 @@ export class BindingSystem {
             if (hasConstraintIcon) {
                 this._bindConstraintIcon(cell, col, ctx.task, ctx);
             }
+            
+            // Add calendar icon that opens shared popup
+            this._bindCalendarIcon(cell, col, ctx, hasConstraintIcon);
             
             // Reserve padding space for icons
             const iconSize = 12;
@@ -286,69 +289,18 @@ export class BindingSystem {
     }
 
     /**
-     * Initialize Flatpickr on a date cell
-     * Reuses existing instance if present (pooled elements)
+     * Bind calendar icon that opens the shared date picker popup
      */
-    private _initializeDatePicker(
-        cell: PooledCell, 
-        col: GridColumn, 
-        ctx: BindingContext,
-        hasConstraintIcon: boolean
-    ): void {
-        const input = cell.input as HTMLInputElement;
-        const taskId = ctx.task.id;
-        const field = col.field;
-        const isReadonly = col.editable === false || (col.readonlyForParent && ctx.isParent);
-        
-        // Destroy existing instance if configuration changed significantly
-        // (e.g., different task might have different readonly state)
-        if (cell.flatpickr) {
-            // Check if we need to reinitialize
-            const currentDisabled = (cell.flatpickr as any)._disabled;
-            if (currentDisabled !== isReadonly) {
-                destroyDatePicker(cell.flatpickr);
-                cell.flatpickr = null;
-            }
-        }
-        
-        // Create new instance if needed
-        if (!cell.flatpickr && !isReadonly) {
-            const options = createDatePickerOptions({
-                calendar: this.calendar || undefined,
-                disabled: isReadonly,
-                onChange: (dateStr) => {
-                    // Get current task ID from the row (may have changed due to pooling)
-                    const row = cell.container.closest('.vsg-row') as HTMLElement;
-                    const currentTaskId = row?.dataset.taskId;
-                    if (currentTaskId && this.onDateChange) {
-                        this.onDateChange(currentTaskId, field, dateStr);
-                    }
-                },
-                onOpen: () => {
-                    cell.container.classList.add('date-picker-open');
-                },
-                onClose: () => {
-                    cell.container.classList.remove('date-picker-open');
-                },
-            });
-            
-            cell.flatpickr = flatpickr(input, options);
-            (cell.flatpickr as any)._disabled = isReadonly;
-        }
-        
-        // Add calendar icon (clickable to open picker)
-        this._bindCalendarIconWithPicker(cell, hasConstraintIcon);
-    }
-
-    /**
-     * Bind calendar icon that opens the Flatpickr picker
-     */
-    private _bindCalendarIconWithPicker(cell: PooledCell, hasConstraintIcon: boolean): void {
+    private _bindCalendarIcon(cell: PooledCell, col: GridColumn, ctx: BindingContext, hasConstraintIcon: boolean): void {
         // Remove existing calendar icon if present
         const existingIcon = cell.container.querySelector('.vsg-calendar-icon');
         if (existingIcon) {
             existingIcon.remove();
         }
+
+        // Don't add icon for readonly cells
+        const isReadonly = col.editable === false || (col.readonlyForParent && ctx.isParent);
+        if (isReadonly) return;
 
         // Create calendar icon using pre-rendered SVG
         const iconEl = document.createElement('span');
@@ -391,7 +343,7 @@ export class BindingSystem {
             iconEl.style.color = '#94a3b8';
         });
 
-        // Click handler to open Flatpickr picker
+        // Click handler to open shared date picker popup
         iconEl.addEventListener('click', (e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -399,12 +351,16 @@ export class BindingSystem {
             const input = cell.input as HTMLInputElement;
             if (!input || input.disabled) return;
             
-            // Open Flatpickr calendar
-            if (cell.flatpickr) {
-                cell.flatpickr.open();
-            } else {
-                // Fallback: focus the input
-                input.focus();
+            // Get current task ID from the row (may have changed due to pooling)
+            const row = cell.container.closest('.vsg-row') as HTMLElement;
+            const currentTaskId = row?.dataset.taskId;
+            const field = col.field;
+            
+            // Get the ISO value for the picker
+            const isoValue = input.dataset.isoValue || '';
+            
+            if (currentTaskId && this.onOpenDatePicker) {
+                this.onOpenDatePicker(currentTaskId, field, cell.container, isoValue);
             }
         });
 

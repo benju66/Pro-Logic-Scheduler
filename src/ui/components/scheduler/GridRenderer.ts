@@ -12,6 +12,9 @@ import type { Task, GridColumn, Calendar } from '../../../types';
 import type { ViewportState, GridRendererOptions, BindingContext } from './types';
 import { PoolSystem } from './pool/PoolSystem';
 import { BindingSystem } from './pool/BindingSystem';
+import flatpickr from 'flatpickr';
+import type { Instance } from 'flatpickr/dist/types/instance';
+import { createSharedPickerOptions, destroyDatePicker, parseFlexibleDate, formatDateISO, formatDateForDisplay } from './datepicker/DatePickerConfig';
 
 /**
  * Editing cell state
@@ -36,6 +39,11 @@ export class GridRenderer {
     private editingCell: EditingCell | null = null;
     private editingRows: Set<string> = new Set();
     private isScrolling: boolean = false;
+    
+    // Shared date picker popup
+    private sharedDatePicker: Instance | null = null;
+    private activeDatePickerContext: { taskId: string; field: string } | null = null;
+    private calendar: Calendar | null = null;
     
     // Drag UX state
     private _lastDropPosition: 'before' | 'after' | 'child' | null = null;
@@ -90,6 +98,11 @@ export class GridRenderer {
             if (this.options.onCellChange) {
                 this.options.onCellChange(taskId, field, value);
             }
+        });
+
+        // Set up shared date picker callback
+        this.binder.setOnOpenDatePicker((taskId, field, anchorEl, currentValue) => {
+            this._openSharedDatePicker(taskId, field, anchorEl, currentValue);
         });
 
         // Event delegation
@@ -277,6 +290,7 @@ export class GridRenderer {
      * Update the calendar for working day integration
      */
     setCalendar(calendar: Calendar): void {
+        this.calendar = calendar;
         this.binder.setCalendar(calendar);
     }
 
@@ -448,12 +462,7 @@ export class GridRenderer {
     private _onInput(e: Event): void {
         const input = e.target as HTMLInputElement;
         if (!input.classList.contains('vsg-input')) return;
-        if (!input.classList.contains('vsg-date-input')) return; // Only handle Flatpickr date inputs
-        
-        // Skip if this is a Flatpickr input - it handles its own input events
-        if ((input as any)._flatpickr) {
-            return;
-        }
+        if (!input.classList.contains('vsg-date-input')) return; // Only handle date inputs
         
         const row = input.closest('.vsg-row') as HTMLElement | null;
         if (!row) return;
@@ -476,12 +485,6 @@ export class GridRenderer {
      */
     private _onChange(e: Event): void {
         const input = e.target as HTMLInputElement | HTMLSelectElement;
-        
-        // Skip if this is a Flatpickr input - it has its own onChange handler
-        if (input.classList.contains('vsg-date-input') && (input as any)._flatpickr) {
-            return;
-        }
-        
         const field = input.getAttribute('data-field');
         if (!field) return;
 
@@ -491,14 +494,14 @@ export class GridRenderer {
         const taskId = row.dataset.taskId;
         if (!taskId) return;
 
-        // Skip checkbox changes
+        // Skip checkbox changes - they're handled by row click for selection
         if ((input as HTMLInputElement).type === 'checkbox') {
             return;
         }
-
-        // Remove editing class when change event fires (value committed)
-        if ((input as HTMLInputElement).type === 'date') {
-            input.classList.remove('editing');
+        
+        // Skip date inputs - handled by blur with format conversion
+        if (input.classList.contains('vsg-date-input')) {
+            return;
         }
 
         const value = input.value;
@@ -523,8 +526,12 @@ export class GridRenderer {
         const taskId = row.dataset.taskId;
         if (!taskId) return;
 
+        // For date inputs, parse and save with format conversion
+        if (input.classList.contains('vsg-date-input')) {
+            this._saveDateInput(input as HTMLInputElement, taskId, field);
+        }
         // For text/number inputs, fire change on blur
-        if ((input as HTMLInputElement).type === 'text' || (input as HTMLInputElement).type === 'number') {
+        else if ((input as HTMLInputElement).type === 'text' || (input as HTMLInputElement).type === 'number') {
             if (this.options.onCellChange) {
                 this.options.onCellChange(taskId, field, input.value);
             }
@@ -546,49 +553,25 @@ export class GridRenderer {
 
     /**
      * Handle keydown events
-     * Supports keyboard navigation for all editable cells including Flatpickr date inputs
+     * Text inputs with smart date formatting - keyboard navigation works naturally
      */
     private _onKeyDown(e: KeyboardEvent): void {
         const target = e.target as HTMLInputElement | HTMLSelectElement;
 
-        // Check if this is an editable input (including Flatpickr alt inputs)
+        // Check if this is an editable input
         const isVsgInput = target.classList.contains('vsg-input');
         const isVsgSelect = target.classList.contains('vsg-select');
-        const isFlatpickrInput = target.classList.contains('flatpickr-input');
         
-        // Early exit if not an editable cell input
-        if (!isVsgInput && !isVsgSelect && !isFlatpickrInput) {
+        if (!isVsgInput && !isVsgSelect) {
             return;
         }
 
-        // For Flatpickr inputs, we need to get data from the cell/row since the alt input
-        // doesn't have data-field attribute directly
-        let row: HTMLElement | null;
-        let taskId: string | undefined;
-        let currentField: string | undefined;
-        let originalDateInput: HTMLInputElement | null = null;
-
-        if (isFlatpickrInput) {
-            // Flatpickr alt input - find the original hidden input and get field from cell
-            const cell = target.closest('.vsg-cell') as HTMLElement | null;
-            row = target.closest('.vsg-row') as HTMLElement | null;
-            
-            if (!row || !cell) return;
-            
-            taskId = row.dataset.taskId;
-            currentField = cell.getAttribute('data-field') || undefined;
-            
-            // Get the original input (hidden by Flatpickr) to access its value
-            originalDateInput = cell.querySelector('.vsg-input[type="date"]') as HTMLInputElement | null;
-        } else {
-            // Standard vsg-input or vsg-select
-            row = target.closest('.vsg-row') as HTMLElement | null;
-            if (!row) return;
-            
-            taskId = row.dataset.taskId;
-            currentField = target.getAttribute('data-field') || undefined;
-        }
-
+        const row = target.closest('.vsg-row') as HTMLElement | null;
+        if (!row) return;
+        
+        const taskId = row.dataset.taskId;
+        const currentField = target.getAttribute('data-field');
+        
         if (!taskId || !currentField) return;
 
         // ========================================
@@ -597,16 +580,9 @@ export class GridRenderer {
         if (e.key === 'Tab') {
             e.preventDefault();
 
-            // Close Flatpickr if open and save value
-            if (isFlatpickrInput && originalDateInput) {
-                const fp = (originalDateInput as any)?._flatpickr;
-                if (fp && fp.isOpen) {
-                    fp.close();
-                }
-                // Trigger change to save the value
-                if (this.options.onCellChange) {
-                    this.options.onCellChange(taskId, currentField, originalDateInput.value);
-                }
+            // For date inputs, parse and save before navigating
+            if (target.classList.contains('vsg-date-input')) {
+                this._saveDateInput(target as HTMLInputElement, taskId, currentField);
             }
 
             // Get all editable columns (excluding checkbox, drag, actions, etc.)
@@ -628,7 +604,6 @@ export class GridRenderer {
                     const lastField = editableColumns[editableColumns.length - 1].field;
                     this.focusCell(prevTaskId, lastField);
                 }
-                // If on first row, first cell - do nothing (stay in place)
             } else {
                 // Tab: move to next cell
                 if (currentIndex < editableColumns.length - 1) {
@@ -640,7 +615,6 @@ export class GridRenderer {
                     const firstField = editableColumns[0].field;
                     this.focusCell(nextTaskId, firstField);
                 }
-                // If on last row, last cell - do nothing (stay in place)
             }
             return;
         }
@@ -648,21 +622,14 @@ export class GridRenderer {
         // ========================================
         // ENTER / SHIFT+ENTER: Vertical navigation
         // ========================================
-        if (e.key === 'Enter' && (isVsgInput || isFlatpickrInput)) {
+        if (e.key === 'Enter' && isVsgInput) {
             e.preventDefault();
 
-            // Close Flatpickr if open and save value
-            if (isFlatpickrInput && originalDateInput) {
-                const fp = (originalDateInput as any)?._flatpickr;
-                if (fp && fp.isOpen) {
-                    fp.close();
-                }
-                // Trigger change to save the value
-                if (this.options.onCellChange) {
-                    this.options.onCellChange(taskId, currentField, originalDateInput.value);
-                }
-            } else if (isVsgInput) {
-                // Save current edit for non-Flatpickr inputs
+            // For date inputs, parse and save
+            if (target.classList.contains('vsg-date-input')) {
+                this._saveDateInput(target as HTMLInputElement, taskId, currentField);
+            } else {
+                // Save current edit for non-date inputs
                 if (this.options.onCellChange) {
                     this.options.onCellChange(taskId, currentField, (target as HTMLInputElement).value);
                 }
@@ -676,18 +643,17 @@ export class GridRenderer {
                 // Shift+Enter: move to same cell in previous row
                 if (taskIndex > 0) {
                     const prevTaskId = this.data[taskIndex - 1].id;
-                    setTimeout(() => this.focusCell(prevTaskId, currentField!), 50);
+                    setTimeout(() => this.focusCell(prevTaskId, currentField), 50);
                 }
-                // If on first row - do nothing (already blurred)
             } else {
                 // Enter: move to same cell in next row
                 if (taskIndex < this.data.length - 1) {
                     const nextTaskId = this.data[taskIndex + 1].id;
-                    setTimeout(() => this.focusCell(nextTaskId, currentField!), 50);
+                    setTimeout(() => this.focusCell(nextTaskId, currentField), 50);
                 } else if (taskIndex === this.data.length - 1) {
                     // ON LAST ROW - trigger callback to create new task
                     if (this.options.onEnterLastRow) {
-                        this.options.onEnterLastRow(taskId, currentField!);
+                        this.options.onEnterLastRow(taskId, currentField);
                     }
                 }
             }
@@ -695,32 +661,63 @@ export class GridRenderer {
         }
 
         // ========================================
-        // ESCAPE: Cancel edit and close picker
+        // ESCAPE: Cancel edit
         // ========================================
-        if (e.key === 'Escape') {
-            // Close Flatpickr if open (without saving - user cancelled)
-            if (isFlatpickrInput && originalDateInput) {
-                const fp = (originalDateInput as any)?._flatpickr;
-                if (fp && fp.isOpen) {
-                    fp.close();
-                }
-                // Restore original value
-                const task = this.data.find(t => t.id === taskId);
-                if (task && currentField) {
-                    const originalValue = this._getTaskFieldValue(task, currentField);
-                    (target as HTMLInputElement).value = originalValue ? String(originalValue) : '';
-                }
-            } else if (isVsgInput) {
-                // Restore original value for regular inputs
-                const task = this.data.find(t => t.id === taskId);
-                if (task && currentField) {
-                    const originalValue = this._getTaskFieldValue(task, currentField);
+        if (e.key === 'Escape' && isVsgInput) {
+            // Restore original value
+            const task = this.data.find(t => t.id === taskId);
+            if (task && currentField) {
+                const originalValue = this._getTaskFieldValue(task, currentField);
+                
+                // For date inputs, restore with display format
+                if (target.classList.contains('vsg-date-input')) {
+                    const input = target as HTMLInputElement;
+                    input.value = originalValue ? formatDateForDisplay(String(originalValue)) : '';
+                    input.dataset.isoValue = originalValue ? String(originalValue) : '';
+                } else {
                     (target as HTMLInputElement).value = originalValue ? String(originalValue) : '';
                 }
             }
             
             target.blur();
             return;
+        }
+    }
+
+    /**
+     * Parse and save a date input value
+     * Converts from display format (flexible) to ISO format for storage
+     */
+    private _saveDateInput(input: HTMLInputElement, taskId: string, field: string): void {
+        const displayValue = input.value.trim();
+        
+        if (!displayValue) {
+            // Empty value - clear the date
+            input.dataset.isoValue = '';
+            if (this.options.onCellChange) {
+                this.options.onCellChange(taskId, field, '');
+            }
+            return;
+        }
+        
+        // Try to parse the input (supports multiple formats)
+        const parsed = parseFlexibleDate(displayValue);
+        
+        if (parsed) {
+            const isoValue = formatDateISO(parsed);
+            // Update display to normalized format
+            input.value = formatDateForDisplay(isoValue);
+            input.dataset.isoValue = isoValue;
+            
+            // Save ISO value
+            if (this.options.onCellChange) {
+                this.options.onCellChange(taskId, field, isoValue);
+            }
+        } else {
+            // Invalid date - revert to previous value
+            const previousIso = input.dataset.isoValue || '';
+            input.value = previousIso ? formatDateForDisplay(previousIso) : '';
+            // Don't fire change - invalid input
         }
     }
 
@@ -985,9 +982,76 @@ export class GridRenderer {
     }
 
     /**
+     * Open the shared date picker popup positioned near an anchor element
+     */
+    private _openSharedDatePicker(taskId: string, field: string, anchorEl: HTMLElement, currentValue: string): void {
+        // Close existing picker if open
+        if (this.sharedDatePicker) {
+            this.sharedDatePicker.destroy();
+            this.sharedDatePicker = null;
+        }
+        
+        // Store context for when user selects a date
+        this.activeDatePickerContext = { taskId, field };
+        
+        // Create temporary invisible input for Flatpickr to attach to
+        const tempInput = document.createElement('input');
+        tempInput.type = 'text';
+        tempInput.style.cssText = 'position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0;';
+        tempInput.value = currentValue || '';
+        anchorEl.appendChild(tempInput);
+        
+        // Create Flatpickr in static mode (popup only)
+        this.sharedDatePicker = flatpickr(tempInput, createSharedPickerOptions({
+            calendar: this.calendar || undefined,
+            defaultDate: currentValue || undefined,
+            positionElement: anchorEl,
+            onChange: (selectedDates, dateStr) => {
+                if (this.activeDatePickerContext && dateStr) {
+                    const { taskId: ctxTaskId, field: ctxField } = this.activeDatePickerContext;
+                    
+                    // Update the input with display format
+                    const row = this.rowContainer.querySelector(`[data-task-id="${ctxTaskId}"]`) as HTMLElement;
+                    const cell = row?.querySelector(`[data-field="${ctxField}"]`) as HTMLElement;
+                    const input = cell?.querySelector('.vsg-input') as HTMLInputElement;
+                    if (input) {
+                        // Update display value (MM/DD/YYYY)
+                        input.value = formatDateForDisplay(dateStr);
+                        // Update stored ISO value
+                        input.dataset.isoValue = dateStr;
+                    }
+                    
+                    // Trigger change callback with ISO format for storage
+                    if (this.options.onCellChange) {
+                        this.options.onCellChange(ctxTaskId, ctxField, dateStr);
+                    }
+                }
+            },
+            onClose: () => {
+                // Clean up temp input
+                if (tempInput.parentNode) {
+                    tempInput.parentNode.removeChild(tempInput);
+                }
+                this.activeDatePickerContext = null;
+                anchorEl.classList.remove('date-picker-open');
+            },
+        }));
+        
+        // Open immediately
+        anchorEl.classList.add('date-picker-open');
+        this.sharedDatePicker.open();
+    }
+
+    /**
      * Destroy the renderer
      */
     destroy(): void {
+        // Clean up shared date picker
+        if (this.sharedDatePicker) {
+            this.sharedDatePicker.destroy();
+            this.sharedDatePicker = null;
+        }
+        
         this.pool.destroy();
         this.container.innerHTML = '';
     }

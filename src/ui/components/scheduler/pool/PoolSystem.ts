@@ -83,14 +83,7 @@ export class PoolSystem {
         const row = this.activeRows.get(dataIndex);
         if (!row) return;
 
-        // Clean up Flatpickr instances before releasing
-        for (const [field, cell] of row.cells) {
-            if (cell.flatpickr) {
-                // Don't destroy - just close if open (reuse instance)
-                cell.flatpickr.close();
-            }
-        }
-
+        // No Flatpickr cleanup needed - using shared popup
         this.activeRows.delete(dataIndex);
         row.dataIndex = -1;
         row.element.classList.add('vsg-hidden');
@@ -155,10 +148,6 @@ export class PoolSystem {
             cells.set(col.field, cell);
             row.appendChild(cell.container);
             
-            // Initialize flatpickr property as null (will be set during binding)
-            if (col.type === 'date') {
-                cell.flatpickr = null;
-            }
         });
 
         return {
@@ -222,7 +211,7 @@ export class PoolSystem {
 
             case 'date':
                 input = document.createElement('input');
-                input.type = 'text';  // Use text input for Flatpickr
+                input.type = 'text';  // Text input with smart formatting (displays MM/DD/YYYY, stores YYYY-MM-DD)
                 input.className = 'vsg-input vsg-date-input';
                 input.setAttribute('data-field', col.field);
                 input.setAttribute('placeholder', 'mm/dd/yyyy');
@@ -381,28 +370,12 @@ export class PoolSystem {
      * Destroy the pool system
      */
     destroy(): void {
-        // Import destroyDatePicker dynamically to avoid circular dependency
-        import('../datepicker/DatePickerConfig').then(({ destroyDatePicker }) => {
-            // Destroy all Flatpickr instances
-            for (const row of this.pool) {
-                for (const [field, cell] of row.cells) {
-                    if (cell.flatpickr) {
-                        destroyDatePicker(cell.flatpickr);
-                        cell.flatpickr = null;
-                    }
-                }
-                if (row.element.parentNode) {
-                    row.element.parentNode.removeChild(row.element);
-                }
+        // Remove all DOM elements - no Flatpickr instances to clean up (using shared popup)
+        for (const row of this.pool) {
+            if (row.element.parentNode) {
+                row.element.parentNode.removeChild(row.element);
             }
-        }).catch(() => {
-            // Fallback if import fails - just remove DOM elements
-            this.pool.forEach(row => {
-                if (row.element.parentNode) {
-                    row.element.parentNode.removeChild(row.element);
-                }
-            });
-        });
+        }
 
         this.pool = [];
         this.activeRows.clear();
