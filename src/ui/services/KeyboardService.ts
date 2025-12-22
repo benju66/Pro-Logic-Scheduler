@@ -232,27 +232,27 @@ export class KeyboardService {
       return;
     }
 
-    // Arrow key navigation (up/down/left/right) - cell navigation
-    if (e.key === 'ArrowUp' && this.options.onArrowUp) {
+    // Arrow key navigation (up/down/left/right) - cell navigation (skip if editing)
+    if (e.key === 'ArrowUp' && this.options.onArrowUp && !isEditing) {
       e.preventDefault();
       this.options.onArrowUp(e.shiftKey, isCtrl);
       return;
     }
 
-    if (e.key === 'ArrowDown' && this.options.onArrowDown) {
+    if (e.key === 'ArrowDown' && this.options.onArrowDown && !isEditing) {
       e.preventDefault();
       this.options.onArrowDown(e.shiftKey, isCtrl);
       return;
     }
 
-    // Arrow Left/Right - cell navigation
-    if (e.key === 'ArrowLeft' && this.options.onArrowLeft) {
+    // Arrow Left/Right - cell navigation (skip if editing)
+    if (e.key === 'ArrowLeft' && this.options.onArrowLeft && !isEditing) {
       e.preventDefault();
       this.options.onArrowLeft(e.shiftKey, isCtrl);
       return;
     }
 
-    if (e.key === 'ArrowRight' && this.options.onArrowRight) {
+    if (e.key === 'ArrowRight' && this.options.onArrowRight && !isEditing) {
       e.preventDefault();
       this.options.onArrowRight(e.shiftKey, isCtrl);
       return;

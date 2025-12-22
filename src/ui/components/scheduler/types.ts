@@ -97,6 +97,8 @@ export interface GridRendererOptions {
     onRowMove?: (taskIds: string[], targetId: string, position: 'before' | 'after') => void;
     /** Called when Enter is pressed on the last task - allows creating a new task */
     onEnterLastRow?: (lastTaskId: string, field: string) => void;
+    /** Called when cell editing ends (blur, Enter, Escape, Tab) */
+    onEditEnd?: () => void;
     
     // Metadata providers
     isParent?: (taskId: string) => boolean;
@@ -199,6 +201,7 @@ export interface VirtualScrollGridFacade {
     ): void;
     scrollToTask(taskId: string): void;
     focusCell(taskId: string, field: string): void;
+    highlightCell(taskId: string, field: string): void;
     refresh(): void;
     updateColumns(columns: GridColumn[]): void;
     updateRow(taskId: string): void;

@@ -298,7 +298,7 @@ export class GridRenderer {
     }
 
     /**
-     * Focus a specific cell
+     * Focus a specific cell (enters edit mode)
      */
     focusCell(taskId: string, field: string): void {
         const row = this.rowContainer.querySelector(`[data-task-id="${taskId}"]`) as HTMLElement | null;
@@ -316,6 +316,46 @@ export class GridRenderer {
             this.editingCell = { taskId, field };
             this.editingRows.add(taskId);
         }
+    }
+
+    /**
+     * Highlight a cell visually without entering edit mode
+     * Used for keyboard navigation - shows which cell will be edited on F2/Enter
+     * @param taskId - Task ID
+     * @param field - Column field name
+     */
+    highlightCell(taskId: string, field: string): void {
+        // Remove previous highlight
+        const prevHighlight = this.rowContainer.querySelector('.vsg-cell-selected');
+        if (prevHighlight) {
+            prevHighlight.classList.remove('vsg-cell-selected');
+        }
+        
+        // Find the row
+        const row = this.rowContainer.querySelector(`.vsg-row[data-task-id="${taskId}"]`) as HTMLElement | null;
+        if (!row) return;
+        
+        // Find the cell by field
+        const cell = row.querySelector(`[data-field="${field}"]`)?.closest('.vsg-cell') as HTMLElement;
+        if (!cell) {
+            // Try finding by input data-field
+            const input = row.querySelector(`input[data-field="${field}"], select[data-field="${field}"]`);
+            const cellEl = input?.closest('.vsg-cell') as HTMLElement;
+            if (cellEl) {
+                cellEl.classList.add('vsg-cell-selected');
+            }
+            return;
+        }
+        
+        cell.classList.add('vsg-cell-selected');
+    }
+
+    /**
+     * Clear all cell highlights
+     */
+    clearCellHighlight(): void {
+        const highlighted = this.rowContainer.querySelectorAll('.vsg-cell-selected');
+        highlighted.forEach(el => el.classList.remove('vsg-cell-selected'));
     }
 
     /**
@@ -550,6 +590,11 @@ export class GridRenderer {
             if (!isFocusingAnotherInput) {
                 this.editingCell = null;
                 this.editingRows.delete(taskId);
+                
+                // Notify service that editing ended
+                if (this.options.onEditEnd) {
+                    this.options.onEditEnd();
+                }
             }
         }, 100);
     }
@@ -641,12 +686,19 @@ export class GridRenderer {
             target.blur();
 
             const taskIndex = this.data.findIndex(t => t.id === taskId);
+            const willMoveToAnotherCell = (e.shiftKey && taskIndex > 0) || 
+                                         (!e.shiftKey && taskIndex < this.data.length - 1);
 
             if (e.shiftKey) {
                 // Shift+Enter: move to same cell in previous row
                 if (taskIndex > 0) {
                     const prevTaskId = this.data[taskIndex - 1].id;
                     setTimeout(() => this.focusCell(prevTaskId, currentField), 50);
+                } else {
+                    // Not moving to another cell - exit edit mode
+                    if (this.options.onEditEnd) {
+                        this.options.onEditEnd();
+                    }
                 }
             } else {
                 // Enter: move to same cell in next row
@@ -657,6 +709,15 @@ export class GridRenderer {
                     // ON LAST ROW - trigger callback to create new task
                     if (this.options.onEnterLastRow) {
                         this.options.onEnterLastRow(taskId, currentField);
+                    }
+                    // Exit edit mode since we're not moving to another cell
+                    if (this.options.onEditEnd) {
+                        this.options.onEditEnd();
+                    }
+                } else {
+                    // Not moving to another cell - exit edit mode
+                    if (this.options.onEditEnd) {
+                        this.options.onEditEnd();
                     }
                 }
             }
@@ -683,6 +744,11 @@ export class GridRenderer {
             }
             
             target.blur();
+            
+            // Notify service that editing ended
+            if (this.options.onEditEnd) {
+                this.options.onEditEnd();
+            }
             return;
         }
     }

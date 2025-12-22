@@ -560,6 +560,18 @@
             color: #1e293b;
         }
         
+        /* Selected cell indicator (NOT editing, just highlighted) */
+        .vsg-cell-selected {
+            outline: 2px solid #3b82f6 !important;  /* Blue outline */
+            outline-offset: -2px;
+            background-color: rgba(59, 130, 246, 0.05);
+        }
+
+        /* When row is selected AND cell is focused */
+        .vsg-row.row-selected .vsg-cell-selected {
+            outline-color: #2563eb;  /* Darker blue when row also selected */
+        }
+
         .vsg-cell {
             padding: 0 4px;
         }
