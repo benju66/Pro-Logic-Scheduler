@@ -521,6 +521,173 @@ export class SideDrawer {
     }
 
     /**
+     * Get form body HTML (for rebuilding after showEmptyState)
+     * @private
+     */
+    private _getFormBodyHTML(): string {
+        return `
+                <!-- Task Name -->
+                <div class="form-group">
+                    <label class="form-label">Task Name</label>
+                    <input type="text" id="drawer-name" class="form-input" placeholder="Enter task name">
+                </div>
+                
+                <!-- Duration & Progress -->
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Duration (Days)</label>
+                        <input type="number" id="drawer-duration" class="form-input" min="1" placeholder="1">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">% Complete</label>
+                        <input type="number" id="drawer-progress" class="form-input" min="0" max="100" placeholder="0">
+                    </div>
+                </div>
+                
+                <!-- Dates (Editable - applies constraints like grid) -->
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Start Date</label>
+                        <input type="date" id="drawer-start" class="form-input">
+                        <p class="form-hint">Editing applies SNET constraint</p>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Finish Date</label>
+                        <input type="date" id="drawer-end" class="form-input">
+                        <p class="form-hint">Editing applies FNLT deadline</p>
+                    </div>
+                </div>
+                
+                <!-- CPM Data -->
+                <div class="form-section" id="drawer-cpm-section">
+                    <h4 class="form-section-title">Schedule Analysis</h4>
+                    <div class="cpm-grid">
+                        <div class="cpm-item">
+                            <span class="cpm-label">Total Float</span>
+                            <span class="cpm-value" id="drawer-total-float">-</span>
+                        </div>
+                        <div class="cpm-item">
+                            <span class="cpm-label">Free Float</span>
+                            <span class="cpm-value" id="drawer-free-float">-</span>
+                        </div>
+                        <div class="cpm-item">
+                            <span class="cpm-label">Late Start</span>
+                            <span class="cpm-value" id="drawer-late-start">-</span>
+                        </div>
+                        <div class="cpm-item">
+                            <span class="cpm-label">Late Finish</span>
+                            <span class="cpm-value" id="drawer-late-finish">-</span>
+                        </div>
+                    </div>
+                    <div class="cpm-critical" id="drawer-critical-badge" style="display: none;">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                            <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                        </svg>
+                        Critical Path Task
+                    </div>
+                </div>
+                
+                <!-- Schedule Health -->
+                <div class="form-group" id="drawer-health-section">
+                    <label class="form-label">Schedule Health</label>
+                    <div class="health-status" id="drawer-health-status"></div>
+                </div>
+                
+                <!-- Progress Tracking Section (shown when baseline exists) -->
+                <div class="form-section" id="drawer-progress-section" style="display: none;">
+                    <h4 class="form-section-title">Progress Tracking</h4>
+                    
+                    <!-- Baseline Dates (readonly) -->
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Baseline Start</label>
+                            <input type="text" id="drawer-baseline-start" class="form-input" readonly style="background: #f1f5f9; color: #64748b;">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Baseline Finish</label>
+                            <input type="text" id="drawer-baseline-finish" class="form-input" readonly style="background: #f1f5f9; color: #64748b;">
+                        </div>
+                    </div>
+                    
+                    <!-- Actual Dates (editable) -->
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Actual Start</label>
+                            <input type="date" id="drawer-actual-start" class="form-input">
+                            <p class="form-hint">When work actually began</p>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Actual Finish</label>
+                            <input type="date" id="drawer-actual-finish" class="form-input">
+                            <p class="form-hint">When work actually completed</p>
+                        </div>
+                    </div>
+                    
+                    <!-- Variance Display (readonly) -->
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Start Variance</label>
+                            <input type="text" id="drawer-start-variance" class="form-input" readonly style="background: #f1f5f9;">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Finish Variance</label>
+                            <input type="text" id="drawer-finish-variance" class="form-input" readonly style="background: #f1f5f9;">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Constraints Section -->
+                <div class="form-section">
+                    <h4 class="form-section-title">Constraints & Logic</h4>
+                    
+                    <div class="form-group">
+                        <label class="form-label">
+                            Constraint Type
+                            <span id="drawer-constraint-icon" class="drawer-constraint-icon"></span>
+                        </label>
+                        <select id="drawer-constraintType" class="form-input form-select">
+                            <option value="asap">As Soon As Possible (Default)</option>
+                            <optgroup label="Start Constraints">
+                                <option value="snet">Start No Earlier Than (SNET)</option>
+                                <option value="snlt">Start No Later Than (SNLT)</option>
+                            </optgroup>
+                            <optgroup label="Finish Constraints">
+                                <option value="fnet">Finish No Earlier Than (FNET)</option>
+                                <option value="fnlt">Finish No Later Than (FNLT)</option>
+                                <option value="mfo">Must Finish On (MFO)</option>
+                            </optgroup>
+                        </select>
+                        <p class="form-hint" id="drawer-constraint-desc">Task flows naturally based on predecessors.</p>
+                    </div>
+                    
+                    <div class="form-group" id="drawer-constraint-date-group">
+                        <label class="form-label">Constraint Date</label>
+                        <input type="date" id="drawer-constraintDate" class="form-input">
+                    </div>
+                    
+                    <div class="form-group">
+                        <button class="btn btn-outline btn-block" id="drawer-links-btn">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
+                                <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
+                            </svg>
+                            Manage Dependencies
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Notes Section -->
+                <div class="form-section">
+                    <h4 class="form-section-title">Notes</h4>
+                    <div class="form-group">
+                        <textarea id="drawer-notes" class="form-input form-textarea" rows="3" placeholder="Add notes..."></textarea>
+                    </div>
+                </div>
+        `;
+    }
+
+    /**
      * Show empty state when no task is selected
      */
     public showEmptyState(): void {
@@ -557,7 +724,58 @@ export class SideDrawer {
             return;
         }
         
+        // If DOM was cleared by showEmptyState(), rebuild it
+        // Check if the form elements exist in the DOM
+        if (!this.element.querySelector('#drawer-name')) {
+            // DOM was cleared, rebuild the form structure
+            const body = this.element.querySelector('.drawer-body');
+            if (body) {
+                // Rebuild the form HTML (same as in _buildDOM)
+                body.innerHTML = this._getFormBodyHTML();
+                // Re-cache DOM references
+                const getElement = <T extends HTMLElement>(id: string): T => {
+                    const el = this.element.querySelector(`#${id}`) as T;
+                    if (!el) throw new Error(`Element #${id} not found`);
+                    return el;
+                };
+                this.dom = {
+                    name: getElement<HTMLInputElement>('drawer-name'),
+                    duration: getElement<HTMLInputElement>('drawer-duration'),
+                    progress: getElement<HTMLInputElement>('drawer-progress'),
+                    start: getElement<HTMLInputElement>('drawer-start'),
+                    end: getElement<HTMLInputElement>('drawer-end'),
+                    constraintType: getElement<HTMLSelectElement>('drawer-constraintType'),
+                    constraintDate: getElement<HTMLInputElement>('drawer-constraintDate'),
+                    constraintDateGroup: getElement<HTMLElement>('drawer-constraint-date-group'),
+                    constraintDesc: getElement<HTMLElement>('drawer-constraint-desc'),
+                    constraintIcon: getElement<HTMLElement>('drawer-constraint-icon'),
+                    notes: getElement<HTMLTextAreaElement>('drawer-notes'),
+                    totalFloat: getElement<HTMLElement>('drawer-total-float'),
+                    freeFloat: getElement<HTMLElement>('drawer-free-float'),
+                    lateStart: getElement<HTMLElement>('drawer-late-start'),
+                    lateFinish: getElement<HTMLElement>('drawer-late-finish'),
+                    criticalBadge: getElement<HTMLElement>('drawer-critical-badge'),
+                    cpmSection: getElement<HTMLElement>('drawer-cpm-section'),
+                    healthStatus: getElement<HTMLElement>('drawer-health-status'),
+                    healthSection: getElement<HTMLElement>('drawer-health-section'),
+                    progressSection: getElement<HTMLElement>('drawer-progress-section'),
+                    baselineStart: getElement<HTMLInputElement>('drawer-baseline-start'),
+                    baselineFinish: getElement<HTMLInputElement>('drawer-baseline-finish'),
+                    actualStart: getElement<HTMLInputElement>('drawer-actual-start'),
+                    actualFinish: getElement<HTMLInputElement>('drawer-actual-finish'),
+                    startVariance: getElement<HTMLInputElement>('drawer-start-variance'),
+                    finishVariance: getElement<HTMLInputElement>('drawer-finish-variance'),
+                    closeBtn: this.element.querySelector('.drawer-close') as HTMLButtonElement,
+                    deleteBtn: getElement<HTMLButtonElement>('drawer-delete-btn'),
+                    linksBtn: getElement<HTMLButtonElement>('drawer-links-btn'),
+                };
+                // Re-bind events
+                this._bindEvents();
+            }
+        }
+        
         this.activeTaskId = task.id;
+        this.isOpen = true;
         
         // Populate fields
         this.dom.name.value = task.name || '';

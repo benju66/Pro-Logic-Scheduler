@@ -4012,6 +4012,11 @@ export class SchedulerService {
         if (this.displaySettings.drivingPathMode) {
             this._updateGanttDrivingPathMode();
         }
+        
+        // Trigger selection change callbacks (for RightSidebarManager and other listeners)
+        // Convert Set to array for _handleSelectionChange
+        const selectedArray = Array.from(this.selectedIds);
+        this._handleSelectionChange(selectedArray);
     }
 
     /**

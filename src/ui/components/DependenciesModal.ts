@@ -754,6 +754,10 @@ export class DependenciesModal {
      * Destroy the modal
      */
     destroy(): void {
-        this.element.remove();
+        if (this.isPanel && this.panelElement) {
+            this.panelElement.remove();
+        } else if (this.element) {
+            this.element.remove();
+        }
     }
 }

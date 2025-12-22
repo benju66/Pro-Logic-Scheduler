@@ -469,10 +469,22 @@ export class GridRenderer {
             return;
         }
 
-        // If clicking directly on an input, focus it
+        // If clicking directly on an input, select the task and focus the cell
         if (target.classList.contains('vsg-input') || target.classList.contains('vsg-select')) {
             const field = target.getAttribute('data-field');
             if (field) {
+                // First, ensure the task is selected (this will update checkbox and trigger callbacks)
+                if (this.options.onRowClick) {
+                    const event = {
+                        ...e,
+                        shiftKey: false,
+                        ctrlKey: false,
+                        metaKey: false,
+                    } as MouseEvent;
+                    this.options.onRowClick(taskId, event);
+                }
+                
+                // Then focus the input
                 (target as HTMLInputElement | HTMLSelectElement).focus();
                 if ((target as HTMLInputElement).type === 'text' || (target as HTMLInputElement).type === 'number') {
                     (target as HTMLInputElement).select();
@@ -491,12 +503,24 @@ export class GridRenderer {
             return;
         }
 
-        // If clicking on a cell (but not the input), focus the input
+        // If clicking on a cell (but not the input), select the task and focus the input
         const cell = target.closest('[data-field]') as HTMLElement | null;
         if (cell) {
             const field = cell.getAttribute('data-field');
             const input = cell.querySelector('.vsg-input, .vsg-select') as HTMLInputElement | HTMLSelectElement | null;
             if (input && !input.disabled && field) {
+                // First, ensure the task is selected (this will update checkbox and trigger callbacks)
+                if (this.options.onRowClick) {
+                    const event = {
+                        ...e,
+                        shiftKey: false,
+                        ctrlKey: false,
+                        metaKey: false,
+                    } as MouseEvent;
+                    this.options.onRowClick(taskId, event);
+                }
+                
+                // Then focus the input
                 input.focus();
                 if ((input as HTMLInputElement).type === 'text' || (input as HTMLInputElement).type === 'number') {
                     (input as HTMLInputElement).select();

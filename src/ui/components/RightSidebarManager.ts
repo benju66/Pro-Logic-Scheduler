@@ -187,6 +187,12 @@ export class RightSidebarManager {
         this._unsubscribeSelection = this.scheduler.onTaskSelect((taskId, task) => {
             this._onSelectionChange(taskId, task);
         });
+        
+        // Also sync with current selection if a task is already selected
+        const currentTask = this.scheduler.getSelectedTask();
+        if (currentTask) {
+            this._onSelectionChange(currentTask.id, currentTask);
+        }
 
         // Subscribe to panel open requests (e.g., double-click to open)
         this._unsubscribePanelOpen = this.scheduler.onPanelOpenRequest((panelId) => {
@@ -273,16 +279,20 @@ export class RightSidebarManager {
         
         if (!this.activePanels.has(panelId)) {
             this.activePanels.add(panelId);
+            this._renderLayout();
             
-            // Sync with current selection
-            if (this.currentTaskId) {
+            // Sync with current selection after rendering
+            const currentTask = this.scheduler.getSelectedTask();
+            if (currentTask) {
+                this._syncPanelWithTask(panelId, currentTask);
+            } else if (this.currentTaskId) {
+                // Fallback to stored currentTaskId
                 const task = this.scheduler.getTask(this.currentTaskId);
                 if (task) {
                     this._syncPanelWithTask(panelId, task);
                 }
             }
             
-            this._renderLayout();
             this._saveState();
         }
     }
