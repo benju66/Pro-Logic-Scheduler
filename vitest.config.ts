@@ -9,7 +9,6 @@ export default defineConfig({
     // Override environment for specific test files that need DOM
     // Using happy-dom instead of jsdom for better ESM compatibility and performance
     environmentMatchGlobs: [
-      ['**/VirtualScrollGrid.test.ts', 'happy-dom'],
       ['**/*.integration.test.ts', 'happy-dom'],
     ],
     // Setup files

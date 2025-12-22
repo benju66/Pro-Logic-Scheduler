@@ -303,32 +303,6 @@ export interface ProjectData {
 // =============================================================================
 
 /**
- * Options for VirtualScrollGrid
- */
-export interface VirtualScrollGridOptions {
-  columns: GridColumn[];
-  rowHeight?: number;
-  headerHeight?: number;
-  bufferRows?: number;
-  scrollThrottle?: number;
-  editDebounce?: number;
-  onRowClick?: (taskId: string, event: MouseEvent) => void;
-  onRowDoubleClick?: (taskId: string, event: MouseEvent) => void;
-  onCellChange?: (taskId: string, field: string, value: unknown) => void;
-  onSelectionChange?: (selectedIds: Set<string>) => void;
-  onAction?: (taskId: string, action: string, event: MouseEvent) => void;
-  onToggleCollapse?: (taskId: string) => void;
-  onScroll?: (scrollTop: number) => void;
-  onHorizontalScroll?: (scrollLeft: number) => void;
-  onRowMove?: (taskIds: string[], targetId: string, position: 'before' | 'after' | 'child') => void;
-  /** Called when cell editing ends (blur, Enter, Escape, Tab) */
-  onEditEnd?: () => void;
-  getRowClass?: (task: Task) => string;
-  isParent?: (id: string) => boolean;
-  getDepth?: (id: string) => number;
-}
-
-/**
  * Options for CanvasGantt
  */
 export interface CanvasGanttOptions {
