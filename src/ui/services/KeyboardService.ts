@@ -93,7 +93,10 @@ export class KeyboardService {
       return;
     }
 
-    const isEditing = this._isEditing(e.target as HTMLElement);
+    // Check document.activeElement instead of e.target to get actual focus state
+    // e.target is the original event target, but focus may have moved (e.g., after blur)
+    const activeElement = document.activeElement as HTMLElement;
+    const isEditing = this._isEditing(activeElement);
     const isCtrl = e.ctrlKey || e.metaKey;
 
     // Undo/Redo (always active)

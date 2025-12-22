@@ -3550,9 +3550,12 @@ export class SchedulerService {
         }
         
         // CRITICAL: Focus the grid container so arrow keys work
+        // Use setTimeout to ensure blur completes before focusing
         // Without this, focus stays on body and arrow keys may not be captured
         if (this.grid) {
-            this.grid.focus();
+            setTimeout(() => {
+                this.grid?.focus();
+            }, 0);
         }
     }
 
