@@ -45,6 +45,9 @@ export class GridRenderer {
     private activeDatePickerContext: { taskId: string; field: string } | null = null;
     private calendar: Calendar | null = null;
     
+    // Flag to prevent double-save on Tab/Enter + blur
+    private _dateSaveInProgress: Set<string> = new Set(); // key: "taskId:field"
+    
     // Drag UX state
     private _lastDropPosition: 'before' | 'after' | 'child' | null = null;
     private _lastDropTargetId: string | null = null;
@@ -526,9 +529,9 @@ export class GridRenderer {
         const taskId = row.dataset.taskId;
         if (!taskId) return;
 
-        // For date inputs, parse and save with format conversion
+        // For date inputs, save with format conversion (fromKeyboard: false)
         if (input.classList.contains('vsg-date-input')) {
-            this._saveDateInput(input as HTMLInputElement, taskId, field);
+            this._saveDateInput(input as HTMLInputElement, taskId, field, false); // false = from blur
         }
         // For text/number inputs, fire change on blur
         else if ((input as HTMLInputElement).type === 'text' || (input as HTMLInputElement).type === 'number') {
@@ -582,7 +585,7 @@ export class GridRenderer {
 
             // For date inputs, parse and save before navigating
             if (target.classList.contains('vsg-date-input')) {
-                this._saveDateInput(target as HTMLInputElement, taskId, currentField);
+                this._saveDateInput(target as HTMLInputElement, taskId, currentField, true); // true = fromKeyboard
             }
 
             // Get all editable columns (excluding checkbox, drag, actions, etc.)
@@ -627,7 +630,7 @@ export class GridRenderer {
 
             // For date inputs, parse and save
             if (target.classList.contains('vsg-date-input')) {
-                this._saveDateInput(target as HTMLInputElement, taskId, currentField);
+                this._saveDateInput(target as HTMLInputElement, taskId, currentField, true); // true = fromKeyboard
             } else {
                 // Save current edit for non-date inputs
                 if (this.options.onCellChange) {
@@ -687,8 +690,24 @@ export class GridRenderer {
     /**
      * Parse and save a date input value
      * Converts from display format (flexible) to ISO format for storage
+     * Uses a flag to prevent double-save when Tab/Enter triggers both keydown and blur
      */
-    private _saveDateInput(input: HTMLInputElement, taskId: string, field: string): void {
+    private _saveDateInput(input: HTMLInputElement, taskId: string, field: string, fromKeyboard: boolean = false): void {
+        const saveKey = `${taskId}:${field}`;
+        
+        // If this is from blur and we already saved from keyboard, skip
+        if (!fromKeyboard && this._dateSaveInProgress.has(saveKey)) {
+            this._dateSaveInProgress.delete(saveKey);
+            return;
+        }
+        
+        // If this is from keyboard, mark as in progress (blur will skip)
+        if (fromKeyboard) {
+            this._dateSaveInProgress.add(saveKey);
+            // Clear the flag after a short delay (in case blur doesn't fire)
+            setTimeout(() => this._dateSaveInProgress.delete(saveKey), 100);
+        }
+        
         const displayValue = input.value.trim();
         
         if (!displayValue) {
@@ -700,11 +719,28 @@ export class GridRenderer {
             return;
         }
         
+        // Check if value actually changed from stored value
+        const storedIso = input.dataset.isoValue || '';
+        const storedDisplay = storedIso ? formatDateForDisplay(storedIso) : '';
+        
+        // If display value matches what's stored, no need to save
+        if (displayValue === storedDisplay) {
+            return;
+        }
+        
         // Try to parse the input (supports multiple formats)
         const parsed = parseFlexibleDate(displayValue);
         
         if (parsed) {
             const isoValue = formatDateISO(parsed);
+            
+            // Check if ISO value actually changed
+            if (isoValue === storedIso) {
+                // Same date, just reformat display
+                input.value = formatDateForDisplay(isoValue);
+                return;
+            }
+            
             // Update display to normalized format
             input.value = formatDateForDisplay(isoValue);
             input.dataset.isoValue = isoValue;

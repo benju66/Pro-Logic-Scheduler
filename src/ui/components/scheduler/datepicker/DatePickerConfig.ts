@@ -33,9 +33,10 @@ export function formatDateForDisplay(isoDateStr: string): string {
     // If not ISO format, try to parse and reformat
     const parsed = parseFlexibleDate(isoDateStr);
     if (parsed) {
-        const month = String(parsed.getMonth() + 1).padStart(2, '0');
-        const day = String(parsed.getDate()).padStart(2, '0');
-        const year = parsed.getFullYear();
+        // Use UTC methods since dates are created at noon UTC
+        const month = String(parsed.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(parsed.getUTCDate()).padStart(2, '0');
+        const year = parsed.getUTCFullYear();
         return `${month}/${day}/${year}`;
     }
     
@@ -136,17 +137,26 @@ export function createDatePickerOptions(options: {
 
 /**
  * Format a Date object to ISO string (YYYY-MM-DD)
+ * 
+ * IMPORTANT: Uses UTC methods to ensure consistent date representation
+ * regardless of timezone. This prevents date shifts when dates are created
+ * at noon UTC (as in parseFlexibleDate and DateUtils).
  */
 export function formatDateISO(date: Date): string {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
+    // Use UTC methods to avoid timezone shifts
+    // Since dates are created at noon UTC, UTC methods will give the correct date
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
 }
 
 /**
  * Parse a date string flexibly
  * Supports: YYYY-MM-DD, MM/DD/YYYY, M/D/YYYY, MM-DD-YYYY, etc.
+ * 
+ * IMPORTANT: Creates dates at noon UTC to avoid timezone issues.
+ * This matches the pattern used in DateUtils to prevent date shifts.
  */
 export function parseFlexibleDate(dateStr: string): Date | undefined {
     if (!dateStr || dateStr.trim() === '') return undefined;
@@ -155,8 +165,8 @@ export function parseFlexibleDate(dateStr: string): Date | undefined {
     
     // Try ISO format first (YYYY-MM-DD)
     if (/^\d{4}-\d{2}-\d{2}$/.test(cleaned)) {
-        const [year, month, day] = cleaned.split('-').map(Number);
-        return new Date(year, month - 1, day);
+        // Use noon UTC to avoid timezone shifts (same pattern as DateUtils)
+        return new Date(cleaned + 'T12:00:00');
     }
     
     // Try US format (MM/DD/YYYY or M/D/YYYY)
@@ -164,7 +174,9 @@ export function parseFlexibleDate(dateStr: string): Date | undefined {
     if (usMatch) {
         const [, month, day, year] = usMatch.map(Number);
         if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-            return new Date(year, month - 1, day);
+            // Format as ISO and use noon UTC to avoid timezone shifts
+            const isoStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            return new Date(isoStr + 'T12:00:00');
         }
     }
     
@@ -175,14 +187,21 @@ export function parseFlexibleDate(dateStr: string): Date | undefined {
         // Assume 20XX for years 00-99
         const year = shortYear + 2000;
         if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-            return new Date(year, month - 1, day);
+            // Format as ISO and use noon UTC to avoid timezone shifts
+            const isoStr = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            return new Date(isoStr + 'T12:00:00');
         }
     }
     
-    // Fallback to native Date parsing
-    const parsed = new Date(cleaned);
-    if (!isNaN(parsed.getTime())) {
-        return parsed;
+    // Fallback: try parsing as ISO string with noon UTC
+    // This handles formats like "2026-1-26" or other variations
+    try {
+        const parsed = new Date(cleaned + 'T12:00:00');
+        if (!isNaN(parsed.getTime())) {
+            return parsed;
+        }
+    } catch {
+        // Ignore parsing errors
     }
     
     return undefined;
