@@ -321,6 +321,8 @@ export interface VirtualScrollGridOptions {
   onScroll?: (scrollTop: number) => void;
   onHorizontalScroll?: (scrollLeft: number) => void;
   onRowMove?: (taskIds: string[], targetId: string, position: 'before' | 'after' | 'child') => void;
+  /** Called when cell editing ends (blur, Enter, Escape, Tab) */
+  onEditEnd?: () => void;
   getRowClass?: (task: Task) => string;
   isParent?: (id: string) => boolean;
   getDepth?: (id: string) => number;

@@ -207,6 +207,7 @@ export class VirtualScrollGrid {
         // Create viewport (the visible scrolling area)
         const viewport = document.createElement('div');
         viewport.className = 'vsg-viewport';
+        viewport.setAttribute('tabindex', '-1');
         viewport.style.cssText = `
             height: 100%;
             overflow-y: auto;
@@ -786,12 +787,18 @@ export class VirtualScrollGrid {
             // Only clear if we're not focusing another input in this grid
             const activeElement = document.activeElement;
             const isFocusingAnotherInput = activeElement && 
-                activeElement.classList.contains('vsg-input') && 
+                (activeElement.classList.contains('vsg-input') ||
+                 activeElement.classList.contains('vsg-select')) && 
                 activeElement.closest('.vsg-row');
             
             if (!isFocusingAnotherInput) {
                 this.editingCell = null;
                 this.editingRows.delete(taskId);
+                
+                // Notify SchedulerService that editing ended
+                if (this.options.onEditEnd) {
+                    this.options.onEditEnd();
+                }
             }
         }, 100);
     }
@@ -2193,6 +2200,13 @@ export class VirtualScrollGrid {
                 this.editingRows.add(taskId);
             }
         });
+    }
+
+    /**
+     * Focus the grid container for keyboard navigation
+     */
+    focus(): void {
+        this.dom?.viewport?.focus();
     }
 
     /**
