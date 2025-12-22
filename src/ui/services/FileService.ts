@@ -3,7 +3,8 @@
  * @module ui/services/FileService
  */
 
-import type { Task, ProjectData } from '../../types';
+import type { Task, ProjectData, Calendar, CalendarException } from '../../types';
+import { DEFAULT_WORKING_DAYS } from '../../core/Constants';
 
 /**
  * File service options
@@ -255,9 +256,9 @@ export class FileService {
   /**
    * Import MS Project XML file
    * @param file - XML file object
-   * @returns Schedule data with imported tasks
+   * @returns Schedule data with imported tasks and calendar
    */
-  async importFromMSProjectXML(file: File): Promise<{ tasks: Task[] }> {
+  async importFromMSProjectXML(file: File): Promise<{ tasks: Task[], calendar: Calendar }> {
     try {
       const text = await file.text();
       const parser = new DOMParser();
@@ -398,9 +399,12 @@ export class FileService {
         });
       });
 
+      // Fourth pass: Parse calendars and exceptions
+      const calendar = this._parseCalendars(xmlDoc);
+
       this.onToast(`Imported ${importedTasks.length} tasks from MS Project`, 'success');
 
-      return { tasks: importedTasks };
+      return { tasks: importedTasks, calendar };
     } catch (err) {
       const error = err as Error;
       console.error('[FileService] MS Project XML import failed:', error);
@@ -534,6 +538,129 @@ export class FileService {
   private _getXMLValue(parent: Element, tagName: string): string {
     const el = parent.querySelector(tagName) || parent.getElementsByTagName(tagName)[0];
     return el ? (el.textContent || '') : '';
+  }
+
+  /**
+   * Parse calendars and exceptions from MS Project XML
+   * @private
+   * @param xmlDoc - Parsed XML document
+   * @returns Calendar object with exceptions
+   */
+  private _parseCalendars(xmlDoc: Document): Calendar {
+    const calendar: Calendar = {
+      workingDays: [...DEFAULT_WORKING_DAYS],
+      exceptions: {},
+    };
+
+    try {
+      // Find Calendars section
+      let calendarsElement: Element | null = xmlDoc.querySelector('Calendars');
+      if (!calendarsElement) {
+        const calendarsCollection = xmlDoc.getElementsByTagName('Calendars');
+        calendarsElement = calendarsCollection.length > 0 ? calendarsCollection[0] : null;
+      }
+
+      if (!calendarsElement) {
+        // No calendars found, return default calendar
+        return calendar;
+      }
+
+      // Find all Calendar elements
+      const calendarElements = calendarsElement.querySelectorAll('Calendar');
+      const calendarElementsArray = Array.from(calendarElements);
+
+      // Find the base calendar (IsBaseCalendar = 1)
+      let baseCalendar: Element | null = null;
+      for (const calEl of calendarElementsArray) {
+        const isBaseCalendar = this._getXMLValue(calEl as Element, 'IsBaseCalendar');
+        if (isBaseCalendar === '1') {
+          baseCalendar = calEl as Element;
+          break;
+        }
+      }
+
+      // If no base calendar found, try the first calendar
+      if (!baseCalendar && calendarElementsArray.length > 0) {
+        baseCalendar = calendarElementsArray[0] as Element;
+      }
+
+      if (!baseCalendar) {
+        return calendar;
+      }
+
+      // Parse exceptions from the base calendar
+      // MS Project XML structure: <Calendar><Exceptions><Exception>...</Exception></Exceptions></Calendar>
+      let exceptionsContainer: Element | null = baseCalendar.querySelector('Exceptions');
+      if (!exceptionsContainer) {
+        const exceptionsCollection = baseCalendar.getElementsByTagName('Exceptions');
+        exceptionsContainer = exceptionsCollection.length > 0 ? exceptionsCollection[0] : null;
+      }
+
+      if (!exceptionsContainer) {
+        return calendar;
+      }
+
+      const exceptions = exceptionsContainer.querySelectorAll('Exception');
+      const exceptionsArray = Array.from(exceptions);
+
+      exceptionsArray.forEach((exceptionEl) => {
+        const timePeriod = exceptionEl.querySelector('TimePeriod');
+        if (!timePeriod) return;
+
+        const fromDateStr = this._getXMLValue(timePeriod as Element, 'FromDate');
+        const toDateStr = this._getXMLValue(timePeriod as Element, 'ToDate');
+        const exceptionName = this._getXMLValue(exceptionEl as Element, 'Name');
+
+        if (!fromDateStr) return;
+
+        // Parse dates (MS Project format: YYYY-MM-DDTHH:mm:ss or YYYY-MM-DD)
+        const fromDate = fromDateStr.split('T')[0];
+        const toDate = toDateStr ? toDateStr.split('T')[0] : fromDate;
+
+        // Generate all dates in the range (inclusive)
+        const dates = this._generateDateRange(fromDate, toDate);
+
+        // Add each date as a non-working day exception
+        dates.forEach((dateStr) => {
+          calendar.exceptions[dateStr] = {
+            date: dateStr,
+            working: false,
+            description: exceptionName || 'Holiday',
+          };
+        });
+      });
+    } catch (err) {
+      console.warn('[FileService] Failed to parse calendars:', err);
+      // Return default calendar if parsing fails
+    }
+
+    return calendar;
+  }
+
+  /**
+   * Generate array of date strings between two dates (inclusive)
+   * @private
+   * @param fromDate - Start date (YYYY-MM-DD)
+   * @param toDate - End date (YYYY-MM-DD)
+   * @returns Array of date strings
+   */
+  private _generateDateRange(fromDate: string, toDate: string): string[] {
+    const dates: string[] = [];
+    const start = new Date(fromDate);
+    const end = new Date(toDate);
+
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+      return [fromDate]; // Return single date if parsing fails
+    }
+
+    const current = new Date(start);
+    while (current <= end) {
+      const dateStr = current.toISOString().split('T')[0];
+      dates.push(dateStr);
+      current.setDate(current.getDate() + 1);
+    }
+
+    return dates;
   }
 
   /**

@@ -4890,6 +4890,11 @@ export class SchedulerService {
             const tasks = data.tasks || [];
             const tasksWithSortKeys = this._assignSortKeysToImportedTasks(tasks);
             
+            // Import calendar if provided
+            if (data.calendar) {
+                this.calendarStore.set(data.calendar, true); // skipEvent=true to avoid duplicate persistence
+            }
+            
             this.taskStore.setAll(tasksWithSortKeys);
             // Note: recalculateAll() and render() will be triggered automatically by _onTasksChanged()
             this.saveData();
