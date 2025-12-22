@@ -23,6 +23,10 @@ Task ordering is managed via lexicographical string keys (e.g., `"a0"`, `"a0V"`)
 - **Services**: Application orchestration and user intent handling.
 - **UI**: Visual presentation and DOM event delegation.
 
+### 5. **Centralized State Management**
+The application uses singleton patterns for cross-component state coordination:
+- **EditingStateManager**: Single source of truth for cell editing state. Eliminates synchronization bugs between GridRenderer, KeyboardService, and SchedulerService. Uses observer pattern for reactive updates.
+
 ## Directory Structure
 
 ```text
@@ -40,6 +44,7 @@ src/
 ├── services/                # Application Orchestration
 │   ├── SchedulerService.ts # Main Controller (The "Brain")
 │   ├── OrderingService.ts  # Fractional Indexing logic
+│   ├── EditingStateManager.ts # Centralized editing state (Singleton)
 │   └── UIEventManager.ts   # Global event coordination
 │
 ├── ui/                      # User Interface Layer
@@ -51,7 +56,6 @@ src/
 │   │   │   ├── pool/                 # DOM Pooling System
 │   │   │   └── types.ts              # Viewport Interfaces
 │   │   │
-│   │   ├── VirtualScrollGrid.ts      # Facade (Legacy Adapter)
 │   │   └── CanvasGantt.ts            # Facade (Legacy Adapter)
 │   │
 │   └── services/           # UI-specific services

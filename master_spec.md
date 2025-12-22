@@ -71,6 +71,11 @@ interface Task {
 
 * **TaskStore:** Central repository. Manages CRUD and hierarchy queries (`getChildren`, `getVisibleTasks`). Emits `onChange` events.
 * **CalendarStore:** Manages working days, holidays, and weekends.
+* **EditingStateManager (Singleton Pattern):**
+    * **Single Source of Truth:** Centralized state management for cell editing across GridRenderer, KeyboardService, and SchedulerService.
+    * **Observer Pattern:** Components subscribe to editing state changes for reactive updates.
+    * **Prevents Race Conditions:** Eliminates timing-dependent bugs from distributed editing state management.
+    * **Lifecycle Management:** Automatically resets editing state when data is loaded or tasks are deleted.
 * **HistoryManager (Command Pattern):**
     * **No Snapshots:** To support high performance and SQLite auditability, the system does NOT store full JSON snapshots of the state.
     * **Command Pattern:** Every user intent (e.g., "Indent Task", "Update Duration") is reified as a Command object.
@@ -189,9 +194,15 @@ The `KeyboardService` maps keys to Service actions:
 * `Enter`: Add sibling task (below).
 * `Ctrl+Enter`: Add child task.
 * `Ins`: Insert task.
-* `Tab / Shift+Tab`: Indent / Outdent.
+* `Tab / Shift+Tab`: Indent / Outdent (when not editing).
 * `F2`: Edit active cell.
-* `Arrow Keys`: Navigate focus.
+* `Arrow Keys`: Navigate focus (when not editing).
+* `Escape`: Cancel edit (revert to original value).
+* `Enter` (while editing): Commit and move to next row.
+* `Tab` (while editing): Commit and move to next editable cell.
+
+**Editing State Management:**
+The `EditingStateManager` (singleton) serves as the single source of truth for cell editing state. It coordinates between `GridRenderer`, `KeyboardService`, and `SchedulerService` to prevent state synchronization bugs. Uses observer pattern for reactive state updates.
 
 ---
 
