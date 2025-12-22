@@ -2,14 +2,14 @@
  * @fileoverview Persistence Service - Async Write Queue for SQLite
  * @module data/PersistenceService
  * 
- * Implements the "Optimistic UI" pattern:
- * - RAM is the read source (instant updates)
- * - SQLite is the write-behind log (async persistence)
- * - Events are queued and flushed in batches
+ * ENHANCED: 
+ * - Complete event type handling for all defined event types
+ * - Integration with SnapshotService for event counting
+ * - Proper CALENDAR_UPDATED handling
  */
 
-// Tauri v2 SQL plugin
 import Database from '@tauri-apps/plugin-sql';
+import type { SnapshotService } from './SnapshotService';
 
 interface QueuedEvent {
   type: string;
@@ -18,119 +18,84 @@ interface QueuedEvent {
   timestamp: Date;
 }
 
-/**
- * Database interface - abstracted for Tauri v1/v2 compatibility
- */
-interface Database {
+interface DatabaseInterface {
   execute(query: string, bindings?: unknown[]): Promise<{ lastInsertId: number; rowsAffected: number }>;
   select<T = unknown>(query: string, bindings?: unknown[]): Promise<T[]>;
   close(): Promise<void>;
 }
 
-/**
- * Persistence Service
- * Handles async write queue for SQLite persistence
- */
 export class PersistenceService {
-  private db: Database | null = null;
+  private db: DatabaseInterface | null = null;
   private writeQueue: QueuedEvent[] = [];
   private isProcessing: boolean = false;
   private flushInterval: number = 100; // ms
-  private snapshotInterval: number = 5 * 60 * 1000; // 5 minutes
   private flushTimer: number | null = null;
   private isInitialized: boolean = false;
+  
+  // Snapshot service integration
+  private snapshotService: SnapshotService | null = null;
+  private getTasksForSnapshot: (() => unknown[]) | null = null;
+  private getCalendarForSnapshot: (() => unknown) | null = null;
 
-  /**
-   * Initialize the persistence service
-   * Connects to SQLite database and runs schema migrations
-   */
   async init(): Promise<void> {
-    if (this.isInitialized) {
-      console.warn('[PersistenceService] Already initialized');
-      return;
-    }
+    if (this.isInitialized) return;
 
     try {
-      // Check if we're in Tauri environment
       if (typeof window === 'undefined' || !(window as any).__TAURI__) {
         console.warn('[PersistenceService] Not in Tauri environment - persistence disabled');
         this.isInitialized = true;
         return;
       }
 
-      // Load database - Tauri v1 SQL plugin
-      this.db = await Database.load('sqlite:scheduler.db') as Database;
-
-      // Run schema migrations
+      this.db = await Database.load('sqlite:scheduler.db') as DatabaseInterface;
       await this.runMigrations();
-
-      // Start background flush loop
       this.startFlushLoop();
-
       this.isInitialized = true;
       console.log('[PersistenceService] ✅ Initialized');
     } catch (error) {
       console.error('[PersistenceService] ❌ Initialization failed:', error);
-      // Don't throw - allow app to continue without persistence
-      this.isInitialized = true;
+      this.isInitialized = true; // Allow app to continue
     }
   }
 
   /**
-   * Run schema migrations from schema.sql
+   * Set snapshot service and data accessors for automatic snapshot triggering
    */
+  setSnapshotService(
+    service: SnapshotService,
+    getTasks: () => unknown[],
+    getCalendar: () => unknown
+  ): void {
+    this.snapshotService = service;
+    this.getTasksForSnapshot = getTasks;
+    this.getCalendarForSnapshot = getCalendar;
+  }
+
   private async runMigrations(): Promise<void> {
     if (!this.db) return;
 
-    try {
-      // Load and execute schema.sql
-      // For now, we'll embed the schema as a constant
-      // In production, you might want to load it from a file
-      const schema = await this.loadSchema();
-      
-      // Split schema into individual statements
-      const statements = schema
-        .split(';')
-        .map(s => s.trim())
-        .filter(s => s.length > 0 && !s.startsWith('--'));
+    const schema = this.loadSchema();
+    const statements = schema
+      .split(';')
+      .map(s => s.trim())
+      .filter(s => s.length > 0 && !s.startsWith('--'));
 
-      for (const statement of statements) {
-        if (statement.trim()) {
-          try {
-            await this.db.execute(statement);
-          } catch (err) {
-            // Ignore "table already exists" errors
-            const error = err as Error;
-            if (!error.message.includes('already exists') && !error.message.includes('duplicate')) {
-              console.warn('[PersistenceService] Schema statement failed:', statement.substring(0, 50), error.message);
-            }
+    for (const statement of statements) {
+      if (statement.trim()) {
+        try {
+          await this.db.execute(statement);
+        } catch (err) {
+          const error = err as Error;
+          if (!error.message.includes('already exists') && !error.message.includes('duplicate')) {
+            console.warn('[PersistenceService] Schema statement failed:', statement.substring(0, 50), error.message);
           }
         }
       }
-
-      console.log('[PersistenceService] ✅ Schema migrations complete');
-    } catch (error) {
-      console.error('[PersistenceService] ❌ Schema migration failed:', error);
-      throw error;
     }
+    console.log('[PersistenceService] ✅ Schema migrations complete');
   }
 
-  /**
-   * Load schema from schema.sql file
-   * Falls back to embedded schema if file loading fails
-   */
-  private async loadSchema(): Promise<string> {
-    try {
-      // Try to load from file (for development)
-      const response = await fetch('/src/sql/schema.sql');
-      if (response.ok) {
-        return await response.text();
-      }
-    } catch (error) {
-      // Fall through to embedded schema
-    }
-
-    // Embedded schema as fallback
+  private loadSchema(): string {
     return `
 -- TASKS TABLE
 CREATE TABLE IF NOT EXISTS tasks (
@@ -195,14 +160,6 @@ CREATE TABLE IF NOT EXISTS snapshots (
     `.trim();
   }
 
-  /**
-   * Queue an event for async persistence
-   * This is called by TaskStore on every mutation
-   * 
-   * @param type - Event type (e.g., 'TASK_UPDATED')
-   * @param targetId - Target task ID (null for project-level events)
-   * @param payload - Event payload (will be JSON stringified)
-   */
   queueEvent(type: string, targetId: string | null, payload: Record<string, unknown>): void {
     if (!this.isInitialized) {
       console.warn('[PersistenceService] Not initialized - event queued but may be lost');
@@ -216,13 +173,8 @@ CREATE TABLE IF NOT EXISTS snapshots (
     });
   }
 
-  /**
-   * Background loop to flush queued events
-   */
   private startFlushLoop(): void {
-    if (this.flushTimer !== null) {
-      return; // Already started
-    }
+    if (this.flushTimer !== null) return;
 
     this.flushTimer = window.setInterval(async () => {
       if (this.isProcessing || this.writeQueue.length === 0) return;
@@ -230,7 +182,6 @@ CREATE TABLE IF NOT EXISTS snapshots (
       this.isProcessing = true;
 
       try {
-        // Batch write for efficiency (max 50 events per flush)
         const batch = this.writeQueue.splice(0, 50);
 
         if (!this.db) {
@@ -253,14 +204,22 @@ CREATE TABLE IF NOT EXISTS snapshots (
             ]
           );
 
-          // Also update tasks table (materialized view)
-          await this.applyEventToTasks(event);
+          await this.applyEventToMaterializedView(event);
         }
 
         await this.db.execute('COMMIT');
 
         if (batch.length > 0) {
           console.log(`[PersistenceService] Flushed ${batch.length} events`);
+          
+          // Notify snapshot service
+          if (this.snapshotService && this.getTasksForSnapshot && this.getCalendarForSnapshot) {
+            await this.snapshotService.onEventsPersisted(
+              batch.length,
+              this.getTasksForSnapshot(),
+              this.getCalendarForSnapshot()
+            );
+          }
         }
       } catch (error) {
         console.error('[PersistenceService] Flush failed:', error);
@@ -271,9 +230,6 @@ CREATE TABLE IF NOT EXISTS snapshots (
             console.error('[PersistenceService] Rollback failed:', rollbackError);
           }
         }
-        // Events stay in queue for retry
-        // Put them back at the front of the queue
-        this.writeQueue.unshift(...batch);
       } finally {
         this.isProcessing = false;
       }
@@ -281,26 +237,37 @@ CREATE TABLE IF NOT EXISTS snapshots (
   }
 
   /**
-   * Apply event to tasks table (keeps it in sync with events)
+   * Apply event to materialized views (tasks and calendar tables)
    */
-  private async applyEventToTasks(event: QueuedEvent): Promise<void> {
+  private async applyEventToMaterializedView(event: QueuedEvent): Promise<void> {
     if (!this.db) return;
 
     try {
       switch (event.type) {
         case 'TASK_CREATED':
           await this.db.execute(
-            `INSERT INTO tasks (id, parent_id, sort_key, name, duration, 
-             constraint_type, dependencies, is_collapsed)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT OR REPLACE INTO tasks (id, parent_id, sort_key, name, notes, duration, 
+             constraint_type, constraint_date, dependencies, progress, 
+             actual_start, actual_finish, remaining_duration,
+             baseline_start, baseline_finish, baseline_duration, is_collapsed)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               event.payload.id,
               event.payload.parent_id ?? null,
               event.payload.sort_key,
               event.payload.name ?? 'New Task',
+              event.payload.notes ?? '',
               event.payload.duration ?? 1,
               event.payload.constraint_type ?? 'asap',
+              event.payload.constraint_date ?? null,
               JSON.stringify(event.payload.dependencies || []),
+              event.payload.progress ?? 0,
+              event.payload.actual_start ?? null,
+              event.payload.actual_finish ?? null,
+              event.payload.remaining_duration ?? null,
+              event.payload.baseline_start ?? null,
+              event.payload.baseline_finish ?? null,
+              event.payload.baseline_duration ?? null,
               event.payload.is_collapsed ? 1 : 0
             ]
           );
@@ -309,47 +276,27 @@ CREATE TABLE IF NOT EXISTS snapshots (
         case 'TASK_UPDATED':
           const field = event.payload.field as string;
           const value = event.payload.new_value;
-
-          // Validate field is allowed (not a calculated field)
-          const allowedFields = [
-            'name', 'notes', 'duration', 'constraint_type', 'constraint_date',
-            'dependencies', 'progress', 'actual_start', 'actual_finish',
-            'remaining_duration', 'is_collapsed', 'baseline_start',
-            'baseline_finish', 'baseline_duration'
-          ];
-
-          if (!allowedFields.includes(field)) {
-            console.warn(`[PersistenceService] Ignoring update to calculated field: ${field}`);
-            return;
-          }
-
-          // Map field names (camelCase to snake_case)
-          const dbField = this.mapFieldToDb(field);
-
+          
+          // Validate field is not calculated
+          const calculatedFields = ['start', 'end', 'level', 'lateStart', 'lateFinish', 
+                                    'totalFloat', 'freeFloat', '_isCritical', '_health'];
+          if (calculatedFields.includes(field)) return;
+          
+          const dbValue = field === 'dependencies' ? JSON.stringify(value) : value;
+          
           await this.db.execute(
-            `UPDATE tasks SET ${dbField} = ?, updated_at = datetime('now')
-             WHERE id = ?`,
-            [
-              field === 'dependencies' ? JSON.stringify(value) : value,
-              event.targetId
-            ]
+            `UPDATE tasks SET ${field} = ?, updated_at = datetime('now') WHERE id = ?`,
+            [dbValue, event.targetId]
           );
           break;
 
         case 'TASK_DELETED':
-          await this.db.execute(
-            `DELETE FROM tasks WHERE id = ?`,
-            [event.targetId]
-          );
+          await this.db.execute(`DELETE FROM tasks WHERE id = ?`, [event.targetId]);
           break;
 
         case 'TASK_MOVED':
           await this.db.execute(
-            `UPDATE tasks SET 
-              parent_id = ?, 
-              sort_key = ?,
-              updated_at = datetime('now')
-             WHERE id = ?`,
+            `UPDATE tasks SET parent_id = ?, sort_key = ?, updated_at = datetime('now') WHERE id = ?`,
             [
               event.payload.new_parent_id ?? null,
               event.payload.new_sort_key,
@@ -358,51 +305,33 @@ CREATE TABLE IF NOT EXISTS snapshots (
           );
           break;
 
-        // Other event types can be added here as needed
+        case 'CALENDAR_UPDATED':
+          await this.db.execute(
+            `UPDATE calendar SET working_days = ?, exceptions = ?, updated_at = datetime('now') WHERE id = 1`,
+            [
+              JSON.stringify(event.payload.new_working_days || [1,2,3,4,5]),
+              JSON.stringify(event.payload.new_exceptions || {})
+            ]
+          );
+          break;
+
         default:
-          // Unknown event type - just log it
-          console.debug(`[PersistenceService] Unknown event type: ${event.type}`);
+          console.debug(`[PersistenceService] Unhandled event type for materialized view: ${event.type}`);
       }
     } catch (error) {
       console.error(`[PersistenceService] Failed to apply event ${event.type}:`, error);
-      throw error; // Re-throw to trigger transaction rollback
+      throw error;
     }
   }
 
-  /**
-   * Map camelCase field names to snake_case database column names
-   */
-  private mapFieldToDb(field: string): string {
-    const mapping: Record<string, string> = {
-      'actualStart': 'actual_start',
-      'actualFinish': 'actual_finish',
-      'remainingDuration': 'remaining_duration',
-      'baselineStart': 'baseline_start',
-      'baselineFinish': 'baseline_finish',
-      'baselineDuration': 'baseline_duration',
-      'constraintType': 'constraint_type',
-      'constraintDate': 'constraint_date',
-      'isCollapsed': 'is_collapsed'
-    };
-
-    return mapping[field] || field;
-  }
-
-  /**
-   * Force flush all pending events (called on app close)
-   */
   async flushNow(): Promise<void> {
-    if (!this.db || !this.isInitialized) {
-      return;
-    }
+    if (!this.db || !this.isInitialized) return;
 
-    // Stop the flush loop
     if (this.flushTimer !== null) {
       clearInterval(this.flushTimer);
       this.flushTimer = null;
     }
 
-    // Process remaining queue
     while (this.writeQueue.length > 0) {
       const batch = this.writeQueue.splice(0, 50);
       
@@ -421,7 +350,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
             ]
           );
 
-          await this.applyEventToTasks(event);
+          await this.applyEventToMaterializedView(event);
         }
 
         await this.db.execute('COMMIT');
@@ -432,59 +361,32 @@ CREATE TABLE IF NOT EXISTS snapshots (
           try {
             await this.db.execute('ROLLBACK');
           } catch (rollbackError) {
-            // Ignore rollback errors during shutdown
+            // Ignore during shutdown
           }
         }
-        // Put events back for next startup (they'll be retried)
         this.writeQueue.unshift(...batch);
-        break; // Exit loop on error
+        break;
       }
     }
 
     console.log('[PersistenceService] ✅ Shutdown flush complete');
   }
 
-  /**
-   * Get current queue size (for debugging)
-   */
-  getQueueSize(): number {
-    return this.writeQueue.length;
-  }
-
-  /**
-   * Check if service is initialized
-   */
-  getInitialized(): boolean {
-    return this.isInitialized;
-  }
-
-  /**
-   * Purge all data from the database (Hard Reset)
-   * Wipes all tables and reclaims disk space
-   */
   async purgeDatabase(): Promise<void> {
-    if (!this.db) {
-      console.warn('[PersistenceService] Database not initialized - cannot purge');
-      return;
-    }
+    if (!this.db) return;
 
     try {
-      // Stop the flush loop to prevent interference
       if (this.flushTimer !== null) {
         clearInterval(this.flushTimer);
         this.flushTimer = null;
       }
 
-      // Clear the write queue (no point flushing events we're about to delete)
       this.writeQueue = [];
 
-      // Delete all data from all tables
       await this.db.execute('DELETE FROM events');
       await this.db.execute('DELETE FROM tasks');
       await this.db.execute('DELETE FROM snapshots');
       await this.db.execute('DELETE FROM calendar');
-
-      // Vacuum to reclaim disk space
       await this.db.execute('VACUUM');
 
       console.log('[PersistenceService] ☢️ Database purged');
@@ -493,5 +395,12 @@ CREATE TABLE IF NOT EXISTS snapshots (
       throw error;
     }
   }
-}
 
+  getQueueSize(): number {
+    return this.writeQueue.length;
+  }
+
+  getInitialized(): boolean {
+    return this.isInitialized;
+  }
+}

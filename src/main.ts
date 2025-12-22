@@ -88,16 +88,67 @@ window.addEventListener('load', () => {
     }
 });
 
-// Register shutdown handler to ensure events aren't lost on close
-window.addEventListener('beforeunload', async (e) => {
-    if (window.scheduler) {
-        try {
-            await window.scheduler.onShutdown();
-        } catch (error) {
-            console.error('[main] Shutdown handler failed:', error);
-        }
+// Setup shutdown handler
+async function setupShutdownHandler(): Promise<void> {
+    // Check if we're in Tauri
+    if (!(window as any).__TAURI__) {
+        // Fallback for browser - still unreliable but better than nothing
+        window.addEventListener('beforeunload', () => {
+            if (window.scheduler) {
+                // Synchronous save to localStorage as backup
+                try {
+                    const data = {
+                        tasks: window.scheduler.tasks || [],
+                        calendar: window.scheduler.calendarStore?.get() || {},
+                        savedAt: new Date().toISOString(),
+                        version: '2.1.0'
+                    };
+                    localStorage.setItem('pro_scheduler_v10', JSON.stringify(data));
+                } catch (e) {
+                    console.error('Emergency save failed:', e);
+                }
+            }
+        });
+        return;
     }
-});
+    
+    // Tauri: Listen for native shutdown event
+    const { listen } = await import('@tauri-apps/api/event');
+    const { invoke } = await import('@tauri-apps/api/core');
+    
+    await listen('shutdown-requested', async () => {
+        console.log('[main] Shutdown requested - flushing data...');
+        
+        try {
+            if (window.scheduler) {
+                await window.scheduler.onShutdown();
+            }
+            console.log('[main] Shutdown complete - closing window');
+        } catch (error) {
+            console.error('[main] Shutdown error:', error);
+        }
+        
+        // Tell Tauri to actually close the window now
+        try {
+            await invoke('close_window');
+        } catch (error) {
+            console.error('[main] Failed to close window:', error);
+            // Force close as fallback
+            window.close();
+        }
+    });
+    
+    console.log('[main] Tauri shutdown handler registered');
+}
+
+// Call setup during initialization
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        setupShutdownHandler().catch(console.error);
+    });
+} else {
+    setupShutdownHandler().catch(console.error);
+}
 
 // ================================================================
 // UI HELPER FUNCTIONS (Backward Compatibility)

@@ -340,7 +340,7 @@ pub fn backward_pass(tasks: &mut [Task], calendar: &Calendar, successor_map: &Ha
                 let mut min_late_finish: Option<String> = None;
                 
                 for succ in successors {
-                    if let Some((succ_start, succ_end, succ_duration, _, _)) = task_data.get(&succ.id) {
+                    if let Some((succ_start, _succ_end, succ_duration, _, _)) = task_data.get(&succ.id) {
                         if succ_start.is_empty() || parent_ids.contains(&succ.id) {
                             continue;
                         }

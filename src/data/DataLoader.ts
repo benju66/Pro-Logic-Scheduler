@@ -1,29 +1,22 @@
 /**
- * @fileoverview Data Loader - Loads data from SQLite with snapshot + replay optimization
+ * @fileoverview Data Loader - Loads data from SQLite with snapshot + replay
  * @module data/DataLoader
  * 
- * Implements hybrid recovery approach:
- * - Loads latest snapshot (fast)
- * - Replays events since snapshot (typically 0-100 events)
- * - Returns data ready for CPM calculation
+ * ENHANCED:
+ * - Complete event replay for ALL event types
+ * - Proper calendar loading and event handling
  */
 
 import Database from '@tauri-apps/plugin-sql';
-import type { Task, Calendar, ConstraintType } from '../types';
+import type { Task, Calendar, ConstraintType, Dependency } from '../types';
 import { DEFAULT_WORKING_DAYS } from '../core/Constants';
 
-/**
- * Database interface - matches PersistenceService
- */
 interface DatabaseInterface {
   execute(query: string, bindings?: unknown[]): Promise<{ lastInsertId: number; rowsAffected: number }>;
   select<T = unknown>(query: string, bindings?: unknown[]): Promise<T[]>;
   close(): Promise<void>;
 }
 
-/**
- * Persisted task row from database
- */
 interface PersistedTask {
   id: string;
   parent_id: string | null;
@@ -33,7 +26,7 @@ interface PersistedTask {
   duration: number;
   constraint_type: string;
   constraint_date: string | null;
-  dependencies: string; // JSON string
+  dependencies: string;
   progress: number;
   actual_start: string | null;
   actual_finish: string | null;
@@ -41,25 +34,17 @@ interface PersistedTask {
   baseline_start: string | null;
   baseline_finish: string | null;
   baseline_duration: number | null;
-  is_collapsed: number; // SQLite stores as INTEGER (0 or 1)
+  is_collapsed: number;
 }
 
-/**
- * Event row from database
- */
 interface EventRow {
   id: number;
   event_type: string;
   target_id: string | null;
-  payload: string; // JSON string
+  payload: string;
   timestamp: string;
-  user_id: string | null;
-  session_id: string | null;
 }
 
-/**
- * Snapshot row from database
- */
 interface SnapshotRow {
   id: number;
   tasks_json: string;
@@ -68,58 +53,39 @@ interface SnapshotRow {
   created_at: string;
 }
 
-/**
- * Data Loader
- * Handles loading data from SQLite with snapshot + replay optimization
- */
 export class DataLoader {
   private db: DatabaseInterface | null = null;
   
-  /**
-   * Initialize database connection
-   */
   async init(): Promise<void> {
-    if (this.db) {
-      return; // Already initialized
-    }
+    if (this.db) return;
 
     try {
-      // Check if we're in Tauri environment
       if (typeof window === 'undefined' || !(window as any).__TAURI__) {
-        console.warn('[DataLoader] Not in Tauri environment - data loading disabled');
+        console.warn('[DataLoader] Not in Tauri environment');
         return;
       }
 
       this.db = await Database.load('sqlite:scheduler.db') as DatabaseInterface;
       console.log('[DataLoader] ✅ Database connection initialized');
     } catch (error) {
-      console.error('[DataLoader] ❌ Failed to connect to database:', error);
+      console.error('[DataLoader] ❌ Failed to connect:', error);
       throw error;
     }
   }
   
-  /**
-   * Load data from SQLite with snapshot + replay optimization
-   * @returns Tasks and calendar ready for CPM calculation
-   */
   async loadData(): Promise<{ tasks: Task[]; calendar: Calendar }> {
     if (!this.db) {
       await this.init();
     }
 
     if (!this.db) {
-      // Fallback: return empty data
-      console.warn('[DataLoader] Database not available - returning empty data');
       return {
         tasks: [],
-        calendar: {
-          workingDays: [...DEFAULT_WORKING_DAYS],
-          exceptions: {},
-        },
+        calendar: { workingDays: [...DEFAULT_WORKING_DAYS], exceptions: {} },
       };
     }
 
-    // Step 1: Try to load latest snapshot
+    // Step 1: Load from snapshot if available
     const snapshot = await this.loadLatestSnapshot();
     
     let tasks: Task[];
@@ -136,35 +102,29 @@ export class DataLoader {
       calendar = JSON.parse(snapshot.calendar_json) as Calendar;
       lastEventId = snapshot.event_id;
     } else {
-      // No snapshot - load directly from tasks table
-      console.log('[DataLoader] No snapshot found, loading from tasks table');
+      console.log('[DataLoader] No snapshot, loading from tables');
       
-      const result = await this.db.select<PersistedTask[]>(
-        `SELECT * FROM tasks ORDER BY sort_key`
-      );
-      
+      const result = await this.db.select<PersistedTask[]>(`SELECT * FROM tasks ORDER BY sort_key`);
       tasks = (result || []).map(row => this.hydrateTask(row));
       calendar = await this.loadCalendar();
     }
     
-    // Step 2: Replay events after snapshot
+    // Step 2: Replay events since snapshot
     const newEvents = await this.db.select<EventRow[]>(
       `SELECT * FROM events WHERE id > ? ORDER BY id ASC`,
       [lastEventId]
     );
     
     if (newEvents && newEvents.length > 0) {
-      console.log(`[DataLoader] Replaying ${newEvents.length} events since snapshot`);
-      tasks = this.replayEvents(tasks, newEvents);
+      console.log(`[DataLoader] Replaying ${newEvents.length} events`);
+      const result = this.replayEvents(tasks, calendar, newEvents);
+      tasks = result.tasks;
+      calendar = result.calendar;
     }
     
-    // Step 3: Return data (CPM will be run by caller)
     return { tasks, calendar };
   }
   
-  /**
-   * Load latest snapshot from database
-   */
   private async loadLatestSnapshot(): Promise<SnapshotRow | null> {
     if (!this.db) return null;
 
@@ -172,7 +132,6 @@ export class DataLoader {
       const result = await this.db.select<SnapshotRow[]>(
         `SELECT * FROM snapshots ORDER BY id DESC LIMIT 1`
       );
-      
       return result && result.length > 0 ? result[0] : null;
     } catch (error) {
       console.error('[DataLoader] Failed to load snapshot:', error);
@@ -180,22 +139,13 @@ export class DataLoader {
     }
   }
   
-  /**
-   * Load calendar from database
-   */
   private async loadCalendar(): Promise<Calendar> {
     if (!this.db) {
-      return {
-        workingDays: [...DEFAULT_WORKING_DAYS],
-        exceptions: {},
-      };
+      return { workingDays: [...DEFAULT_WORKING_DAYS], exceptions: {} };
     }
 
     try {
-      const result = await this.db.select<Array<{
-        working_days: string;
-        exceptions: string;
-      }>>(
+      const result = await this.db.select<Array<{ working_days: string; exceptions: string }>>(
         `SELECT working_days, exceptions FROM calendar WHERE id = 1`
       );
       
@@ -209,42 +159,30 @@ export class DataLoader {
       console.error('[DataLoader] Failed to load calendar:', error);
     }
     
-    // Fallback to default calendar
-    return {
-      workingDays: [...DEFAULT_WORKING_DAYS],
-      exceptions: {},
-    };
+    return { workingDays: [...DEFAULT_WORKING_DAYS], exceptions: {} };
   }
   
   /**
-   * Replay events to update task state
+   * Replay events to reconstruct state
+   * Handles ALL event types defined in schema
    */
-  private replayEvents(tasks: Task[], events: EventRow[]): Task[] {
+  private replayEvents(
+    tasks: Task[], 
+    calendar: Calendar,
+    events: EventRow[]
+  ): { tasks: Task[]; calendar: Calendar } {
+    
     for (const event of events) {
       const payload = JSON.parse(event.payload);
       
       switch (event.event_type) {
+        // =========== TASK CRUD ===========
         case 'TASK_CREATED':
           tasks.push(this.createTaskFromPayload(payload));
           break;
           
         case 'TASK_UPDATED':
-          const taskToUpdate = tasks.find(t => t.id === event.target_id);
-          if (taskToUpdate) {
-            const field = payload.field as string;
-            const newValue = payload.new_value;
-            
-            // Map field names (snake_case to camelCase)
-            const camelField = this.mapDbFieldToCamel(field);
-            (taskToUpdate as any)[camelField] = newValue;
-            
-            // Handle special cases
-            if (field === 'dependencies') {
-              taskToUpdate.dependencies = typeof newValue === 'string' 
-                ? JSON.parse(newValue) 
-                : newValue;
-            }
-          }
+          this.applyTaskUpdate(tasks, event.target_id, payload);
           break;
           
         case 'TASK_DELETED':
@@ -259,114 +197,197 @@ export class DataLoader {
           }
           break;
           
-        case 'DEPENDENCY_ADDED':
-        case 'DEPENDENCY_REMOVED':
-        case 'DEPENDENCY_UPDATED':
-          // Handle dependency changes
-          const taskWithDeps = tasks.find(t => t.id === event.target_id);
-          if (taskWithDeps && payload.dependencies) {
-            taskWithDeps.dependencies = Array.isArray(payload.dependencies)
-              ? payload.dependencies
-              : JSON.parse(payload.dependencies);
+        // =========== HIERARCHY ===========
+        case 'TASK_INDENTED':
+        case 'TASK_OUTDENTED':
+          // These are semantic aliases for TASK_MOVED
+          const hierarchyTask = tasks.find(t => t.id === event.target_id);
+          if (hierarchyTask && payload.new_parent_id !== undefined) {
+            hierarchyTask.parentId = payload.new_parent_id ?? null;
+            if (payload.new_sort_key) {
+              hierarchyTask.sortKey = payload.new_sort_key;
+            }
           }
           break;
           
-        // Other event types can be added here as needed
+        // =========== DEPENDENCIES ===========
+        case 'DEPENDENCY_ADDED':
+        case 'DEPENDENCY_REMOVED':
+        case 'DEPENDENCY_UPDATED':
+          const depTask = tasks.find(t => t.id === event.target_id);
+          if (depTask && payload.dependencies !== undefined) {
+            depTask.dependencies = this.parseDependencies(payload.dependencies);
+          } else if (depTask && payload.new_value !== undefined) {
+            depTask.dependencies = this.parseDependencies(payload.new_value);
+          }
+          break;
+          
+        // =========== BASELINE ===========
+        case 'BASELINE_SET':
+          const baselineTask = tasks.find(t => t.id === event.target_id);
+          if (baselineTask) {
+            baselineTask.baselineStart = payload.baseline_start ?? null;
+            baselineTask.baselineFinish = payload.baseline_finish ?? null;
+            baselineTask.baselineDuration = payload.baseline_duration ?? null;
+          }
+          break;
+          
+        case 'BASELINE_CLEARED':
+          const clearTask = tasks.find(t => t.id === event.target_id);
+          if (clearTask) {
+            clearTask.baselineStart = null;
+            clearTask.baselineFinish = null;
+            clearTask.baselineDuration = null;
+          }
+          break;
+          
+        // =========== CALENDAR ===========
+        case 'CALENDAR_UPDATED':
+          if (payload.new_working_days) {
+            calendar.workingDays = payload.new_working_days;
+          }
+          if (payload.new_exceptions) {
+            calendar.exceptions = payload.new_exceptions;
+          }
+          break;
+          
+        // =========== PROJECT ===========
+        case 'PROJECT_IMPORTED':
+          // Full replacement - payload contains all tasks and calendar
+          if (payload.tasks) {
+            tasks = payload.tasks.map((t: any) => this.createTaskFromPayload(t));
+          }
+          if (payload.calendar) {
+            calendar = payload.calendar;
+          }
+          break;
+          
+        case 'PROJECT_CLEARED':
+          tasks = [];
+          calendar = { workingDays: [...DEFAULT_WORKING_DAYS], exceptions: {} };
+          break;
+          
+        // =========== BULK ===========
+        case 'BULK_UPDATE':
+          if (payload.updates && Array.isArray(payload.updates)) {
+            for (const update of payload.updates) {
+              this.applyTaskUpdate(tasks, update.task_id, update);
+            }
+          }
+          break;
+          
+        case 'BULK_DELETE':
+          if (payload.task_ids && Array.isArray(payload.task_ids)) {
+            const idsToDelete = new Set(payload.task_ids);
+            tasks = tasks.filter(t => !idsToDelete.has(t.id));
+          }
+          break;
+          
         default:
           console.debug(`[DataLoader] Unknown event type: ${event.event_type}`);
       }
     }
     
-    return tasks;
+    return { tasks, calendar };
   }
   
-  /**
-   * Create task from event payload
-   */
+  private applyTaskUpdate(tasks: Task[], targetId: string | null, payload: any): void {
+    if (!targetId) return;
+    
+    const task = tasks.find(t => t.id === targetId);
+    if (!task) return;
+    
+    const field = payload.field as string;
+    const newValue = payload.new_value;
+    
+    if (!field) return;
+    
+    // Map snake_case to camelCase
+    const camelField = this.mapDbFieldToCamel(field);
+    
+    if (field === 'dependencies') {
+      task.dependencies = this.parseDependencies(newValue);
+    } else {
+      (task as any)[camelField] = newValue;
+    }
+  }
+  
   private createTaskFromPayload(payload: Record<string, unknown>): Task {
     return {
       id: payload.id as string,
-      parentId: (payload.parent_id as string | null) ?? null,
-      sortKey: (payload.sort_key as string) || '',
+      parentId: (payload.parent_id as string | null) ?? (payload.parentId as string | null) ?? null,
+      sortKey: (payload.sort_key as string) || (payload.sortKey as string) || '',
       name: (payload.name as string) || 'New Task',
       notes: (payload.notes as string) || '',
       duration: (payload.duration as number) || 1,
-      constraintType: (payload.constraint_type as ConstraintType) || 'asap',
-      constraintDate: (payload.constraint_date as string | null) ?? null,
-      dependencies: Array.isArray(payload.dependencies)
-        ? payload.dependencies
-        : JSON.parse((payload.dependencies as string) || '[]'),
+      constraintType: ((payload.constraint_type || payload.constraintType) as ConstraintType) || 'asap',
+      constraintDate: (payload.constraint_date as string | null) ?? (payload.constraintDate as string | null) ?? null,
+      dependencies: this.parseDependencies(payload.dependencies),
       progress: (payload.progress as number) || 0,
-      actualStart: (payload.actual_start as string | null) ?? null,
-      actualFinish: (payload.actual_finish as string | null) ?? null,
-      remainingDuration: (payload.remaining_duration as number | null) ?? null,
-      baselineStart: (payload.baseline_start as string | null) ?? null,
-      baselineFinish: (payload.baseline_finish as string | null) ?? null,
-      baselineDuration: (payload.baseline_duration as number | null) ?? null,
-      _collapsed: Boolean(payload.is_collapsed),
-      
-      // Calculated fields - will be filled by CPM
+      actualStart: (payload.actual_start as string | null) ?? (payload.actualStart as string | null) ?? null,
+      actualFinish: (payload.actual_finish as string | null) ?? (payload.actualFinish as string | null) ?? null,
+      remainingDuration: (payload.remaining_duration as number | null) ?? (payload.remainingDuration as number | null) ?? null,
+      baselineStart: (payload.baseline_start as string | null) ?? (payload.baselineStart as string | null) ?? null,
+      baselineFinish: (payload.baseline_finish as string | null) ?? (payload.baselineFinish as string | null) ?? null,
+      baselineDuration: (payload.baseline_duration as number | null) ?? (payload.baselineDuration as number | null) ?? null,
+      _collapsed: Boolean(payload.is_collapsed ?? payload._collapsed),
+      level: 0,
       start: '',
       end: '',
-      level: 0,
-      _isCritical: false,
-      _totalFloat: 0,
-      _freeFloat: 0,
     };
   }
   
-  /**
-   * Convert persisted row to Task object
-   */
   private hydrateTask(row: PersistedTask): Task {
     return {
       id: row.id,
-      parentId: row.parent_id,
-      sortKey: row.sort_key,
-      name: row.name,
-      notes: row.notes,
-      duration: row.duration,
-      constraintType: row.constraint_type as ConstraintType,
-      constraintDate: row.constraint_date,
-      dependencies: JSON.parse(row.dependencies || '[]'),
-      progress: row.progress,
-      actualStart: row.actual_start,
-      actualFinish: row.actual_finish,
-      remainingDuration: row.remaining_duration,
-      baselineStart: row.baseline_start,
-      baselineFinish: row.baseline_finish,
-      baselineDuration: row.baseline_duration,
+      parentId: row.parent_id ?? null,
+      sortKey: row.sort_key || '',
+      name: row.name || 'New Task',
+      notes: row.notes || '',
+      duration: row.duration || 1,
+      constraintType: (row.constraint_type as ConstraintType) || 'asap',
+      constraintDate: row.constraint_date ?? null,
+      dependencies: this.parseDependencies(row.dependencies),
+      progress: row.progress || 0,
+      actualStart: row.actual_start ?? null,
+      actualFinish: row.actual_finish ?? null,
+      remainingDuration: row.remaining_duration ?? null,
+      baselineStart: row.baseline_start ?? null,
+      baselineFinish: row.baseline_finish ?? null,
+      baselineDuration: row.baseline_duration ?? null,
       _collapsed: Boolean(row.is_collapsed),
-      
-      // These will be filled by CPM.calculate()
+      level: 0,
       start: '',
       end: '',
-      level: 0,
-      _isCritical: false,
-      _totalFloat: 0,
-      _freeFloat: 0,
     };
   }
+
+  private parseDependencies(value: unknown): Dependency[] {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+      try {
+        return JSON.parse(value);
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  }
   
-  /**
-   * Map snake_case database field names to camelCase Task properties
-   */
   private mapDbFieldToCamel(field: string): string {
     const mapping: Record<string, string> = {
+      'parent_id': 'parentId',
+      'sort_key': 'sortKey',
+      'constraint_type': 'constraintType',
+      'constraint_date': 'constraintDate',
       'actual_start': 'actualStart',
       'actual_finish': 'actualFinish',
       'remaining_duration': 'remainingDuration',
       'baseline_start': 'baselineStart',
       'baseline_finish': 'baselineFinish',
       'baseline_duration': 'baselineDuration',
-      'constraint_type': 'constraintType',
-      'constraint_date': 'constraintDate',
       'is_collapsed': '_collapsed',
-      'parent_id': 'parentId',
-      'sort_key': 'sortKey',
     };
-
     return mapping[field] || field;
   }
 }
-

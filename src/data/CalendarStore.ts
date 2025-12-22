@@ -1,31 +1,24 @@
 /**
- * @fileoverview Calendar data store - manages calendar configuration
+ * @fileoverview Calendar data store with undo/redo support
  * @module data/CalendarStore
  */
 
 import type { Calendar, CalendarException, Callback } from '../types';
 import { DEFAULT_WORKING_DAYS } from '../core/Constants';
 import type { PersistenceService } from './PersistenceService';
+import type { HistoryManager, QueuedEvent } from './HistoryManager';
 
-/**
- * Calendar store options
- */
 export interface CalendarStoreOptions {
   onChange?: Callback<Calendar>;
 }
 
-/**
- * Calendar data store
- * Manages calendar state (working days, exceptions/holidays)
- */
 export class CalendarStore {
   private calendar: Calendar;
   private options: CalendarStoreOptions;
   private persistenceService: PersistenceService | null = null;
+  private historyManager: HistoryManager | null = null;
+  private isApplyingEvent: boolean = false;
 
-  /**
-   * @param options - Configuration
-   */
   constructor(options: CalendarStoreOptions = {}) {
     this.options = options;
     this.calendar = {
@@ -34,79 +27,76 @@ export class CalendarStore {
     };
   }
 
-  /**
-   * Get calendar configuration
-   * @returns Calendar object with workingDays and exceptions
-   */
-  get(): Calendar {
-    return { ...this.calendar };
-  }
+  // =========================================================================
+  // SERVICE INJECTION
+  // =========================================================================
 
-  /**
-   * Set persistence service (injected post-construction to avoid circular dependencies)
-   * @param service - PersistenceService instance
-   */
   setPersistenceService(service: PersistenceService): void {
     this.persistenceService = service;
   }
 
+  setHistoryManager(manager: HistoryManager): void {
+    this.historyManager = manager;
+  }
+
+  // =========================================================================
+  // READ OPERATIONS
+  // =========================================================================
+
+  get(): Calendar {
+    return {
+      workingDays: [...this.calendar.workingDays],
+      exceptions: { ...this.calendar.exceptions },
+    };
+  }
+
+  getWorkingDays(): number[] {
+    return [...this.calendar.workingDays];
+  }
+
+  getExceptions(): Record<string, CalendarException> {
+    return { ...this.calendar.exceptions };
+  }
+
+  // =========================================================================
+  // WRITE OPERATIONS (with undo/redo support)
+  // =========================================================================
+
   /**
-   * Set calendar configuration
-   * @param calendar - Calendar configuration
-   * @param skipEvent - If true, don't queue event (used for loading data)
+   * Set entire calendar (used for loading data - skips events)
    */
   set(calendar: Calendar, skipEvent: boolean = false): void {
-    const oldCalendar = { ...this.calendar };
+    const oldCalendar = this.get();
     
     this.calendar = {
       workingDays: calendar.workingDays || [...DEFAULT_WORKING_DAYS],
       exceptions: calendar.exceptions || {},
     };
     
-    // Queue CALENDAR_UPDATED event (unless loading data)
-    if (!skipEvent && this.persistenceService) {
-      this.persistenceService.queueEvent('CALENDAR_UPDATED', null, {
-        working_days: this.calendar.workingDays,
-        exceptions: this.calendar.exceptions,
-      });
+    if (!skipEvent) {
+      this._recordCalendarChange(oldCalendar, this.get(), 'Update Calendar');
     }
     
     this._notifyChange();
   }
 
   /**
-   * Get working days
-   * @returns Array of working day indices (0=Sun, 6=Sat)
-   */
-  getWorkingDays(): number[] {
-    return [...this.calendar.workingDays];
-  }
-
-  /**
    * Set working days
-   * @param days - Array of working day indices
    */
   setWorkingDays(days: number[]): void {
+    const oldCalendar = this.get();
     this.calendar.workingDays = days || [...DEFAULT_WORKING_DAYS];
+    this._recordCalendarChange(oldCalendar, this.get(), 'Update Working Days');
     this._notifyChange();
   }
 
   /**
-   * Get all exceptions (holidays)
-   * @returns Map of date strings to CalendarException objects
-   */
-  getExceptions(): Record<string, CalendarException> {
-    return { ...this.calendar.exceptions };
-  }
-
-  /**
    * Add a calendar exception (holiday)
-   * @param dateStr - Date string in "YYYY-MM-DD" format
-   * @param exception - Exception object or description string (for backward compatibility)
    */
   addException(dateStr: string, exception: CalendarException | string): void {
+    const oldCalendar = this.get();
+    
     if (typeof exception === 'string') {
-      // Backward compatibility: convert string to CalendarException
       this.calendar.exceptions[dateStr] = {
         date: dateStr,
         working: false,
@@ -116,34 +106,101 @@ export class CalendarStore {
       this.calendar.exceptions[dateStr] = {
         date: dateStr,
         working: exception.working ?? false,
-        description: exception.description,
+        description: exception.description || 'Exception',
       };
     }
+    
+    this._recordCalendarChange(oldCalendar, this.get(), 'Add Holiday');
     this._notifyChange();
   }
 
   /**
    * Remove a calendar exception
-   * @param dateStr - Date string in "YYYY-MM-DD" format
    */
   removeException(dateStr: string): void {
+    if (!this.calendar.exceptions[dateStr]) return;
+    
+    const oldCalendar = this.get();
     delete this.calendar.exceptions[dateStr];
+    this._recordCalendarChange(oldCalendar, this.get(), 'Remove Holiday');
     this._notifyChange();
   }
 
-  /**
-   * Check if a date is an exception
-   * @param dateStr - Date string in "YYYY-MM-DD" format
-   * @returns True if date is an exception
-   */
-  isException(dateStr: string): boolean {
-    return !!this.calendar.exceptions[dateStr];
-  }
+  // =========================================================================
+  // EVENT APPLICATION (for undo/redo)
+  // =========================================================================
 
   /**
-   * Notify subscribers of changes
-   * @private
+   * Apply a calendar event from undo/redo
    */
+  applyEvent(event: QueuedEvent): void {
+    if (event.type !== 'CALENDAR_UPDATED') {
+      console.warn(`[CalendarStore] Unknown event type: ${event.type}`);
+      return;
+    }
+    
+    this.isApplyingEvent = true;
+    
+    try {
+      // The "new" state becomes our current state
+      const workingDays = event.payload.new_working_days as number[] || [...DEFAULT_WORKING_DAYS];
+      const exceptions = event.payload.new_exceptions as Record<string, CalendarException> || {};
+      
+      this.calendar = { workingDays, exceptions };
+      
+      // Queue for persistence
+      if (this.persistenceService) {
+        this.persistenceService.queueEvent(event.type, null, event.payload);
+      }
+    } finally {
+      this.isApplyingEvent = false;
+    }
+    
+    this._notifyChange();
+  }
+
+  // =========================================================================
+  // HELPER METHODS
+  // =========================================================================
+
+  private _recordCalendarChange(oldCal: Calendar, newCal: Calendar, label: string): void {
+    if (this.isApplyingEvent) return;
+    
+    const forwardEvent: QueuedEvent = {
+      type: 'CALENDAR_UPDATED',
+      targetId: null,
+      payload: {
+        old_working_days: oldCal.workingDays,
+        new_working_days: newCal.workingDays,
+        old_exceptions: oldCal.exceptions,
+        new_exceptions: newCal.exceptions,
+      },
+      timestamp: new Date(),
+    };
+    
+    const backwardEvent: QueuedEvent = {
+      type: 'CALENDAR_UPDATED',
+      targetId: null,
+      payload: {
+        old_working_days: newCal.workingDays,
+        new_working_days: oldCal.workingDays,
+        old_exceptions: newCal.exceptions,
+        new_exceptions: oldCal.exceptions,
+      },
+      timestamp: new Date(),
+    };
+    
+    // Queue for persistence
+    if (this.persistenceService) {
+      this.persistenceService.queueEvent(forwardEvent.type, null, forwardEvent.payload);
+    }
+    
+    // Record in history
+    if (this.historyManager) {
+      this.historyManager.recordAction(forwardEvent, backwardEvent, label);
+    }
+  }
+
   private _notifyChange(): void {
     if (this.options.onChange) {
       this.options.onChange(this.calendar);

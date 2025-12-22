@@ -258,9 +258,29 @@ export class SchedulerService {
             maxHistory: 50
         });
 
-        // 6. Inject history manager into task store (must be after both are created)
-        if (this.taskStore && this.historyManager) {
+        // 6. Inject history manager into stores (must be after both are created)
+        if (this.historyManager) {
             this.taskStore.setHistoryManager(this.historyManager);
+            this.calendarStore.setHistoryManager(this.historyManager);
+        }
+        
+        // 7. Wire up snapshot service (if available)
+        if (this.snapshotService && this.persistenceService) {
+            // Set state accessors for automatic snapshots
+            this.snapshotService.setStateAccessors(
+                () => this.taskStore.getAll(),
+                () => this.calendarStore.get()
+            );
+            
+            // Connect to persistence service
+            this.persistenceService.setSnapshotService(
+                this.snapshotService,
+                () => this.taskStore.getAll(),
+                () => this.calendarStore.get()
+            );
+            
+            // Start periodic snapshots
+            this.snapshotService.startPeriodicSnapshots();
         }
 
         // UI services
@@ -273,7 +293,7 @@ export class SchedulerService {
             onToast: (msg, type) => this.toastService.show(msg, type)
         });
 
-        // 7. Initialize Dual Engine
+        // 8. Initialize Dual Engine
         await this._initializeEngine();
     }
 
@@ -2951,40 +2971,31 @@ export class SchedulerService {
     }
 
     /**
-     * Delete a task - validate editing state
-     * @param taskId - Task ID
+     * Delete a task and its children
      */
     deleteTask(taskId: string): void {
         const editingManager = getEditingStateManager();
         
-        // If deleting the task being edited, exit edit mode first
         if (editingManager.isEditingTask(taskId)) {
             editingManager.exitEditMode('task-deleted');
         }
         
-        this.saveCheckpoint();
+        // TaskStore.delete() now handles composite actions internally
+        this.taskStore.delete(taskId, true);
         
-        // Collect all task IDs to delete (including children)
-        const idsToDelete: string[] = [];
-        const deleteRecursive = (id: string): void => {
-            const children = this.taskStore.getChildren(id);
-            children.forEach(child => deleteRecursive(child.id));
-            idsToDelete.push(id);
-        };
-        deleteRecursive(taskId);
-        
-        // Delete from task store
-        idsToDelete.forEach(id => {
-            this.taskStore.delete(id);
-        });
-        
-        // Sync deletions to engine
+        // Sync to engine
         if (this.engine) {
-            idsToDelete.forEach(id => {
-                this.engine!.deleteTask(id).catch(error => {
-                    console.warn(`[SchedulerService] Failed to sync task deletion to engine for ${id}:`, error);
-                });
-            });
+            const collectIds = (id: string): string[] => {
+                const children = this.taskStore.getChildren(id);
+                let ids = [id];
+                for (const child of children) {
+                    ids = ids.concat(collectIds(child.id));
+                }
+                return ids;
+            };
+            
+            // Note: Children already deleted from store, just need to sync
+            this.engine.deleteTask(taskId).catch(console.error);
         }
         
         this.selectedIds.delete(taskId);
@@ -3006,17 +3017,25 @@ export class SchedulerService {
     private _deleteSelected(): void {
         if (this.selectedIds.size === 0) return;
         
-        this.saveCheckpoint();
         const idsToDelete = Array.from(this.selectedIds);
         
-        idsToDelete.forEach(id => {
-            const deleteRecursive = (taskId: string): void => {
-                const children = this.taskStore.getChildren(taskId);
-                children.forEach(child => deleteRecursive(child.id));
-                this.taskStore.delete(taskId);
-            };
-            deleteRecursive(id);
-        });
+        // Begin composite action for bulk delete
+        if (this.historyManager) {
+            this.historyManager.beginComposite(`Delete ${idsToDelete.length} Task(s)`);
+        }
+        
+        try {
+            for (const id of idsToDelete) {
+                // Delete each task (including children)
+                // TaskStore will add events to the active composite
+                this.taskStore.delete(id, true);
+            }
+        } finally {
+            // End composite action
+            if (this.historyManager) {
+                this.historyManager.endComposite();
+            }
+        }
 
         this.selectedIds.clear();
         this.focusedId = null;
@@ -3062,38 +3081,31 @@ export class SchedulerService {
     }
 
     /**
-     * Indent a task (make it a child)
-     * @param taskId - Task ID
+     * Indent a task (make it a child of previous sibling)
      */
     indent(taskId: string): void {
-        this.saveCheckpoint();
-        
         const task = this.taskStore.getById(taskId);
         if (!task) return;
 
-        // Get flat list of visible tasks (matching POC getFlatList())
         const list = this.taskStore.getVisibleTasks((id) => {
             const t = this.taskStore.getById(id);
             return t?._collapsed || false;
         });
         
         const idx = list.findIndex(t => t.id === taskId);
-        if (idx <= 0) return; // Can't indent first task
+        if (idx <= 0) return;
         
         const prev = list[idx - 1];
         const taskDepth = this.taskStore.getDepth(taskId);
         const prevDepth = this.taskStore.getDepth(prev.id);
         
-        // Can't indent if previous task is at a shallower level
         if (prevDepth < taskDepth) return;
         
         let newParentId: string | null = null;
         
         if (prevDepth === taskDepth) {
-            // Previous task is at same level - make it the parent
             newParentId = prev.id;
         } else {
-            // Previous task is deeper - walk up its parent chain to find task at taskDepth level
             let curr: Task | undefined = prev;
             while (curr && this.taskStore.getDepth(curr.id) > taskDepth) {
                 curr = curr.parentId ? this.taskStore.getById(curr.parentId) : undefined;
@@ -3104,7 +3116,14 @@ export class SchedulerService {
         }
         
         if (newParentId !== null) {
-            this.taskStore.update(taskId, { parentId: newParentId });
+            // Generate new sort key for new parent's children
+            const newSortKey = OrderingService.generateAppendKey(
+                this.taskStore.getLastSortKey(newParentId)
+            );
+            
+            // Use move() which properly records the composite operation
+            this.taskStore.move(taskId, newParentId, newSortKey, 'Indent Task');
+            
             this.recalculateAll();
             this.saveData();
             this.render();
@@ -3112,37 +3131,35 @@ export class SchedulerService {
     }
 
     /**
-     * Outdent a task (remove from parent)
-     * @param taskId - Task ID
+     * Outdent a task (move to parent's level)
      */
     outdent(taskId: string): void {
-        this.saveCheckpoint();
-        
         const task = this.taskStore.getById(taskId);
         if (!task || !task.parentId) return;
 
-        // Get parent's parent (or null if parent is root)
         const parent = this.taskStore.getById(task.parentId);
         const newParentId = parent ? parent.parentId : null;
-        const oldParentId = task.parentId;
         
-        // When outdenting, assign new sortKey - insert after former parent
-        const formerParent = this.taskStore.getById(oldParentId);
-        const auntsUncles = this.taskStore.getChildren(newParentId);
-        const formerParentIndex = formerParent ? auntsUncles.findIndex(t => t.id === formerParent.id) : -1;
+        // Generate sort key to insert after former parent
+        const siblings = this.taskStore.getChildren(newParentId);
+        const parentIndex = siblings.findIndex(t => t.id === task.parentId);
         
-        const beforeKey = formerParent?.sortKey ?? null;
-        const afterKey = formerParentIndex < auntsUncles.length - 1 && formerParentIndex >= 0
-            ? auntsUncles[formerParentIndex + 1].sortKey 
-            : null;
+        let newSortKey: string;
+        if (parentIndex >= 0 && parentIndex < siblings.length - 1) {
+            // Insert between parent and next sibling
+            newSortKey = OrderingService.generateInsertKey(
+                siblings[parentIndex].sortKey ?? null,
+                siblings[parentIndex + 1].sortKey ?? null
+            );
+        } else {
+            // Insert at end
+            newSortKey = OrderingService.generateAppendKey(
+                this.taskStore.getLastSortKey(newParentId)
+            );
+        }
         
-        const newSortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
+        this.taskStore.move(taskId, newParentId, newSortKey, 'Outdent Task');
         
-        this.taskStore.update(taskId, { 
-            parentId: newParentId,
-            sortKey: newSortKey
-        });
-
         this.recalculateAll();
         this.saveData();
         this.render();
@@ -4731,7 +4748,7 @@ export class SchedulerService {
     }
 
     /**
-     * Undo last action (Event Sourcing Command Pattern)
+     * Undo last action (supports composite actions)
      */
     undo(): void {
         if (!this.historyManager) {
@@ -4739,33 +4756,30 @@ export class SchedulerService {
             return;
         }
 
-        // Get backward event from history manager
-        const backwardEvent = this.historyManager.undo();
-        if (!backwardEvent) {
+        const backwardEvents = this.historyManager.undo();
+        if (!backwardEvents || backwardEvents.length === 0) {
             this.toastService.info('Nothing to undo');
             return;
         }
 
-        // Apply backward event to TaskStore (updates RAM and queues persistence)
-        this.taskStore.applyEvent(backwardEvent);
-
-        // Queue persistence event (TaskStore.applyEvent already does this, but ensure it's queued)
-        if (this.persistenceService) {
-            this.persistenceService.queueEvent(
-                backwardEvent.type,
-                backwardEvent.targetId,
-                backwardEvent.payload
-            );
+        // Apply all backward events
+        for (const event of backwardEvents) {
+            if (event.type === 'CALENDAR_UPDATED') {
+                this.calendarStore.applyEvent(event);
+            } else {
+                this.taskStore.applyEvents([event]);
+            }
         }
 
-        // Recalculate and render
         this.recalculateAll();
         this.render();
-        this.toastService.info('Undone');
+        
+        const label = this.historyManager.getRedoLabel();
+        this.toastService.info(label ? `Undone: ${label}` : 'Undone');
     }
 
     /**
-     * Redo last undone action (Event Sourcing Command Pattern)
+     * Redo last undone action (supports composite actions)
      */
     redo(): void {
         if (!this.historyManager) {
@@ -4773,29 +4787,26 @@ export class SchedulerService {
             return;
         }
 
-        // Get forward event from history manager
-        const forwardEvent = this.historyManager.redo();
-        if (!forwardEvent) {
+        const forwardEvents = this.historyManager.redo();
+        if (!forwardEvents || forwardEvents.length === 0) {
             this.toastService.info('Nothing to redo');
             return;
         }
 
-        // Apply forward event to TaskStore (updates RAM and queues persistence)
-        this.taskStore.applyEvent(forwardEvent);
-
-        // Queue persistence event (TaskStore.applyEvent already does this, but ensure it's queued)
-        if (this.persistenceService) {
-            this.persistenceService.queueEvent(
-                forwardEvent.type,
-                forwardEvent.targetId,
-                forwardEvent.payload
-            );
+        // Apply all forward events
+        for (const event of forwardEvents) {
+            if (event.type === 'CALENDAR_UPDATED') {
+                this.calendarStore.applyEvent(event);
+            } else {
+                this.taskStore.applyEvents([event]);
+            }
         }
 
-        // Recalculate and render
         this.recalculateAll();
         this.render();
-        this.toastService.info('Redone');
+        
+        const label = this.historyManager.getUndoLabel();
+        this.toastService.info(label ? `Redone: ${label}` : 'Redone');
     }
 
     // =========================================================================

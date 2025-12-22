@@ -7,7 +7,7 @@ mod commands;
 mod date_utils;
 mod cpm;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager, WindowEvent};
 use engine_state::AppState;
 use commands::{
     initialize_engine,
@@ -36,6 +36,25 @@ fn main() {
                     let _ = window.open_devtools();
                 }
             }
+            
+            // Get main window
+            let main_window = app.get_webview_window("main").unwrap();
+            
+            // Clone window reference for use in closure
+            let window_for_emit = main_window.clone();
+            
+            // Listen for close request
+            main_window.on_window_event(move |event| {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    // Prevent immediate close
+                    api.prevent_close();
+                    
+                    // Signal frontend to flush data
+                    // Frontend will call `close_window` command when ready
+                    window_for_emit.emit("shutdown-requested", ()).ok();
+                }
+            });
+            
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -47,7 +66,14 @@ fn main() {
             calculate_cpm,
             get_engine_status,
             clear_engine,
+            close_window,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Called by frontend after shutdown flush is complete
+#[tauri::command]
+async fn close_window(window: tauri::Window) -> Result<(), String> {
+    window.close().map_err(|e| e.to_string())
 }
