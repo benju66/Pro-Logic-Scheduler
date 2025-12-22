@@ -428,7 +428,7 @@ export class SchedulerService {
             onBarDoubleClick: (taskId, e) => this._handleRowDoubleClick(taskId, e),
             onBarDrag: (task, start, end) => this._handleBarDrag(task, start, end),
             isParent: (id) => this.taskStore.isParent(id),
-            getHighlightDependencies: () => this.getHighlightDependenciesOnHover(),
+            getHighlightDependencies: () => this.displaySettings.highlightDependenciesOnHover,
         };
         viewport.initGantt(ganttOptions);
 
@@ -550,7 +550,13 @@ export class SchedulerService {
             updateRow: (taskId: string) => viewport.updateRow(taskId),
             setScrollTop: (scrollTop: number) => viewport.setScrollTop(scrollTop),
             getScrollTop: () => viewport.getScrollTop(),
-            setCalendar: (calendar: Calendar) => viewport.setCalendar(calendar),
+            setCalendar: (calendar: Calendar) => {
+                // Delegate to grid renderer if available
+                const gridRenderer = (viewport as any).gridRenderer as GridRenderer | null;
+                if (gridRenderer) {
+                    gridRenderer.setCalendar(calendar);
+                }
+            },
             getStats: () => ({
                 totalTasks: viewport.getData().length,
                 visibleRange: '0-0',
@@ -677,6 +683,36 @@ export class SchedulerService {
      */
     getColumnDefinitions(): GridColumn[] {
         return this._getColumnDefinitions();
+    }
+
+    /**
+     * Get whether dependency highlighting on hover is enabled
+     * @returns True if highlighting is enabled
+     */
+    getHighlightDependenciesOnHover(): boolean {
+        return this.displaySettings.highlightDependenciesOnHover;
+    }
+
+    /**
+     * Toggle driving path mode
+     */
+    toggleDrivingPathMode(): void {
+        this.displaySettings.drivingPathMode = !this.displaySettings.drivingPathMode;
+        this._updateGanttDrivingPathMode();
+        this.render();
+    }
+
+    /**
+     * Update Gantt driving path mode display
+     * @private
+     */
+    private _updateGanttDrivingPathMode(): void {
+        // TODO: Implement driving path visualization in GanttRenderer
+        // For now, this is a placeholder
+        if (this.gantt && this.displaySettings.drivingPathMode) {
+            // Driving path mode is active - GanttRenderer should highlight critical path
+            // This will be implemented when driving path feature is added
+        }
     }
 
     /**
@@ -2590,7 +2626,7 @@ export class SchedulerService {
         let currentRowIndex = this.focusedId 
             ? visibleTasks.findIndex(t => t.id === this.focusedId)
             : 0;
-        let currentColIndex = editableColumns.indexOf(this.focusedColumn);
+        let currentColIndex = this.focusedColumn ? editableColumns.indexOf(this.focusedColumn as typeof editableColumns[number]) : -1;
         if (currentColIndex === -1) currentColIndex = 0;
         
         let newRowIndex = currentRowIndex;
@@ -3135,8 +3171,7 @@ export class SchedulerService {
             } as Task;
             
             // Add to store
-            const allTasks = this.taskStore.getAll();
-            this.taskStore.setAll([...allTasks, task]);
+            this.taskStore.add(task, 'Add Task');
             
             // Update UI state
             this.selectedIds.clear();
@@ -3507,8 +3542,7 @@ export class SchedulerService {
         } as Task;
         
         // Add to store
-        const allTasks = this.taskStore.getAll();
-        this.taskStore.setAll([...allTasks, newTask]);
+        this.taskStore.add(newTask, 'Insert Task Above');
         
         // Focus the new task
         this.selectedIds.clear();
@@ -3593,8 +3627,7 @@ export class SchedulerService {
         } as Task;
         
         // Add to store
-        const allTasks = this.taskStore.getAll();
-        this.taskStore.setAll([...allTasks, newTask]);
+        this.taskStore.add(newTask, 'Insert Task Below');
         
         // Focus the new task
         this.selectedIds.clear();
@@ -3683,8 +3716,7 @@ export class SchedulerService {
         }
         
         // Add to store
-        const allTasks = this.taskStore.getAll();
-        this.taskStore.setAll([...allTasks, newTask]);
+        this.taskStore.add(newTask, 'Add Child Task');
         
         // Focus the new task
         this.selectedIds.clear();
