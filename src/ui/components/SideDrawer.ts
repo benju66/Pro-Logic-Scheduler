@@ -931,53 +931,68 @@ export class SideDrawer {
         const focusField = options.focusField;
         
         // Focus field if:
-        // 1. A specific field was requested (user clicked on a field)
+        // 1. A specific field was requested (user clicked on a field) - ALWAYS focus in this case
         // 2. This is a new task
         // 3. Drawer was closed
         if (focusField || isNewTask || wasClosed) {
-            setTimeout(() => {
-                // Map grid field names to drawer field names
-                const fieldMap: Record<string, keyof SideDrawerDOM> = {
-                    'name': 'name',
-                    'duration': 'duration',
-                    'progress': 'progress',
-                    'start': 'start',
-                    'end': 'end',
-                    'constraintType': 'constraintType',
-                    'constraintDate': 'constraintDate',
-                    'actualStart': 'actualStart',
-                    'actualFinish': 'actualFinish',
-                    'notes': 'notes',
-                };
+            // Map grid field names to drawer field names
+            const fieldMap: Record<string, keyof SideDrawerDOM> = {
+                'name': 'name',
+                'duration': 'duration',
+                'progress': 'progress',
+                'start': 'start',
+                'end': 'end',
+                'constraintType': 'constraintType',
+                'constraintDate': 'constraintDate',
+                'actualStart': 'actualStart',
+                'actualFinish': 'actualFinish',
+                'notes': 'notes',
+            };
+            
+            const targetField = focusField ? fieldMap[focusField] : 'name';
+            const targetInput = targetField ? this.dom[targetField] : null;
+            
+            if (targetInput && targetInput instanceof HTMLElement) {
+                // Check if disabled (for input/select elements)
+                const isDisabled = (targetInput instanceof HTMLInputElement || targetInput instanceof HTMLSelectElement) 
+                    ? targetInput.disabled 
+                    : false;
                 
-                const targetField = focusField ? fieldMap[focusField] : 'name';
-                const targetInput = targetField ? this.dom[targetField] : null;
-                
-                if (targetInput && targetInput instanceof HTMLElement) {
-                    // Check if disabled (for input/select elements)
-                    const isDisabled = (targetInput instanceof HTMLInputElement || targetInput instanceof HTMLSelectElement) 
-                        ? targetInput.disabled 
-                        : false;
-                    
-                    if (!isDisabled) {
-                        targetInput.focus();
-                        // For text/number inputs, select the text for easier editing
-                        if (targetInput instanceof HTMLInputElement && 
-                            (targetInput.type === 'text' || targetInput.type === 'number')) {
-                            targetInput.select();
-                        }
-                        // For date inputs, trigger click to open picker
-                        if (targetInput instanceof HTMLInputElement && targetInput.type === 'date') {
-                            setTimeout(() => {
-                                targetInput.click();
-                            }, 50);
+                if (!isDisabled) {
+                    // Focus immediately - DOM is already populated and ready
+                    // Blur any currently focused element (like grid input) first
+                    const currentFocus = document.activeElement;
+                    if (currentFocus && currentFocus !== targetInput && currentFocus instanceof HTMLElement) {
+                        // Only blur if it's an input/select in the grid (not our panel)
+                        if (currentFocus.closest('.vsg-row-container') && !currentFocus.closest('.drawer-body')) {
+                            currentFocus.blur();
                         }
                     }
-                } else if (!focusField && (isNewTask || wasClosed)) {
-                    // Fallback to name field if no specific field requested
-                    this.dom.name.focus();
+                    
+                    // Focus the panel input immediately (synchronously)
+                    targetInput.focus();
+                    
+                    // For text/number inputs, select the text for easier editing
+                    if (targetInput instanceof HTMLInputElement && 
+                        (targetInput.type === 'text' || targetInput.type === 'number')) {
+                        // Select synchronously after focus
+                        targetInput.select();
+                    }
+                    
+                    // For date inputs, trigger click to open picker after focus is established
+                    if (targetInput instanceof HTMLInputElement && targetInput.type === 'date') {
+                        // Use requestAnimationFrame to ensure focus is established before opening picker
+                        requestAnimationFrame(() => {
+                            if (document.activeElement === targetInput) {
+                                targetInput.click();
+                            }
+                        });
+                    }
                 }
-            }, 100);
+            } else if (!focusField && (isNewTask || wasClosed)) {
+                // Fallback to name field if no specific field requested
+                this.dom.name.focus();
+            }
         }
     }
 

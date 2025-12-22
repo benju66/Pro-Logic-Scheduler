@@ -469,6 +469,14 @@ export class GridRenderer {
             return;
         }
 
+        // Helper to check if Properties panel is open
+        const isPropertiesPanelOpen = (): boolean => {
+            const panelContainer = document.getElementById('right-panel-container');
+            if (!panelContainer) return false;
+            const detailsPanel = panelContainer.querySelector('.sidebar-panel-wrapper[data-panel="details"]');
+            return detailsPanel !== null && detailsPanel.classList.contains('active');
+        };
+
         // If clicking directly on an input, select the task and focus the cell
         if (target.classList.contains('vsg-input') || target.classList.contains('vsg-select')) {
             const field = target.getAttribute('data-field');
@@ -484,21 +492,25 @@ export class GridRenderer {
                     this.options.onRowClick(taskId, event);
                 }
                 
-                // Then focus the input
-                (target as HTMLInputElement | HTMLSelectElement).focus();
-                if ((target as HTMLInputElement).type === 'text' || (target as HTMLInputElement).type === 'number') {
-                    (target as HTMLInputElement).select();
+                // Only focus grid input if Properties panel is NOT open
+                // If panel is open, let it handle the focus instead
+                if (!isPropertiesPanelOpen()) {
+                    // Then focus the input
+                    (target as HTMLInputElement | HTMLSelectElement).focus();
+                    if ((target as HTMLInputElement).type === 'text' || (target as HTMLInputElement).type === 'number') {
+                        (target as HTMLInputElement).select();
+                    }
+                    
+                    // Update local state for scroll preservation
+                    this.editingCell = { taskId, field };
+                    this.editingRows.add(taskId);
+                    
+                    // Update EditingStateManager
+                    const editingManager = getEditingStateManager();
+                    const task = this.data.find(t => t.id === taskId);
+                    const originalValue = task ? getTaskFieldValue(task, field as GridColumn['field']) : undefined;
+                    editingManager.enterEditMode({ taskId, field }, 'click', originalValue);
                 }
-                
-                // Update local state for scroll preservation
-                this.editingCell = { taskId, field };
-                this.editingRows.add(taskId);
-                
-                // Update EditingStateManager
-                const editingManager = getEditingStateManager();
-                const task = this.data.find(t => t.id === taskId);
-                const originalValue = task ? getTaskFieldValue(task, field as GridColumn['field']) : undefined;
-                editingManager.enterEditMode({ taskId, field }, 'click', originalValue);
             }
             return;
         }
@@ -520,21 +532,25 @@ export class GridRenderer {
                     this.options.onRowClick(taskId, event);
                 }
                 
-                // Then focus the input
-                input.focus();
-                if ((input as HTMLInputElement).type === 'text' || (input as HTMLInputElement).type === 'number') {
-                    (input as HTMLInputElement).select();
+                // Only focus grid input if Properties panel is NOT open
+                // If panel is open, let it handle the focus instead
+                if (!isPropertiesPanelOpen()) {
+                    // Then focus the input
+                    input.focus();
+                    if ((input as HTMLInputElement).type === 'text' || (input as HTMLInputElement).type === 'number') {
+                        (input as HTMLInputElement).select();
+                    }
+                    
+                    // Update local state for scroll preservation
+                    this.editingCell = { taskId, field };
+                    this.editingRows.add(taskId);
+                    
+                    // Update EditingStateManager
+                    const editingManager = getEditingStateManager();
+                    const task = this.data.find(t => t.id === taskId);
+                    const originalValue = task ? getTaskFieldValue(task, field as GridColumn['field']) : undefined;
+                    editingManager.enterEditMode({ taskId, field }, 'click', originalValue);
                 }
-                
-                // Update local state for scroll preservation
-                this.editingCell = { taskId, field };
-                this.editingRows.add(taskId);
-                
-                // Update EditingStateManager
-                const editingManager = getEditingStateManager();
-                const task = this.data.find(t => t.id === taskId);
-                const originalValue = task ? getTaskFieldValue(task, field as GridColumn['field']) : undefined;
-                editingManager.enterEditMode({ taskId, field }, 'click', originalValue);
                 
                 return;
             }
