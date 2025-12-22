@@ -123,6 +123,7 @@ export class SchedulerService {
     public selectedIds: Set<string> = new Set();  // Public for access from UIEventManager
     private selectionOrder: string[] = [];  // Track selection order for linking
     private focusedId: string | null = null;
+    private focusedColumn: string | null = null;  // Track which column is focused
     private anchorId: string | null = null;
 
     // View state
@@ -594,10 +595,12 @@ export class SchedulerService {
             onInsert: () => this.insertTaskBelow(),
             onShiftInsert: () => this.insertTaskAbove(),
             onCtrlEnter: () => this.addChildTask(),
-            onArrowUp: (shiftKey, ctrlKey) => this._handleArrowNavigation('ArrowUp', shiftKey, ctrlKey),
-            onArrowDown: (shiftKey, ctrlKey) => this._handleArrowNavigation('ArrowDown', shiftKey, ctrlKey),
-            onArrowLeft: () => this._handleArrowCollapse('ArrowLeft'),
-            onArrowRight: () => this._handleArrowCollapse('ArrowRight'),
+            onArrowUp: (shiftKey, _ctrlKey) => this._handleCellNavigation('up', shiftKey),
+            onArrowDown: (shiftKey, _ctrlKey) => this._handleCellNavigation('down', shiftKey),
+            onArrowLeft: (shiftKey, _ctrlKey) => this._handleCellNavigation('left', shiftKey),
+            onArrowRight: (shiftKey, _ctrlKey) => this._handleCellNavigation('right', shiftKey),
+            onCtrlArrowLeft: () => this._handleArrowCollapse('ArrowLeft'),
+            onCtrlArrowRight: () => this._handleArrowCollapse('ArrowRight'),
             onTab: () => this._handleTabIndent(),
             onShiftTab: () => this._handleTabOutdent(),
             onCtrlArrowUp: () => this.moveSelectedTasks(-1),
@@ -2295,6 +2298,107 @@ export class SchedulerService {
     }
 
     /**
+     * Handle arrow cell navigation (Excel-style)
+     * @private
+     * @param direction - 'up' | 'down' | 'left' | 'right'
+     * @param shiftKey - Shift key pressed (for range selection)
+     */
+    private _handleCellNavigation(direction: 'up' | 'down' | 'left' | 'right', shiftKey: boolean): void {
+        const editableColumns = this.getColumnDefinitions()
+            .filter(col => col.type === 'text' || col.type === 'number' || col.type === 'date' || col.type === 'select')
+            .map(col => col.field);
+        
+        if (editableColumns.length === 0) return;
+        
+        const visibleTasks = this.taskStore.getVisibleTasks((id) => {
+            const task = this.taskStore.getById(id);
+            return task?._collapsed || false;
+        });
+        
+        if (visibleTasks.length === 0) return;
+        
+        // Initialize focused column if not set
+        if (!this.focusedColumn) {
+            this.focusedColumn = editableColumns[0]; // Default to first editable column (name)
+        }
+        
+        let currentRowIndex = this.focusedId 
+            ? visibleTasks.findIndex(t => t.id === this.focusedId)
+            : 0;
+        let currentColIndex = editableColumns.indexOf(this.focusedColumn);
+        if (currentColIndex === -1) currentColIndex = 0;
+        
+        let newRowIndex = currentRowIndex;
+        let newColIndex = currentColIndex;
+        
+        switch (direction) {
+            case 'up':
+                newRowIndex = Math.max(0, currentRowIndex - 1);
+                break;
+            case 'down':
+                newRowIndex = Math.min(visibleTasks.length - 1, currentRowIndex + 1);
+                break;
+            case 'left':
+                if (currentColIndex > 0) {
+                    newColIndex = currentColIndex - 1;
+                } else if (currentRowIndex > 0) {
+                    // Wrap to previous row, last column
+                    newRowIndex = currentRowIndex - 1;
+                    newColIndex = editableColumns.length - 1;
+                }
+                break;
+            case 'right':
+                if (currentColIndex < editableColumns.length - 1) {
+                    newColIndex = currentColIndex + 1;
+                } else if (currentRowIndex < visibleTasks.length - 1) {
+                    // Wrap to next row, first column
+                    newRowIndex = currentRowIndex + 1;
+                    newColIndex = 0;
+                }
+                break;
+        }
+        
+        const newTaskId = visibleTasks[newRowIndex].id;
+        const newColumn = editableColumns[newColIndex];
+        
+        // Update selection (row-based, same as before for up/down)
+        if (direction === 'up' || direction === 'down') {
+            if (shiftKey && this.anchorId) {
+                // Extend selection
+                const anchorIndex = visibleTasks.findIndex(t => t.id === this.anchorId);
+                const start = Math.min(anchorIndex, newRowIndex);
+                const end = Math.max(anchorIndex, newRowIndex);
+                
+                this.selectedIds.clear();
+                for (let i = start; i <= end; i++) {
+                    this.selectedIds.add(visibleTasks[i].id);
+                }
+            } else if (!shiftKey) {
+                this.selectedIds.clear();
+                this.selectedIds.add(newTaskId);
+                this.anchorId = newTaskId;
+            }
+        } else {
+            // Left/Right: just move focus, keep current row selected
+            if (newRowIndex !== currentRowIndex) {
+                this.selectedIds.clear();
+                this.selectedIds.add(newTaskId);
+                this.anchorId = newTaskId;
+            }
+        }
+        
+        this.focusedId = newTaskId;
+        this.focusedColumn = newColumn;
+        this._updateSelection();
+        
+        // Focus the cell in the grid
+        if (this.grid) {
+            this.grid.scrollToTask(newTaskId);
+            this.grid.focusCell(newTaskId, newColumn);
+        }
+    }
+
+    /**
      * Handle arrow collapse/expand
      * @private
      * @param key - 'ArrowLeft' or 'ArrowRight'
@@ -3414,7 +3518,8 @@ export class SchedulerService {
      */
     enterEditMode(): void {
         if (this.focusedId && this.grid) {
-            this.grid.focusCell(this.focusedId, 'name');
+            const field = this.focusedColumn || 'name';
+            this.grid.focusCell(this.focusedId, field);
         }
     }
 

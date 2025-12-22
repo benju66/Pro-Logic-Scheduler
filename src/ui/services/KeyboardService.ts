@@ -18,12 +18,14 @@ export interface KeyboardServiceOptions {
   onCtrlEnter?: () => void;
   onArrowUp?: (shiftKey: boolean, ctrlKey: boolean) => void;
   onArrowDown?: (shiftKey: boolean, ctrlKey: boolean) => void;
-  onArrowLeft?: () => void;
-  onArrowRight?: () => void;
+  onArrowLeft?: (shiftKey: boolean, ctrlKey: boolean) => void;
+  onArrowRight?: (shiftKey: boolean, ctrlKey: boolean) => void;
   onTab?: () => void;
   onShiftTab?: () => void;
   onCtrlArrowUp?: () => void;
   onCtrlArrowDown?: () => void;
+  onCtrlArrowLeft?: () => void;
+  onCtrlArrowRight?: () => void;
   onF2?: () => void;
   onEscape?: () => void;
   onLinkSelected?: () => void;
@@ -125,6 +127,32 @@ export class KeyboardService {
       return;
     }
 
+    // Insert key - add task below (default), Shift+Insert - add task above
+    // Ctrl+I also triggers insert (works even when editing - saves and inserts)
+    if (e.key === 'Insert' || (isCtrl && e.key === 'i')) {
+      e.preventDefault();
+      
+      // If editing, blur the input first to save the current edit
+      if (isEditing) {
+        (e.target as HTMLElement).blur();
+      }
+      
+      if (e.shiftKey) {
+        if (this.options.onShiftInsert) {
+          setTimeout(() => {
+            this.options.onShiftInsert!();
+          }, 50);
+        }
+      } else {
+        if (this.options.onInsert) {
+          setTimeout(() => {
+            this.options.onInsert!();
+          }, 50);
+        }
+      }
+      return;
+    }
+
     // Skip other shortcuts when editing (except undo/redo)
     if (isEditing) return;
 
@@ -176,23 +204,6 @@ export class KeyboardService {
       return;
     }
 
-    // Insert key - add task below (default), Shift+Insert - add task above
-    if (e.key === 'Insert' || (isCtrl && e.key === 'i')) {
-      e.preventDefault();
-      
-      if (e.shiftKey) {
-        // Shift+Insert: Insert ABOVE focused task (old behavior)
-        if (this.options.onShiftInsert) {
-          this.options.onShiftInsert();
-        }
-      } else {
-        // Insert: Insert BELOW focused task (new default)
-        if (this.options.onInsert) {
-          this.options.onInsert();
-        }
-      }
-      return;
-    }
 
     // Ctrl+Arrow Up/Down - move task
     if (isCtrl && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
@@ -208,7 +219,20 @@ export class KeyboardService {
       }
     }
 
-    // Arrow key navigation (up/down)
+    // Ctrl+Arrow Left/Right - collapse/expand
+    if (isCtrl && e.key === 'ArrowLeft' && this.options.onCtrlArrowLeft) {
+      e.preventDefault();
+      this.options.onCtrlArrowLeft();
+      return;
+    }
+
+    if (isCtrl && e.key === 'ArrowRight' && this.options.onCtrlArrowRight) {
+      e.preventDefault();
+      this.options.onCtrlArrowRight();
+      return;
+    }
+
+    // Arrow key navigation (up/down/left/right) - cell navigation
     if (e.key === 'ArrowUp' && this.options.onArrowUp) {
       e.preventDefault();
       this.options.onArrowUp(e.shiftKey, isCtrl);
@@ -221,16 +245,16 @@ export class KeyboardService {
       return;
     }
 
-    // Arrow Left/Right - collapse/expand
+    // Arrow Left/Right - cell navigation
     if (e.key === 'ArrowLeft' && this.options.onArrowLeft) {
       e.preventDefault();
-      this.options.onArrowLeft();
+      this.options.onArrowLeft(e.shiftKey, isCtrl);
       return;
     }
 
     if (e.key === 'ArrowRight' && this.options.onArrowRight) {
       e.preventDefault();
-      this.options.onArrowRight();
+      this.options.onArrowRight(e.shiftKey, isCtrl);
       return;
     }
 
@@ -241,15 +265,15 @@ export class KeyboardService {
       return;
     }
 
-    // Link selected tasks (L)
-    if (e.key === 'l' || e.key === 'L') {
+    // Link selected tasks (Ctrl+L)
+    if (isCtrl && (e.key === 'l' || e.key === 'L')) {
       e.preventDefault();
       if (this.options.onLinkSelected) this.options.onLinkSelected();
       return;
     }
 
-    // Driving path mode (D)
-    if (e.key === 'd' || e.key === 'D') {
+    // Driving path mode (Ctrl+D)
+    if (isCtrl && (e.key === 'd' || e.key === 'D')) {
       e.preventDefault();
       if (this.options.onDrivingPath) this.options.onDrivingPath();
       return;
