@@ -1714,10 +1714,80 @@ export class SchedulerService {
             }
             
             this.toastService.info('Finish deadline (FNLT) applied');
-        } else if (field === 'actualStart' || field === 'actualFinish') {
-            // Actuals don't trigger CPM recalc, just update
-            this.taskStore.update(taskId, { [field]: value });
-            this.render(); // Just re-render to show variance
+        } else if (field === 'actualStart') {
+            // DRIVER MODE + ANCHOR: actualStart drives schedule and locks history
+            const calendar = this.calendarStore.get();
+            const updates: Partial<Task> = {
+                actualStart: value,
+                start: value,
+                constraintType: 'snet' as ConstraintType,
+                constraintDate: value,
+            };
+            
+            if (task.actualFinish) {
+                updates.duration = DateUtils.calcWorkDays(value, task.actualFinish, calendar);
+            }
+            
+            this.taskStore.update(taskId, updates);
+            
+            if (this.engine) {
+                this.engine.updateTask(taskId, updates).catch(error => {
+                    console.warn('[SchedulerService] Failed to sync actualStart to engine:', error);
+                });
+            }
+            
+            this.toastService.info('Task started - schedule locked with SNET constraint');
+            this.recalculateAll();
+            this.render();
+            return;
+            
+        } else if (field === 'actualFinish') {
+            // DRIVER MODE + COMPLETION: actualFinish closes out the task
+            const effectiveStart = task.actualStart || task.start;
+            
+            if (effectiveStart && value < effectiveStart) {
+                this.toastService.warning('Actual finish cannot be before start date');
+                return;
+            }
+            
+            const calendar = this.calendarStore.get();
+            const actualDuration = effectiveStart
+                ? DateUtils.calcWorkDays(effectiveStart, value, calendar)
+                : task.duration;
+            
+            const updates: Partial<Task> = {
+                actualFinish: value,
+                end: value,
+                progress: 100,
+                remainingDuration: 0,
+                duration: actualDuration,
+            };
+            
+            // Auto-populate actualStart with full Anchor logic
+            if (!task.actualStart) {
+                if (task.start) {
+                    updates.actualStart = task.start;
+                    updates.start = task.start;
+                    updates.constraintType = 'snet' as ConstraintType;
+                    updates.constraintDate = task.start;
+                } else {
+                    // SAFETY NET: Cannot finish a task that has no start
+                    this.toastService.warning('Cannot mark finished: Task has no Start Date.');
+                    return;
+                }
+            }
+            
+            this.taskStore.update(taskId, updates);
+            
+            if (this.engine) {
+                this.engine.updateTask(taskId, updates).catch(error => {
+                    console.warn('[SchedulerService] Failed to sync actualFinish to engine:', error);
+                });
+            }
+            
+            this.toastService.success('Task complete');
+            this.recalculateAll();
+            this.render();
             return;
         }
         
@@ -1813,36 +1883,165 @@ export class SchedulerService {
                 break;
                 
             case 'actualStart':
-                // Actual start edit: Update actual start date (does NOT trigger CPM recalculation)
+                // ═══════════════════════════════════════════════════════════════════
+                // DRIVER MODE + ANCHOR: actualStart drives schedule and locks history
+                // ═══════════════════════════════════════════════════════════════════
                 if (value && !isParent) {
                     const actualStartValue = String(value);
+                    
+                    // Validate date format
                     if (!/^\d{4}-\d{2}-\d{2}$/.test(actualStartValue)) {
-                        console.warn('[SchedulerService] Invalid date format:', actualStartValue);
+                        console.warn('[SchedulerService] Invalid date format for actualStart:', actualStartValue);
                         return { needsRecalc: false, needsRender: false, success: false };
                     }
-                    this.taskStore.update(taskId, { actualStart: actualStartValue });
-                    needsRender = true; // Re-render to update variance display
+
+                    // Build atomic update
+                    // CRITICAL: Lock with SNET so CPM respects historical fact
+                    const updates: Partial<Task> = {
+                        actualStart: actualStartValue,
+                        start: actualStartValue,
+                        constraintType: 'snet' as ConstraintType,
+                        constraintDate: actualStartValue,
+                    };
+
+                    // If task was already finished, recalculate duration for consistency
+                    if (task.actualFinish) {
+                        updates.duration = DateUtils.calcWorkDays(
+                            actualStartValue,
+                            task.actualFinish,
+                            this.calendarStore.get()
+                        );
+                    }
+
+                    // Atomic update
+                    this.taskStore.update(taskId, updates);
+
+                    // Sync to engine
+                    if (this.engine) {
+                        this.engine.updateTask(taskId, updates).catch(error => {
+                            console.warn('[SchedulerService] Failed to sync actualStart to engine:', error);
+                        });
+                    }
+
+                    this.toastService.info('Task started - schedule locked with SNET constraint');
+                    needsRecalc = true;
+                    
                 } else if (!value && !isParent) {
-                    // Clear actual start
+                    // Clearing actualStart
+                    // NOTE: We preserve the constraint - user may have wanted SNET anyway
+                    // They can manually remove it if needed
                     this.taskStore.update(taskId, { actualStart: null });
-                    needsRender = true;
+                    
+                    if (this.engine) {
+                        this.engine.updateTask(taskId, { actualStart: null }).catch(error => {
+                            console.warn('[SchedulerService] Failed to sync actualStart clear to engine:', error);
+                        });
+                    }
+                    
+                    this.toastService.info('Actual start cleared. Start constraint preserved.');
+                    needsRecalc = true;
                 }
                 break;
                 
             case 'actualFinish':
-                // Actual finish edit: Update actual finish date (does NOT trigger CPM recalculation)
+                // ═══════════════════════════════════════════════════════════════════
+                // DRIVER MODE + COMPLETION: actualFinish closes out the task
+                // ═══════════════════════════════════════════════════════════════════
                 if (value && !isParent) {
                     const actualFinishValue = String(value);
+                    
+                    // Validate date format
                     if (!/^\d{4}-\d{2}-\d{2}$/.test(actualFinishValue)) {
-                        console.warn('[SchedulerService] Invalid date format:', actualFinishValue);
+                        console.warn('[SchedulerService] Invalid date format for actualFinish:', actualFinishValue);
                         return { needsRecalc: false, needsRender: false, success: false };
                     }
-                    this.taskStore.update(taskId, { actualFinish: actualFinishValue });
-                    needsRender = true; // Re-render to update variance display
+
+                    // Determine effective start for validation and duration calc
+                    const effectiveStart = task.actualStart || task.start;
+
+                    // Validation: finish cannot be before start
+                    if (effectiveStart && actualFinishValue < effectiveStart) {
+                        this.toastService.warning('Actual finish cannot be before start date');
+                        return { needsRecalc: false, needsRender: false, success: false };
+                    }
+
+                    // Calculate actual duration
+                    const calendar = this.calendarStore.get();
+                    const actualDuration = effectiveStart
+                        ? DateUtils.calcWorkDays(effectiveStart, actualFinishValue, calendar)
+                        : task.duration;
+
+                    // Build atomic update
+                    const updates: Partial<Task> = {
+                        actualFinish: actualFinishValue,
+                        end: actualFinishValue,
+                        progress: 100,
+                        remainingDuration: 0,  // CRITICAL: Zero out for Earned Value calculations
+                        duration: actualDuration,
+                    };
+
+                    // 1. Auto-populate actualStart if not set
+                    if (!task.actualStart) {
+                        if (task.start) {
+                            // Apply "Anchor Logic" to the implied start
+                            updates.actualStart = task.start;
+                            updates.start = task.start;
+                            updates.constraintType = 'snet' as ConstraintType;
+                            updates.constraintDate = task.start;
+                        } else {
+                            // SAFETY NET: Cannot finish a task that has no start
+                            this.toastService.warning('Cannot mark finished: Task has no Start Date.');
+                            return { needsRecalc: false, needsRender: false, success: false };
+                        }
+                    }
+
+                    // Atomic update
+                    this.taskStore.update(taskId, updates);
+
+                    // Sync to engine
+                    if (this.engine) {
+                        this.engine.updateTask(taskId, updates).catch(error => {
+                            console.warn('[SchedulerService] Failed to sync actualFinish to engine:', error);
+                        });
+                    }
+
+                    // User feedback with duration variance
+                    const plannedDuration = task.duration || 0;
+                    const variance = actualDuration - plannedDuration;
+                    
+                    if (variance > 0) {
+                        this.toastService.info(
+                            `Task complete - took ${variance} day${variance !== 1 ? 's' : ''} longer than planned`
+                        );
+                    } else if (variance < 0) {
+                        this.toastService.success(
+                            `Task complete - finished ${Math.abs(variance)} day${Math.abs(variance) !== 1 ? 's' : ''} early!`
+                        );
+                    } else {
+                        this.toastService.success('Task complete - on schedule');
+                    }
+
+                    needsRecalc = true;
+                    
                 } else if (!value && !isParent) {
-                    // Clear actual finish
-                    this.taskStore.update(taskId, { actualFinish: null });
-                    needsRender = true;
+                    // Clearing actualFinish - task is no longer complete
+                    this.taskStore.update(taskId, { 
+                        actualFinish: null,
+                        progress: 0,
+                        remainingDuration: task.duration // Reset remaining work
+                    });
+                    
+                    if (this.engine) {
+                        this.engine.updateTask(taskId, { 
+                            actualFinish: null, 
+                            progress: 0 
+                        }).catch(error => {
+                            console.warn('[SchedulerService] Failed to sync actualFinish clear to engine:', error);
+                        });
+                    }
+                    
+                    this.toastService.info('Task reopened');
+                    needsRecalc = true;
                 }
                 break;
                 
