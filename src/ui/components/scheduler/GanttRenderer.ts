@@ -366,6 +366,7 @@ export class GanttRenderer {
         this.resizeObserver = new ResizeObserver(() => {
             this._measure();
             this.dirty = true;
+            this.options.onNeedsRender();  // Notify viewport to schedule render
         });
         this.resizeObserver.observe(this.container);
     }
