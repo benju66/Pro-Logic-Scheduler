@@ -896,18 +896,28 @@ export class VirtualScrollGrid {
             return;
         }
         
-        // Escape key cancels edit
+        // Escape key exits edit mode (keeps current value)
         if (e.key === 'Escape' && input.classList.contains('vsg-input')) {
-            // Restore original value
+            e.preventDefault();
+            e.stopPropagation(); // CRITICAL: Prevent KeyboardService from clearing selection
+            
             const row = input.closest('.vsg-row') as HTMLElement | null;
             const taskId = row?.getAttribute('data-task-id');
             const field = input.getAttribute('data-field');
-            const task = this.data.find(t => t.id === taskId);
-            if (task && field) {
-                const value = getTaskFieldValue(task, field as GridColumn['field']);
-                (input as HTMLInputElement).value = value ? String(value) : '';
+            
+            // Clear internal editing state
+            this.editingCell = null;
+            if (taskId) {
+                this.editingRows.delete(taskId);
             }
+            
+            // Blur the input (keeps current value - no restore)
             input.blur();
+            
+            // Notify SchedulerService to exit edit mode
+            if (this.options.onEditEnd) {
+                this.options.onEditEnd();
+            }
             return;
         }
     }

@@ -740,27 +740,19 @@ export class GridRenderer {
         }
 
         // ========================================
-        // ESCAPE: Cancel edit
+        // ESCAPE: Exit edit mode (keeps current value)
         // ========================================
         if (e.key === 'Escape' && (isVsgInput || isVsgSelect)) {
             e.preventDefault();
+            e.stopPropagation(); // CRITICAL: Prevent KeyboardService from clearing selection
             
-            // Restore original value
-            const task = this.data.find(t => t.id === taskId);
-            if (task && currentField) {
-                const originalValue = this._getTaskFieldValue(task, currentField);
-                
-                // For date inputs, restore with display format
-                if (target.classList.contains('vsg-date-input')) {
-                    const input = target as HTMLInputElement;
-                    input.value = originalValue ? formatDateForDisplay(String(originalValue)) : '';
-                    input.dataset.isoValue = originalValue ? String(originalValue) : '';
-                } else {
-                    (target as HTMLInputElement | HTMLSelectElement).value = originalValue ? String(originalValue) : '';
-                }
+            // Clear internal editing state
+            this.editingCell = null;
+            if (taskId) {
+                this.editingRows.delete(taskId);
             }
             
-            // Blur the input
+            // Blur the input (keeps current value - no restore)
             target.blur();
             
             // CRITICAL: Notify service that editing ended
