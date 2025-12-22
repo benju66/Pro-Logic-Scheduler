@@ -129,6 +129,9 @@ export class GridRenderer {
             height: 100%;
             position: relative;
         `;
+        
+        // Make container focusable so keyboard events can be captured after exiting edit mode
+        this.container.setAttribute('tabindex', '-1');
 
         // Create row container for virtual scrolling
         this.rowContainer = document.createElement('div');
@@ -356,6 +359,18 @@ export class GridRenderer {
     clearCellHighlight(): void {
         const highlighted = this.rowContainer.querySelectorAll('.vsg-cell-selected');
         highlighted.forEach(el => el.classList.remove('vsg-cell-selected'));
+    }
+
+    /**
+     * Focus the grid container element
+     * This allows keyboard events to be properly captured after exiting edit mode
+     */
+    focus(): void {
+        // Focus the scrollable container
+        // The container has tabindex="-1" to be focusable but not in tab order
+        if (this.container) {
+            this.container.focus();
+        }
     }
 
     /**
@@ -727,7 +742,9 @@ export class GridRenderer {
         // ========================================
         // ESCAPE: Cancel edit
         // ========================================
-        if (e.key === 'Escape' && isVsgInput) {
+        if (e.key === 'Escape' && (isVsgInput || isVsgSelect)) {
+            e.preventDefault();
+            
             // Restore original value
             const task = this.data.find(t => t.id === taskId);
             if (task && currentField) {
@@ -739,13 +756,14 @@ export class GridRenderer {
                     input.value = originalValue ? formatDateForDisplay(String(originalValue)) : '';
                     input.dataset.isoValue = originalValue ? String(originalValue) : '';
                 } else {
-                    (target as HTMLInputElement).value = originalValue ? String(originalValue) : '';
+                    (target as HTMLInputElement | HTMLSelectElement).value = originalValue ? String(originalValue) : '';
                 }
             }
             
+            // Blur the input
             target.blur();
             
-            // Notify service that editing ended
+            // CRITICAL: Notify service that editing ended
             if (this.options.onEditEnd) {
                 this.options.onEditEnd();
             }

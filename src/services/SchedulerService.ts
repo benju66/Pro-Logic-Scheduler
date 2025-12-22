@@ -504,6 +504,13 @@ export class SchedulerService {
                     gridRenderer.highlightCell(taskId, field);
                 }
             },
+            focus: () => {
+                // Delegate to grid renderer if available
+                const gridRenderer = (viewport as any).gridRenderer as GridRenderer | null;
+                if (gridRenderer) {
+                    gridRenderer.focus();
+                }
+            },
             refresh: () => viewport.refresh(),
             updateColumns: (columns: GridColumn[]) => viewport.updateGridColumns(columns),
             updateRow: (taskId: string) => viewport.updateRow(taskId),
@@ -3540,6 +3547,12 @@ export class SchedulerService {
         // Re-highlight the cell visually (we're back to "selected" state)
         if (this.focusedId && this.focusedColumn && this.grid) {
             this.grid.highlightCell(this.focusedId, this.focusedColumn);
+        }
+        
+        // CRITICAL: Focus the grid container so arrow keys work
+        // Without this, focus stays on body and arrow keys may not be captured
+        if (this.grid) {
+            this.grid.focus();
         }
     }
 

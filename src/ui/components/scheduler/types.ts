@@ -202,6 +202,7 @@ export interface VirtualScrollGridFacade {
     scrollToTask(taskId: string): void;
     focusCell(taskId: string, field: string): void;
     highlightCell(taskId: string, field: string): void;
+    focus(): void;
     refresh(): void;
     updateColumns(columns: GridColumn[]): void;
     updateRow(taskId: string): void;
