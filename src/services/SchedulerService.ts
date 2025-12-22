@@ -3926,7 +3926,8 @@ export class SchedulerService {
         // Restore onChange
         restoreNotifications();
 
-        // Roll up parent dates
+        // Roll up parent dates - KEEP THIS CALL
+        // This ensures parent dates are always correct, even if CPM/Rust engine doesn't calculate them
         this._rollupParentDates();
         
         // Trigger render updates
@@ -3969,25 +3970,69 @@ export class SchedulerService {
 
     /**
      * Roll up parent task dates from children
+     * 
+     * Calculates parent dates as:
+     * - Start = Min(child start dates)
+     * - End = Max(child end dates)  
+     * - Duration = work days from Start to End
+     * 
+     * Processes deepest parents first to handle nested hierarchies correctly.
      * @private
      */
     private _rollupParentDates(): void {
-        const tasks = this.taskStore.getAll();
-        const parents = tasks.filter(t => this.taskStore.isParent(t.id));
+        const allTasks = this.taskStore.getAll();
+        const calendar = this.calendarStore.get();
+        
+        // Find all parent tasks (tasks that have children)
+        const parentIds = new Set<string>();
+        allTasks.forEach(task => {
+            if (task.parentId) {
+                parentIds.add(task.parentId);
+            }
+        });
+        
+        if (parentIds.size === 0) return;
+        
+        // Get parent tasks and sort by depth (deepest first)
+        // This ensures child-parents are processed before grandparents
+        const parents = allTasks.filter(t => parentIds.has(t.id));
+        const sortedParents = [...parents].sort((a, b) => 
+            this.taskStore.getDepth(b.id) - this.taskStore.getDepth(a.id)
+        );
 
-        parents.forEach(parent => {
+        sortedParents.forEach(parent => {
+            // Get direct children of this parent
             const children = this.taskStore.getChildren(parent.id);
             if (children.length === 0) return;
 
-            const childStarts = children.map(c => c.start).filter(Boolean).sort();
-            const childEnds = children.map(c => c.end).filter(Boolean).sort();
+            // Collect valid start and end dates from children
+            const childStarts: string[] = [];
+            const childEnds: string[] = [];
+            
+            children.forEach(child => {
+                if (child.start && child.start.length > 0) {
+                    childStarts.push(child.start);
+                }
+                if (child.end && child.end.length > 0) {
+                    childEnds.push(child.end);
+                }
+            });
 
-            if (childStarts.length > 0 && childEnds.length > 0) {
-                this.taskStore.update(parent.id, {
-                    start: childStarts[0],
-                    end: childEnds[childEnds.length - 1],
-                });
-            }
+            if (childStarts.length === 0 || childEnds.length === 0) return;
+
+            // Sort to find min start and max end
+            childStarts.sort();
+            childEnds.sort();
+            
+            const newStart = childStarts[0];
+            const newEnd = childEnds[childEnds.length - 1];
+            const newDuration = DateUtils.calcWorkDays(newStart, newEnd, calendar);
+            
+            // Update parent task with rolled-up values
+            // Use direct assignment to avoid triggering unnecessary events
+            parent.start = newStart;
+            parent.end = newEnd;
+            parent.duration = newDuration;
         });
     }
 
