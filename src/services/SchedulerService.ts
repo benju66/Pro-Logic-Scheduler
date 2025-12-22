@@ -33,6 +33,8 @@ import { ToastService } from '../ui/services/ToastService';
 import { FileService } from '../ui/services/FileService';
 import { KeyboardService } from '../ui/services/KeyboardService';
 import { OrderingService } from './OrderingService';
+import { getEditingStateManager, type EditingStateChangeEvent } from './EditingStateManager';
+import { getTaskFieldValue } from '../types';
 import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport';
 import { GridRenderer } from '../ui/components/scheduler/GridRenderer';
 import { GanttRenderer } from '../ui/components/scheduler/GanttRenderer';
@@ -124,8 +126,11 @@ export class SchedulerService {
     private selectionOrder: string[] = [];  // Track selection order for linking
     private focusedId: string | null = null;
     private focusedColumn: string | null = null;  // Track which column is focused
-    private isEditingCell: boolean = false;       // True when actually editing (input focused)
+    // REMOVE: private isEditingCell: boolean = false;
+    // State now managed by EditingStateManager
     private anchorId: string | null = null;
+    
+    private _unsubscribeEditing: (() => void) | null = null;
 
     // View state
     public viewMode: ViewMode = 'Week';  // Public for access from StatsService
@@ -452,6 +457,15 @@ export class SchedulerService {
 
         // Note: Keyboard shortcuts are initialized after init() completes
         // See main.ts - they're attached after scheduler initialization
+        
+        // Subscribe to editing state changes
+        const editingManager = getEditingStateManager();
+        this._unsubscribeEditing = editingManager.subscribe((event) => {
+            this._onEditingStateChange(event);
+        });
+        
+        // Enable debug mode during development (optional)
+        // editingManager.setDebugMode(true);
 
         // Load persisted data
         try {
@@ -1518,10 +1532,17 @@ export class SchedulerService {
     }
 
     /**
-     * Set all tasks
+     * Set all tasks (replaces entire dataset)
+     * CRITICAL: Reset editing state when replacing entire dataset
      * @param tasks - Tasks array
      */
     set tasks(tasks: Task[]) {
+        const editingManager = getEditingStateManager();
+        
+        // CRITICAL: Reset editing state when replacing entire dataset
+        // Unconditional reset - always safe when replacing entire dataset
+        editingManager.reset();
+        
         this.taskStore.setAll(tasks);
         // Trigger render to update viewport with new data
         this.render();
@@ -2316,14 +2337,17 @@ export class SchedulerService {
     /**
      * Handle arrow cell navigation (Excel-style)
      * Moves the selection highlight WITHOUT entering edit mode
+     * UPDATED: Check EditingStateManager instead of local flag
      * @private
      * @param direction - 'up' | 'down' | 'left' | 'right'
      * @param shiftKey - Shift key pressed (for range selection)
      */
     private _handleCellNavigation(direction: 'up' | 'down' | 'left' | 'right', shiftKey: boolean): void {
-        // If currently editing, let the input handle arrow keys naturally
-        if (this.isEditingCell) {
-            return;  // Don't preventDefault - let browser handle text cursor
+        const editingManager = getEditingStateManager();
+        
+        // If currently editing, don't navigate
+        if (editingManager.isEditing()) {
+            return;
         }
         
         const editableColumns = this.getColumnDefinitions()
@@ -2927,10 +2951,17 @@ export class SchedulerService {
     }
 
     /**
-     * Delete a task
+     * Delete a task - validate editing state
      * @param taskId - Task ID
      */
     deleteTask(taskId: string): void {
+        const editingManager = getEditingStateManager();
+        
+        // If deleting the task being edited, exit edit mode first
+        if (editingManager.isEditingTask(taskId)) {
+            editingManager.exitEditMode('task-deleted');
+        }
+        
         this.saveCheckpoint();
         
         // Collect all task IDs to delete (including children)
@@ -3526,12 +3557,73 @@ export class SchedulerService {
      * Enter edit mode for focused task
      */
     /**
+     * Handle editing state changes from EditingStateManager
+     */
+    private _onEditingStateChange(event: EditingStateChangeEvent): void {
+        const { newState, previousState, trigger } = event;
+        
+        if (!newState.isEditing && previousState.isEditing) {
+            // Exiting edit mode
+            
+            // Re-highlight the cell visually
+            if (this.focusedId && this.focusedColumn && this.grid) {
+                this.grid.highlightCell(this.focusedId, this.focusedColumn);
+            }
+            
+            // Focus the grid container for keyboard navigation
+            // CRITICAL: Must focus the container (tabindex="-1"), NOT the input cell
+            // If we focus the input, it would re-trigger edit mode, causing an infinite loop
+            // GridRenderer.focus() correctly focuses this.container (which has tabindex="-1")
+            // Use requestAnimationFrame for better timing than setTimeout
+            if (this.grid) {
+                requestAnimationFrame(() => {
+                    // Defensive check: Ensure we're not accidentally focusing an input
+                    const activeElement = document.activeElement;
+                    if (activeElement && 
+                        (activeElement.classList.contains('vsg-input') || 
+                         activeElement.classList.contains('vsg-select'))) {
+                        // If somehow an input is focused, blur it first
+                        (activeElement as HTMLElement).blur();
+                    }
+                    // GridRenderer.focus() focuses the container (tabindex="-1"), not the input
+                    this.grid?.focus();
+                });
+            }
+        }
+        
+        // Update selection when Enter/Shift+Enter/Tab moves to a different row
+        if ((trigger === 'enter' || trigger === 'tab' || trigger === 'shift-tab') && 
+            newState.isEditing && newState.context) {
+            const prevTaskId = previousState.context?.taskId;
+            const newTaskId = newState.context.taskId;
+            
+            // If we moved to a new row, update checkbox selection
+            if (prevTaskId && newTaskId !== prevTaskId) {
+                this.selectedIds.clear();
+                this.selectedIds.add(newTaskId);
+                this.focusedId = newTaskId;
+                this.focusedColumn = newState.context.field;
+                this.anchorId = newTaskId;
+                this._updateSelection();
+            }
+        }
+    }
+
+    /**
      * Enter edit mode for the currently highlighted cell
      */
     enterEditMode(): void {
         if (!this.focusedId || !this.focusedColumn) return;
         
-        this.isEditingCell = true;
+        const editingManager = getEditingStateManager();
+        const task = this.taskStore.getById(this.focusedId);
+        const originalValue = task ? getTaskFieldValue(task, this.focusedColumn as GridColumn['field']) : undefined;
+        
+        editingManager.enterEditMode(
+            { taskId: this.focusedId, field: this.focusedColumn },
+            'f2',
+            originalValue
+        );
         
         if (this.grid) {
             this.grid.focusCell(this.focusedId, this.focusedColumn);
@@ -3539,23 +3631,13 @@ export class SchedulerService {
     }
 
     /**
-     * Called when cell editing ends (blur, Enter, Escape, Tab)
+     * Called when cell editing ends
+     * Now mostly handled by EditingStateManager subscription
      */
     exitEditMode(): void {
-        this.isEditingCell = false;
-        
-        // Re-highlight the cell visually (we're back to "selected" state)
-        if (this.focusedId && this.focusedColumn && this.grid) {
-            this.grid.highlightCell(this.focusedId, this.focusedColumn);
-        }
-        
-        // CRITICAL: Focus the grid container so arrow keys work
-        // Use setTimeout to ensure blur completes before focusing
-        // Without this, focus stays on body and arrow keys may not be captured
-        if (this.grid) {
-            setTimeout(() => {
-                this.grid?.focus();
-            }, 0);
+        const editingManager = getEditingStateManager();
+        if (editingManager.isEditing()) {
+            editingManager.exitEditMode('programmatic');
         }
     }
 
@@ -4258,9 +4340,18 @@ export class SchedulerService {
     // =========================================================================
 
     /**
-     * Load data from SQLite (with localStorage fallback)
+     * Load data from storage (SQLite or localStorage)
+     * CRITICAL: Reset editing state at the very start - prevents saving to non-existent task IDs
+     * This is called during initialization and when loading a new file/project
      */
     async loadData(): Promise<void> {
+        const editingManager = getEditingStateManager();
+        
+        // CRITICAL: Reset editing state at the very start
+        // This is a cheap insurance policy against corrupting data when switching projects
+        // If editing state persists, it might try to save to a task ID that no longer exists
+        editingManager.reset();
+        
         console.log('[SchedulerService] 🔍 loadData() called');
         
         try {
@@ -5077,7 +5168,15 @@ export class SchedulerService {
     /**
      * Clean up resources
      */
+    /**
+     * Cleanup on destroy
+     */
     destroy(): void {
+        if (this._unsubscribeEditing) {
+            this._unsubscribeEditing();
+            this._unsubscribeEditing = null;
+        }
+        
         if (this.keyboardService) {
             this.keyboardService.detach();
         }

@@ -15,6 +15,8 @@ import { BindingSystem } from './pool/BindingSystem';
 import flatpickr from 'flatpickr';
 import type { Instance } from 'flatpickr/dist/types/instance';
 import { createSharedPickerOptions, destroyDatePicker, parseFlexibleDate, formatDateISO, formatDateForDisplay } from './datepicker/DatePickerConfig';
+import { getEditingStateManager } from '../../../services/EditingStateManager';
+import { getTaskFieldValue } from '../../../types';
 
 /**
  * Editing cell state
@@ -304,20 +306,31 @@ export class GridRenderer {
      * Focus a specific cell (enters edit mode)
      */
     focusCell(taskId: string, field: string): void {
+        const editingManager = getEditingStateManager();
+        
         const row = this.rowContainer.querySelector(`[data-task-id="${taskId}"]`) as HTMLElement | null;
         if (!row) return;
 
         const cell = row.querySelector(`[data-field="${field}"]`) as HTMLElement | null;
         if (!cell) return;
 
-        const input = cell.querySelector('.vsg-input, .vsg-select') as HTMLInputElement | HTMLSelectElement | null;
+        const input = cell?.querySelector('.vsg-input, .vsg-select') as HTMLInputElement | HTMLSelectElement | null;
         if (input && !input.disabled) {
             input.focus();
             if ((input as HTMLInputElement).type === 'text' || (input as HTMLInputElement).type === 'number') {
                 (input as HTMLInputElement).select();
             }
+            
+            // Update local state for scroll preservation
             this.editingCell = { taskId, field };
             this.editingRows.add(taskId);
+            
+            // Update state manager
+            const task = this.data.find(t => t.id === taskId);
+            const originalValue = task ? getTaskFieldValue(task, field as GridColumn['field']) : undefined;
+            editingManager.enterEditMode({ taskId, field }, 'click', originalValue);
+            
+            return;
         }
     }
 
@@ -464,8 +477,16 @@ export class GridRenderer {
                 if ((target as HTMLInputElement).type === 'text' || (target as HTMLInputElement).type === 'number') {
                     (target as HTMLInputElement).select();
                 }
+                
+                // Update local state for scroll preservation
                 this.editingCell = { taskId, field };
                 this.editingRows.add(taskId);
+                
+                // Update EditingStateManager
+                const editingManager = getEditingStateManager();
+                const task = this.data.find(t => t.id === taskId);
+                const originalValue = task ? getTaskFieldValue(task, field as GridColumn['field']) : undefined;
+                editingManager.enterEditMode({ taskId, field }, 'click', originalValue);
             }
             return;
         }
@@ -480,8 +501,17 @@ export class GridRenderer {
                 if ((input as HTMLInputElement).type === 'text' || (input as HTMLInputElement).type === 'number') {
                     (input as HTMLInputElement).select();
                 }
+                
+                // Update local state for scroll preservation
                 this.editingCell = { taskId, field };
                 this.editingRows.add(taskId);
+                
+                // Update EditingStateManager
+                const editingManager = getEditingStateManager();
+                const task = this.data.find(t => t.id === taskId);
+                const originalValue = task ? getTaskFieldValue(task, field as GridColumn['field']) : undefined;
+                editingManager.enterEditMode({ taskId, field }, 'click', originalValue);
+                
                 return;
             }
         }
@@ -586,7 +616,7 @@ export class GridRenderer {
 
         // For date inputs, save with format conversion (fromKeyboard: false)
         if (input.classList.contains('vsg-date-input')) {
-            this._saveDateInput(input as HTMLInputElement, taskId, field, false); // false = from blur
+            this._saveDateInput(input as HTMLInputElement, taskId, field, false);
         }
         // For text/number inputs, fire change on blur
         else if ((input as HTMLInputElement).type === 'text' || (input as HTMLInputElement).type === 'number') {
@@ -603,10 +633,17 @@ export class GridRenderer {
                 activeElement.closest('.vsg-row');
 
             if (!isFocusingAnotherInput) {
+                // Clear local state
                 this.editingCell = null;
                 this.editingRows.delete(taskId);
                 
-                // Notify service that editing ended
+                // Update state manager only if we're actually editing this cell
+                const editingManager = getEditingStateManager();
+                if (editingManager.isEditingCell(taskId, field)) {
+                    editingManager.exitEditMode('blur');
+                }
+                
+                // Notify service
                 if (this.options.onEditEnd) {
                     this.options.onEditEnd();
                 }
@@ -640,111 +677,182 @@ export class GridRenderer {
         // ========================================
         // TAB / SHIFT+TAB: Horizontal navigation
         // ========================================
-        if (e.key === 'Tab') {
+        if (e.key === 'Tab' && (target.classList.contains('vsg-input') || target.classList.contains('vsg-select'))) {
             e.preventDefault();
-
-            // For date inputs, parse and save before navigating
-            if (target.classList.contains('vsg-date-input')) {
-                this._saveDateInput(target as HTMLInputElement, taskId, currentField, true); // true = fromKeyboard
-            }
-
-            // Get all editable columns (excluding checkbox, drag, actions, etc.)
-            const editableColumns = this.options.columns.filter(col =>
+            e.stopPropagation();
+            
+            const row = target.closest('.vsg-row') as HTMLElement | null;
+            if (!row) return;
+            
+            const taskId = row.dataset.taskId;
+            if (!taskId) return;
+            
+            const currentField = target.getAttribute('data-field');
+            if (!currentField) return;
+            
+            // Get all editable columns
+            const editableColumns = this.options.columns?.filter(col => 
                 col.type === 'text' || col.type === 'number' || col.type === 'date' || col.type === 'select'
-            );
-
+            ) || [];
+            
             const currentIndex = editableColumns.findIndex(col => col.field === currentField);
-            const taskIndex = this.data.findIndex(t => t.id === taskId);
-
+            
+            let nextTaskId = taskId;
+            let nextField = currentField;
+            
             if (e.shiftKey) {
                 // Shift+Tab: move to previous cell
                 if (currentIndex > 0) {
-                    const prevField = editableColumns[currentIndex - 1].field;
-                    this.focusCell(taskId, prevField);
-                } else if (taskIndex > 0) {
-                    // Move to previous row, last editable cell
-                    const prevTaskId = this.data[taskIndex - 1].id;
-                    const lastField = editableColumns[editableColumns.length - 1].field;
-                    this.focusCell(prevTaskId, lastField);
+                    nextField = editableColumns[currentIndex - 1].field;
+                } else {
+                    const taskIndex = this.data.findIndex(t => t.id === taskId);
+                    if (taskIndex > 0) {
+                        nextTaskId = this.data[taskIndex - 1].id;
+                        nextField = editableColumns[editableColumns.length - 1].field;
+                    }
                 }
             } else {
                 // Tab: move to next cell
                 if (currentIndex < editableColumns.length - 1) {
-                    const nextField = editableColumns[currentIndex + 1].field;
-                    this.focusCell(taskId, nextField);
-                } else if (taskIndex < this.data.length - 1) {
-                    // Move to next row, first editable cell
-                    const nextTaskId = this.data[taskIndex + 1].id;
-                    const firstField = editableColumns[0].field;
-                    this.focusCell(nextTaskId, firstField);
+                    nextField = editableColumns[currentIndex + 1].field;
+                } else {
+                    const taskIndex = this.data.findIndex(t => t.id === taskId);
+                    if (taskIndex < this.data.length - 1) {
+                        nextTaskId = this.data[taskIndex + 1].id;
+                        nextField = editableColumns[0].field;
+                    }
                 }
             }
+            
+            // Save current edit (handle date inputs)
+            if (target.classList.contains('vsg-date-input')) {
+                this._saveDateInput(target as HTMLInputElement, taskId, currentField, true);
+            } else if (this.options.onCellChange) {
+                this.options.onCellChange(taskId, currentField, (target as HTMLInputElement).value);
+            }
+            
+            target.blur();
+            
+            // Update state manager
+            const editingManager = getEditingStateManager();
+            const task = this.data.find(t => t.id === nextTaskId);
+            const originalValue = task ? getTaskFieldValue(task, nextField as GridColumn['field']) : undefined;
+            editingManager.moveToCell({ taskId: nextTaskId, field: nextField }, e.shiftKey ? 'shift-tab' : 'tab', originalValue);
+            
+            // Update local state
+            this.editingCell = { taskId: nextTaskId, field: nextField };
+            this.editingRows.delete(taskId);
+            this.editingRows.add(nextTaskId);
+            
+            setTimeout(() => this.focusCell(nextTaskId, nextField), 50);
             return;
         }
 
         // ========================================
         // ENTER / SHIFT+ENTER: Vertical navigation
         // ========================================
-        if (e.key === 'Enter' && isVsgInput) {
+        if (e.key === 'Enter' && target.classList.contains('vsg-input')) {
             e.preventDefault();
-
+            e.stopPropagation();
+            
+            const row = target.closest('.vsg-row') as HTMLElement | null;
+            if (!row) return;
+            
+            const taskId = row.dataset.taskId;
+            if (!taskId) return;
+            
+            const currentField = target.getAttribute('data-field');
+            if (!currentField) return;
+            
             // For date inputs, parse and save
             if (target.classList.contains('vsg-date-input')) {
-                this._saveDateInput(target as HTMLInputElement, taskId, currentField, true); // true = fromKeyboard
+                this._saveDateInput(target as HTMLInputElement, taskId, currentField, true);
             } else {
                 // Save current edit for non-date inputs
                 if (this.options.onCellChange) {
                     this.options.onCellChange(taskId, currentField, (target as HTMLInputElement).value);
                 }
             }
-
+            
             target.blur();
-
+            
             const taskIndex = this.data.findIndex(t => t.id === taskId);
-            const willMoveToAnotherCell = (e.shiftKey && taskIndex > 0) || 
-                                         (!e.shiftKey && taskIndex < this.data.length - 1);
-
+            let nextTaskId: string | null = null;
+            
             if (e.shiftKey) {
-                // Shift+Enter: move to same cell in previous row
+                // Shift+Enter: move to previous row
                 if (taskIndex > 0) {
-                    const prevTaskId = this.data[taskIndex - 1].id;
-                    setTimeout(() => this.focusCell(prevTaskId, currentField), 50);
-                } else {
-                    // Not moving to another cell - exit edit mode
-                    if (this.options.onEditEnd) {
-                        this.options.onEditEnd();
-                    }
+                    nextTaskId = this.data[taskIndex - 1].id;
                 }
             } else {
-                // Enter: move to same cell in next row
+                // Enter: move to next row
                 if (taskIndex < this.data.length - 1) {
-                    const nextTaskId = this.data[taskIndex + 1].id;
-                    setTimeout(() => this.focusCell(nextTaskId, currentField), 50);
+                    nextTaskId = this.data[taskIndex + 1].id;
                 } else if (taskIndex === this.data.length - 1) {
                     // ON LAST ROW - trigger callback to create new task
                     if (this.options.onEnterLastRow) {
                         this.options.onEnterLastRow(taskId, currentField);
                     }
-                    // Exit edit mode since we're not moving to another cell
-                    if (this.options.onEditEnd) {
-                        this.options.onEditEnd();
-                    }
-                } else {
-                    // Not moving to another cell - exit edit mode
-                    if (this.options.onEditEnd) {
-                        this.options.onEditEnd();
-                    }
+                }
+            }
+            
+            if (nextTaskId) {
+                const nextTask = this.data.find(t => t.id === nextTaskId);
+                const originalValue = nextTask ? getTaskFieldValue(nextTask, currentField as GridColumn['field']) : undefined;
+                const editingManager = getEditingStateManager();
+                editingManager.moveToCell({ taskId: nextTaskId, field: currentField }, 'enter', originalValue);
+                
+                // Update local state
+                this.editingCell = { taskId: nextTaskId, field: currentField };
+                this.editingRows.delete(taskId);
+                this.editingRows.add(nextTaskId);
+                
+                setTimeout(() => this.focusCell(nextTaskId, currentField), 50);
+            } else {
+                // No next cell, exit edit mode
+                const editingManager = getEditingStateManager();
+                editingManager.exitEditMode('enter');
+                this.editingCell = null;
+                this.editingRows.delete(taskId);
+                if (this.options.onEditEnd) {
+                    this.options.onEditEnd();
                 }
             }
             return;
         }
 
         // ========================================
-        // ESCAPE: Exit edit mode (keeps current value)
+        // ESCAPE: Exit edit mode (REVERT to original value - standard UX)
+        // CRITICAL UX: Escape = Cancel (matches Excel, MS Project, Google Sheets)
+        // Must restore originalValue before blurring to cancel user's changes
         // ========================================
-        if (e.key === 'Escape' && (isVsgInput || isVsgSelect)) {
+        if (e.key === 'Escape' && target.classList.contains('vsg-input')) {
             e.preventDefault();
-            e.stopPropagation(); // CRITICAL: Prevent KeyboardService from clearing selection
+            e.stopPropagation();
+            
+            const row = target.closest('.vsg-row') as HTMLElement | null;
+            if (!row) return;
+            
+            const taskId = row.dataset.taskId;
+            const field = target.getAttribute('data-field');
+            
+            // Get original value from EditingStateManager context
+            // Note: originalValue is stored when enterEditMode() is called (in click handlers, focusCell, etc.)
+            const editingManager = getEditingStateManager();
+            const context = editingManager.getContext();
+            
+            // Restore original value if available (standard UX - Escape = Cancel)
+            if (context && context.originalValue !== undefined) {
+                if (target.classList.contains('vsg-date-input')) {
+                    // Date inputs: convert ISO to display format
+                    const dateValue = context.originalValue ? formatDateForDisplay(String(context.originalValue)) : '';
+                    (target as HTMLInputElement).value = dateValue;
+                } else if (target.type === 'text' || target.type === 'number') {
+                    (target as HTMLInputElement).value = String(context.originalValue || '');
+                } else if (target.classList.contains('vsg-select')) {
+                    (target as HTMLSelectElement).value = String(context.originalValue || '');
+                }
+            }
             
             // Clear internal editing state
             this.editingCell = null;
@@ -752,10 +860,13 @@ export class GridRenderer {
                 this.editingRows.delete(taskId);
             }
             
-            // Blur the input (keeps current value - no restore)
+            // Blur input (now with reverted value)
             target.blur();
             
-            // CRITICAL: Notify service that editing ended
+            // Update state manager
+            editingManager.exitEditMode('escape');
+            
+            // Notify service
             if (this.options.onEditEnd) {
                 this.options.onEditEnd();
             }
@@ -1158,6 +1269,14 @@ export class GridRenderer {
      * Destroy the renderer
      */
     destroy(): void {
+        // Clear editing state if this component was editing
+        const editingManager = getEditingStateManager();
+        if (this.editingCell && editingManager.isEditingCell(this.editingCell.taskId, this.editingCell.field)) {
+            editingManager.exitEditMode('destroy');
+        }
+        this.editingCell = null;
+        this.editingRows.clear();
+        
         // Clean up shared date picker
         if (this.sharedDatePicker) {
             this.sharedDatePicker.destroy();

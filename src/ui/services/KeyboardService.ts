@@ -3,6 +3,8 @@
  * @module ui/services/KeyboardService
  */
 
+import { getEditingStateManager, type EditingStateChangeEvent } from '../../services/EditingStateManager';
+
 /**
  * Keyboard service options
  */
@@ -40,6 +42,7 @@ export class KeyboardService {
   private options: KeyboardServiceOptions;
   private isEnabled: boolean;
   private _boundHandler: (e: KeyboardEvent) => void;
+  private _unsubscribeEditing: (() => void) | null = null;
 
   /**
    * @param options - Configuration
@@ -49,6 +52,21 @@ export class KeyboardService {
     this.isEnabled = true;
     this._boundHandler = this._handleKeyDown.bind(this);
     this._attach();
+    
+    // Subscribe to editing state changes
+    const editingManager = getEditingStateManager();
+    this._unsubscribeEditing = editingManager.subscribe((event) => {
+      this._onEditingStateChange(event);
+    });
+  }
+
+  /**
+   * Handle editing state changes
+   * Could be used for visual feedback or state tracking
+   */
+  private _onEditingStateChange(_event: EditingStateChangeEvent): void {
+    // Optional: Add any KeyboardService-specific reactions
+    // For now, state is checked directly in _handleKeyDown
   }
 
   /**
@@ -60,10 +78,14 @@ export class KeyboardService {
   }
 
   /**
-   * Detach keyboard event listener
+   * Detach keyboard event listener and cleanup
    */
   detach(): void {
     document.removeEventListener('keydown', this._boundHandler);
+    if (this._unsubscribeEditing) {
+      this._unsubscribeEditing();
+      this._unsubscribeEditing = null;
+    }
   }
 
   /**
@@ -93,10 +115,9 @@ export class KeyboardService {
       return;
     }
 
-    // Check document.activeElement instead of e.target to get actual focus state
-    // e.target is the original event target, but focus may have moved (e.g., after blur)
-    const activeElement = document.activeElement as HTMLElement;
-    const isEditing = this._isEditing(activeElement);
+    // CRITICAL: Use EditingStateManager as source of truth
+    const editingManager = getEditingStateManager();
+    const isEditing = editingManager.isEditing();
     const isCtrl = e.ctrlKey || e.metaKey;
 
     // Undo/Redo (always active)
@@ -112,45 +133,32 @@ export class KeyboardService {
       return;
     }
 
-    // Ctrl+Enter: Add child task (works even when editing - saves and adds child)
+    // Ctrl+Enter: Add child task (works even when editing)
     if (isCtrl && e.key === 'Enter') {
       e.preventDefault();
-      
-      // If editing, blur the input first to save the current edit
       if (isEditing) {
-        (e.target as HTMLElement).blur();
+        // Exit edit mode first
+        editingManager.exitEditMode('programmatic');
       }
-      
       if (this.options.onCtrlEnter) {
-        // Small delay to ensure blur/save completes
-        setTimeout(() => {
-          this.options.onCtrlEnter!();
-        }, 50);
+        setTimeout(() => this.options.onCtrlEnter!(), 50);
       }
       return;
     }
 
-    // Insert key - add task below (default), Shift+Insert - add task above
-    // Ctrl+I also triggers insert (works even when editing - saves and inserts)
+    // Insert key - add task
     if (e.key === 'Insert' || (isCtrl && e.key === 'i')) {
       e.preventDefault();
-      
-      // If editing, blur the input first to save the current edit
       if (isEditing) {
-        (e.target as HTMLElement).blur();
+        editingManager.exitEditMode('programmatic');
       }
-      
       if (e.shiftKey) {
         if (this.options.onShiftInsert) {
-          setTimeout(() => {
-            this.options.onShiftInsert!();
-          }, 50);
+          setTimeout(() => this.options.onShiftInsert!(), 50);
         }
       } else {
         if (this.options.onInsert) {
-          setTimeout(() => {
-            this.options.onInsert!();
-          }, 50);
+          setTimeout(() => this.options.onInsert!(), 50);
         }
       }
       return;
@@ -174,9 +182,8 @@ export class KeyboardService {
       return;
     }
 
-    // Tab = indent, Shift+Tab = outdent
-    // Only trigger when tasks are selected AND focus is not inside an input field
-    if (e.key === 'Tab' && this.options.onTab && !isEditing) {
+    // Tab = indent, Shift+Tab = outdent (only when NOT editing)
+    if (e.key === 'Tab' && this.options.onTab) {
       e.preventDefault();
       if (e.shiftKey) {
         if (this.options.onShiftTab) this.options.onShiftTab();
@@ -235,27 +242,23 @@ export class KeyboardService {
       return;
     }
 
-    // Arrow key navigation (up/down/left/right) - cell navigation (skip if editing)
-    if (e.key === 'ArrowUp' && this.options.onArrowUp && !isEditing) {
+    // Arrow key navigation (only when NOT editing)
+    if (e.key === 'ArrowUp' && this.options.onArrowUp) {
       e.preventDefault();
       this.options.onArrowUp(e.shiftKey, isCtrl);
       return;
     }
-
-    if (e.key === 'ArrowDown' && this.options.onArrowDown && !isEditing) {
+    if (e.key === 'ArrowDown' && this.options.onArrowDown) {
       e.preventDefault();
       this.options.onArrowDown(e.shiftKey, isCtrl);
       return;
     }
-
-    // Arrow Left/Right - cell navigation (skip if editing)
-    if (e.key === 'ArrowLeft' && this.options.onArrowLeft && !isEditing) {
+    if (e.key === 'ArrowLeft' && this.options.onArrowLeft) {
       e.preventDefault();
       this.options.onArrowLeft(e.shiftKey, isCtrl);
       return;
     }
-
-    if (e.key === 'ArrowRight' && this.options.onArrowRight && !isEditing) {
+    if (e.key === 'ArrowRight' && this.options.onArrowRight) {
       e.preventDefault();
       this.options.onArrowRight(e.shiftKey, isCtrl);
       return;
@@ -283,24 +286,5 @@ export class KeyboardService {
     }
   }
 
-  /**
-   * Check if user is currently editing (typing in input)
-   * @private
-   * @param target - Event target element
-   * @returns True if editing
-   */
-  private _isEditing(target: HTMLElement): boolean {
-    // Exclude checkboxes - they're selection controls, not editable cells for Tab navigation
-    // This allows Tab/Shift+Tab to indent/outdent when checkbox is focused (if tasks are selected)
-    if (target.classList.contains('vsg-checkbox') || 
-        (target.tagName === 'INPUT' && (target as HTMLInputElement).type === 'checkbox')) {
-      return false; // Checkboxes are NOT considered editing
-    }
-    
-    return target.classList.contains('vsg-input') ||
-           target.classList.contains('form-input') ||
-           target.tagName === 'INPUT' ||
-           target.tagName === 'TEXTAREA' ||
-           target.tagName === 'SELECT';
-  }
+  // REMOVE the old _isEditing method - no longer needed
 }
