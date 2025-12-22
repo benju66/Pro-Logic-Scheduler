@@ -23,6 +23,7 @@ import type { Task, Dependency, LinkType } from '../../types';
  */
 export interface DependenciesModalOptions {
   container?: HTMLElement;
+  isPanel?: boolean; // NEW: Flag for panel mode
   onSave?: (taskId: string, dependencies: Dependency[]) => void;
   getTasks?: () => Task[];
   isParent?: (taskId: string) => boolean;
@@ -62,6 +63,8 @@ export class DependenciesModal {
     private dom!: DependenciesModalDOM; // Initialized in _buildDOM()
     private activeTaskId: string | null = null;
     private tempDependencies: Dependency[] = [];
+    private isPanel: boolean; // NEW
+    private panelElement: HTMLElement | null = null; // NEW: Separate element for panel mode
 
     /**
      * Create a new DependenciesModal instance
@@ -71,9 +74,69 @@ export class DependenciesModal {
     constructor(options: DependenciesModalOptions = {}) {
         this.options = options;
         this.container = options.container || document.body;
+        this.isPanel = options.isPanel ?? false;
         
         this._buildDOM();
         this._bindEvents();
+    }
+
+    /**
+     * Get element for embedding (panel mode)
+     */
+    public getElement(): HTMLElement {
+        if (this.isPanel) {
+            if (!this.panelElement) {
+                throw new Error('DependenciesModal: panelElement not initialized in panel mode');
+            }
+            return this.panelElement;
+        }
+        if (!this.element) {
+            throw new Error('DependenciesModal: element not initialized in modal mode');
+        }
+        return this.element;
+    }
+
+    /**
+     * Sync panel with task (for panel mode - no modal open/close)
+     */
+    public syncPanel(task: Task): void {
+        if (!this.isPanel) return;
+        
+        this.activeTaskId = task.id;
+        this.tempDependencies = JSON.parse(JSON.stringify(task.dependencies || [])) as Dependency[];
+        
+        // Update task name display
+        const taskNameEl = this.isPanel 
+            ? this.panelElement?.querySelector('.panel-task-name')
+            : this.dom.taskName;
+        if (taskNameEl) {
+            taskNameEl.textContent = task.name;
+        }
+        
+        this._render();
+    }
+
+    /**
+     * Show empty state (panel mode)
+     */
+    public showEmptyState(): void {
+        if (!this.isPanel || !this.panelElement) return;
+        
+        this.activeTaskId = null;
+        this.tempDependencies = [];
+        
+        const body = this.panelElement.querySelector('.deps-panel-body');
+        if (body) {
+            body.innerHTML = `
+                <div class="deps-empty-state">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5">
+                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                    </svg>
+                    <p>Select a task to view dependencies</p>
+                </div>
+            `;
+        }
     }
 
     /**
@@ -81,6 +144,126 @@ export class DependenciesModal {
      * @private
      */
     private _buildDOM(): void {
+        if (this.isPanel) {
+            this._buildPanelDOM();
+        } else {
+            this._buildModalDOM();
+        }
+    }
+
+    /**
+     * Build panel DOM structure (for embedded panel mode)
+     * @private
+     */
+    private _buildPanelDOM(): void {
+        this.panelElement = document.createElement('div');
+        this.panelElement.className = 'dependencies-panel';
+        
+        this.panelElement.innerHTML = `
+            <div class="deps-panel-header">
+                <span class="panel-task-name">Select a task</span>
+            </div>
+            
+            <div class="deps-panel-tabs">
+                <button class="deps-tab-btn active" data-tab="pred">
+                    Predecessors <span class="tab-count" id="panel-pred-count">0</span>
+                </button>
+                <button class="deps-tab-btn" data-tab="succ">
+                    Successors <span class="tab-count" id="panel-succ-count">0</span>
+                </button>
+            </div>
+            
+            <div class="deps-panel-body">
+                <!-- Predecessors Tab -->
+                <div class="deps-tab-panel active" id="panel-pred">
+                    <div class="deps-add-row">
+                        <select class="form-input form-select" id="panel-pred-select">
+                            <option value="">Add predecessor...</option>
+                        </select>
+                        <button class="btn btn-primary btn-sm" id="panel-add-pred-btn">Add</button>
+                    </div>
+                    <div class="deps-table-wrapper">
+                        <table class="deps-table">
+                            <thead>
+                                <tr>
+                                    <th>Task</th>
+                                    <th>Type</th>
+                                    <th>Lag</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="panel-pred-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- Successors Tab -->
+                <div class="deps-tab-panel" id="panel-succ">
+                    <div class="deps-table-wrapper">
+                        <table class="deps-table">
+                            <thead>
+                                <tr>
+                                    <th>Task</th>
+                                    <th>Type</th>
+                                    <th>Lag</th>
+                                </tr>
+                            </thead>
+                            <tbody id="panel-succ-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="deps-panel-footer">
+                <button class="btn btn-primary" id="panel-save-btn">Apply Changes</button>
+            </div>
+        `;
+        
+        // Store DOM references for panel mode
+        this._cachePanelDOM();
+        
+        // Append to container
+        if (this.container) {
+            this.container.appendChild(this.panelElement);
+        }
+    }
+
+    /**
+     * Cache panel DOM references
+     * @private
+     */
+    private _cachePanelDOM(): void {
+        if (!this.panelElement) return;
+        
+        const getElement = <T extends HTMLElement>(id: string): T => {
+            const el = this.panelElement!.querySelector(`#${id}`) as T;
+            if (!el) throw new Error(`Panel element #${id} not found`);
+            return el;
+        };
+
+        // Cache panel-specific DOM references using the same interface
+        // but pointing to panel elements
+        this.dom = {
+            taskName: this.panelElement.querySelector('.panel-task-name') as HTMLElement,
+            predCount: getElement<HTMLElement>('panel-pred-count'),
+            succCount: getElement<HTMLElement>('panel-succ-count'),
+            tabBtns: this.panelElement.querySelectorAll('.deps-tab-btn'),
+            panels: this.panelElement.querySelectorAll('.deps-tab-panel'),
+            predSelect: getElement<HTMLSelectElement>('panel-pred-select'),
+            addPredBtn: getElement<HTMLButtonElement>('panel-add-pred-btn'),
+            predBody: getElement<HTMLElement>('panel-pred-body'),
+            succBody: getElement<HTMLElement>('panel-succ-body'),
+            closeBtn: this.panelElement.querySelector('.panel-close-btn') as HTMLElement || document.createElement('div'), // Not used in panel mode
+            cancelBtn: document.createElement('button'), // Not used in panel mode
+            saveBtn: getElement<HTMLButtonElement>('panel-save-btn'),
+        };
+    }
+
+    /**
+     * Build modal DOM structure (for dialog mode)
+     * @private
+     */
+    private _buildModalDOM(): void {
         this.element = document.createElement('dialog');
         this.element.className = 'modal-dialog dependencies-modal';
         this.element.innerHTML = `
@@ -231,9 +414,15 @@ export class DependenciesModal {
      * @private
      */
     private _bindEvents(): void {
-        // Close buttons
-        this.dom.closeBtn.addEventListener('click', () => this.close());
-        this.dom.cancelBtn.addEventListener('click', () => this.close());
+        // Close buttons (only in modal mode)
+        if (!this.isPanel) {
+            if (this.dom.closeBtn) {
+                this.dom.closeBtn.addEventListener('click', () => this.close());
+            }
+            if (this.dom.cancelBtn) {
+                this.dom.cancelBtn.addEventListener('click', () => this.close());
+            }
+        }
         
         // Save button
         this.dom.saveBtn.addEventListener('click', () => this._save());
@@ -249,19 +438,21 @@ export class DependenciesModal {
         // Add predecessor
         this.dom.addPredBtn.addEventListener('click', () => this._addPredecessor());
         
-        // Close on backdrop click
-        this.element.addEventListener('click', (e: MouseEvent) => {
-            if (e.target === this.element) {
-                this.close();
-            }
-        });
-        
-        // Close on Escape
-        this.element.addEventListener('keydown', (e: KeyboardEvent) => {
-            if (e.key === 'Escape') {
-                this.close();
-            }
-        });
+        // Close on backdrop click (only in modal mode)
+        if (!this.isPanel && this.element) {
+            this.element.addEventListener('click', (e: MouseEvent) => {
+                if (e.target === this.element) {
+                    this.close();
+                }
+            });
+            
+            // Close on Escape (only in modal mode)
+            this.element.addEventListener('keydown', (e: KeyboardEvent) => {
+                if (e.key === 'Escape') {
+                    this.close();
+                }
+            });
+        }
     }
 
     /**
@@ -504,7 +695,10 @@ export class DependenciesModal {
         if (this.options.onSave && this.activeTaskId) {
             this.options.onSave(this.activeTaskId, [...this.tempDependencies]);
         }
-        this.close();
+        // Only close if in modal mode (panel mode stays open)
+        if (!this.isPanel) {
+            this.close();
+        }
     }
 
     /**
@@ -527,6 +721,12 @@ export class DependenciesModal {
     open(task: Task): void {
         if (!task) return;
         
+        // If in panel mode, use syncPanel instead
+        if (this.isPanel) {
+            this.syncPanel(task);
+            return;
+        }
+        
         this.activeTaskId = task.id;
         this.tempDependencies = JSON.parse(JSON.stringify(task.dependencies || [])) as Dependency[];
         
@@ -535,8 +735,10 @@ export class DependenciesModal {
         this._switchTab('pred');
         this._render();
         
-        // Show modal
-        this.element.showModal();
+        // Show modal (only in modal mode)
+        if (this.element) {
+            this.element.showModal();
+        }
     }
 
     /**

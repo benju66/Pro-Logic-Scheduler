@@ -365,6 +365,31 @@ export type Callback<T = void> = (value: T) => void;
 export type EventHandler<E = Event> = (event: E) => void;
 
 // =============================================================================
+// RIGHT SIDEBAR TYPES
+// =============================================================================
+
+/**
+ * Panel identifiers for the right sidebar
+ */
+export type RightPanelId = 'details' | 'links';
+
+/**
+ * State for the right sidebar (for persistence)
+ */
+export interface RightSidebarState {
+    activePanels: RightPanelId[];
+    isBarVisible: boolean;
+}
+
+/**
+ * Options for opening a panel
+ */
+export interface PanelOpenOptions {
+    isParent?: boolean;
+    focusField?: string;
+}
+
+// =============================================================================
 // HELPER FUNCTIONS
 // =============================================================================
 

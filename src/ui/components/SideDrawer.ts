@@ -22,6 +22,7 @@ import { createElement, Anchor, AlarmClock, Hourglass, Flag, Lock } from 'lucide
  */
 export interface SideDrawerOptions {
   container: HTMLElement;
+  isEmbedded?: boolean; // NEW: Flag for embedded panel mode
   onUpdate?: (taskId: string, field: string, value: unknown) => void;
   onDelete?: (taskId: string) => void;
   onOpenLinks?: (taskId: string) => void;
@@ -83,6 +84,7 @@ export class SideDrawer {
     private dom!: SideDrawerDOM; // Initialized in _buildDOM()
     private activeTaskId: string | null = null;
     private isOpen: boolean = false;
+    private isEmbedded: boolean; // NEW
     private _keydownHandler: ((e: KeyboardEvent) => void) | null = null;
 
     /**
@@ -93,6 +95,7 @@ export class SideDrawer {
     constructor(options: SideDrawerOptions) {
         this.options = options;
         this.container = options.container;
+        this.isEmbedded = options.isEmbedded ?? false; // NEW
         
         this._buildDOM();
         this._bindEvents();
@@ -104,8 +107,14 @@ export class SideDrawer {
      */
     private _buildDOM(): void {
         this.element = document.createElement('div');
-        this.element.className = 'side-drawer';
-        this.element.innerHTML = `
+        
+        // Different class for embedded vs standalone mode
+        this.element.className = this.isEmbedded 
+            ? 'side-drawer-embedded' 
+            : 'side-drawer';
+        
+        // In embedded mode, don't include the header (manager provides it)
+        const headerHtml = this.isEmbedded ? '' : `
             <div class="drawer-header">
                 <h3 class="drawer-title">Task Details</h3>
                 <button class="drawer-close" title="Close (Esc)">
@@ -114,7 +123,10 @@ export class SideDrawer {
                     </svg>
                 </button>
             </div>
-            
+        `;
+        
+        this.element.innerHTML = `
+            ${headerHtml}
             <div class="drawer-body">
                 <!-- Task Name -->
                 <div class="form-group">
@@ -333,8 +345,10 @@ export class SideDrawer {
      * @private
      */
     private _bindEvents(): void {
-        // Close button
-        this.dom.closeBtn.addEventListener('click', () => this.close());
+        // Close button (only in standalone mode - embedded mode uses panel header close button)
+        if (this.dom.closeBtn) {
+            this.dom.closeBtn.addEventListener('click', () => this.close());
+        }
         
         // Field changes
         this.dom.name.addEventListener('change', () => this._handleChange('name', this.dom.name.value));
@@ -500,6 +514,35 @@ export class SideDrawer {
     }
 
     /**
+     * Get the drawer element (for embedding in other containers)
+     */
+    public getElement(): HTMLElement {
+        return this.element;
+    }
+
+    /**
+     * Show empty state when no task is selected
+     */
+    public showEmptyState(): void {
+        this.activeTaskId = null;
+        this.isOpen = false;
+        
+        // Update the body content to show empty state
+        const body = this.element.querySelector('.drawer-body');
+        if (body) {
+            body.innerHTML = `
+                <div class="drawer-empty-state">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                    </svg>
+                    <p>Select a task to view details</p>
+                </div>
+            `;
+        }
+    }
+
+    /**
      * Open the drawer with a task
      * 
      * @param task - The task object to edit
@@ -508,8 +551,8 @@ export class SideDrawer {
     open(task: Task, options: { isParent?: boolean } = {}): void {
         if (!task) return;
         
-        // Toggle if same task
-        if (this.activeTaskId === task.id && this.isOpen) {
+        // Toggle if same task (only in standalone mode)
+        if (!this.isEmbedded && this.activeTaskId === task.id && this.isOpen) {
             this.close();
             return;
         }
@@ -625,7 +668,10 @@ export class SideDrawer {
         }
         
         // Show drawer
-        this.element.classList.add('open');
+        // In standalone mode, add 'open' class for slide-in animation
+        if (!this.isEmbedded) {
+            this.element.classList.add('open');
+        }
         this.isOpen = true;
         
         // Focus name field

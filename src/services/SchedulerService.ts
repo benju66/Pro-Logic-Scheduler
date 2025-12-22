@@ -132,6 +132,12 @@ export class SchedulerService {
     
     private _unsubscribeEditing: (() => void) | null = null;
 
+    // Selection change callbacks for external listeners (e.g., RightSidebarManager)
+    private _selectionChangeCallbacks: Array<(taskId: string | null, task: Task | null) => void> = [];
+
+    // Panel open request callbacks (for double-click to open behavior)
+    private _openPanelCallbacks: Array<(panelId: string) => void> = [];
+
     // View state
     public viewMode: ViewMode = 'Week';  // Public for access from StatsService
     
@@ -442,16 +448,19 @@ export class SchedulerService {
         this.grid = this._createGridFacade(viewport);
         this.gantt = this._createGanttFacade(viewport);
 
-        // Create side drawer
-        if (drawerContainer) {
-            this.drawer = new SideDrawer({
-                container: drawerContainer,
-                onUpdate: (taskId, field, value) => this._handleDrawerUpdate(taskId, field, value),
-                onDelete: (taskId) => this.deleteTask(taskId),
-                onOpenLinks: (taskId) => this.openDependencies(taskId),
-                getScheduler: () => this,
-            });
-        }
+        // ─────────────────────────────────────────────────────────────────────────────
+        // Legacy drawer - now managed by RightSidebarManager
+        // ─────────────────────────────────────────────────────────────────────────────
+        // REMOVED: Drawer is now managed by RightSidebarManager
+        // if (drawerContainer) {
+        //     this.drawer = new SideDrawer({
+        //         container: drawerContainer,
+        //         onUpdate: (taskId, field, value) => this._handleDrawerUpdate(taskId, field, value),
+        //         onDelete: (taskId) => this.deleteTask(taskId),
+        //         onOpenLinks: (taskId) => this.openDependencies(taskId),
+        //         getScheduler: () => this,
+        //     });
+        // }
 
         // Create modals
         const modalsContainer = modalContainer || document.body;
@@ -614,7 +623,21 @@ export class SchedulerService {
         }
         
         this.selectedIds = selectedSet;
-        // Update other components that depend on selection
+        
+        // === Notify registered callbacks ===
+        // IMPORTANT: This is the ONLY place callbacks are triggered.
+        // Do NOT add callbacks to _handleRowClick - it would cause double-firing
+        // since row clicks internally trigger _handleSelectionChange via _updateSelection().
+        const primaryId = selectedIds.length > 0 ? selectedIds[selectedIds.length - 1] : null;
+        const primaryTask = primaryId ? this.taskStore.getById(primaryId) || null : null;
+        
+        this._selectionChangeCallbacks.forEach(cb => {
+            try {
+                cb(primaryId, primaryTask);
+            } catch (e) {
+                console.error('[SchedulerService] Selection callback error:', e);
+            }
+        });
     }
 
     /**
@@ -3102,6 +3125,76 @@ export class SchedulerService {
         return this.taskStore.getById(id);
     }
 
+    // =========================================================================
+    // SELECTION CALLBACKS
+    // =========================================================================
+
+    /**
+     * Register a callback for task selection changes
+     * Used by RightSidebarManager to sync panels with selection
+     * 
+     * @param callback - Function called when selection changes
+     * @returns Unsubscribe function
+     */
+    public onTaskSelect(callback: (taskId: string | null, task: Task | null) => void): () => void {
+        this._selectionChangeCallbacks.push(callback);
+        
+        // Return unsubscribe function
+        return () => {
+            const index = this._selectionChangeCallbacks.indexOf(callback);
+            if (index > -1) {
+                this._selectionChangeCallbacks.splice(index, 1);
+            }
+        };
+    }
+
+    /**
+     * Get the currently focused/selected task
+     * Returns the primary selection (last selected task)
+     */
+    public getSelectedTask(): Task | null {
+        if (!this.focusedId) return null;
+        return this.taskStore.getById(this.focusedId) || null;
+    }
+
+    /**
+     * Register a callback for panel open requests
+     * Used by RightSidebarManager to open panels on double-click
+     * 
+     * @param callback - Function called when a panel should be opened
+     * @returns Unsubscribe function
+     */
+    public onPanelOpenRequest(callback: (panelId: string) => void): () => void {
+        this._openPanelCallbacks.push(callback);
+        
+        // Return unsubscribe function
+        return () => {
+            const index = this._openPanelCallbacks.indexOf(callback);
+            if (index > -1) {
+                this._openPanelCallbacks.splice(index, 1);
+            }
+        };
+    }
+
+    /**
+     * Update dependencies for a task
+     * @param taskId - Task ID
+     * @param dependencies - New dependencies array
+     */
+    public updateDependencies(taskId: string, dependencies: Dependency[]): void {
+        this._handleDependenciesSave(taskId, dependencies);
+    }
+
+    /**
+     * Handle task update from drawer/panel
+     * @param taskId - Task ID
+     * @param field - Field name
+     * @param value - New value
+     */
+    public handleTaskUpdate(taskId: string, field: string, value: unknown): void {
+        this._handleDrawerUpdate(taskId, field, value);
+    }
+
     /**
      * Check if task is a parent
      * @param id - Task ID
@@ -4269,12 +4362,31 @@ export class SchedulerService {
 
     /**
      * Open drawer for a task
-     * @param taskId - Task ID
+     * Called by double-click handlers to explicitly open the panel
+     * Now uses callback system to work with RightSidebarManager
+     * 
+     * @param taskId - Task ID to show details for
      */
     openDrawer(taskId: string): void {
-        const task = this.taskStore.getById(taskId);
-        if (!task || !this.drawer) return;
-        this.drawer.open(task);
+        // 1. Ensure selection is synced first (this triggers _handleSelectionChange)
+        if (this.focusedId !== taskId) {
+            // Select the task - this will sync data to panels via onTaskSelect
+            this.selectedIds.clear();
+            this.selectedIds.add(taskId);
+            this.selectionOrder = [taskId];
+            this.focusedId = taskId;
+            this.anchorId = taskId;
+            this._updateSelection();
+        }
+        
+        // 2. Request the UI to open the 'details' panel
+        this._openPanelCallbacks.forEach(cb => {
+            try {
+                cb('details');
+            } catch (e) {
+                console.error('[SchedulerService] Panel open callback error:', e);
+            }
+        });
     }
 
     /**
@@ -4287,13 +4399,32 @@ export class SchedulerService {
     }
 
     /**
-     * Open dependencies modal
+     * Open dependencies modal or panel
      * @param taskId - Task ID
      */
     openDependencies(taskId: string): void {
         const task = this.taskStore.getById(taskId);
-        if (!task || !this.dependenciesModal) return;
-        this.dependenciesModal.open(task);
+        if (!task) return;
+        
+        // Try to open via panel system first (if RightSidebarManager is available)
+        if (this._openPanelCallbacks.length > 0) {
+            this._openPanelCallbacks.forEach(cb => {
+                try {
+                    cb('links');
+                } catch (e) {
+                    console.error('[SchedulerService] Panel open callback error:', e);
+                }
+            });
+            // Sync the panel with the task (panel will handle it via selection callback)
+            // But we also need to ensure the task is selected
+            this.selectTask(taskId);
+            return;
+        }
+        
+        // Fallback to modal mode if no panel system available
+        if (this.dependenciesModal) {
+            this.dependenciesModal.open(task);
+        }
     }
 
     /**

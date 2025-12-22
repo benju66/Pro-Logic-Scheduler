@@ -13,6 +13,7 @@ import { PersistenceService } from '../data/PersistenceService';
 import { MigrationService } from '../data/MigrationService';
 import { ActivityBar } from '../ui/components/ActivityBar';
 import { SettingsModal } from '../ui/components/SettingsModal';
+import { RightSidebarManager } from '../ui/components/RightSidebarManager';
 import type { SchedulerServiceOptions } from '../types';
 
 /**
@@ -34,6 +35,7 @@ export class AppInitializer {
   private migrationService: MigrationService | null = null;
   private activityBar: ActivityBar | null = null;
   private settingsModal: SettingsModal | null = null;
+  private rightSidebarManager: RightSidebarManager | null = null;
   private isInitializing: boolean = false;
   public isInitialized: boolean = false;  // Public for access from main.ts
 
@@ -92,6 +94,9 @@ export class AppInitializer {
       
       // Initialize activity bar and settings modal
       this._initializeActivityBar();
+      
+      // Initialize right sidebar manager
+      this._initializeRightSidebar();
       
       // Initialize stats service
       this._initializeStatsService();
@@ -311,6 +316,37 @@ export class AppInitializer {
     }
 
   /**
+   * Initialize right sidebar manager
+   * @private
+   */
+  private _initializeRightSidebar(): void {
+    if (!this.scheduler) {
+      console.warn('[AppInitializer] Cannot initialize right sidebar - scheduler not ready');
+      return;
+    }
+    
+    try {
+      this.rightSidebarManager = new RightSidebarManager({
+        containerId: 'right-panel-container',
+        activityBarId: 'activity-bar-right',
+        scheduler: this.scheduler,
+        onLayoutChange: (width) => {
+          console.log('[RightSidebar] Layout width changed:', width);
+        },
+      });
+      
+      // Handle Zen Mode toggle button
+      document.getElementById('toggle-right-sidebar')?.addEventListener('click', () => {
+        this.rightSidebarManager?.toggleActivityBar();
+      });
+      
+      console.log('[AppInitializer] ✅ Right sidebar initialized');
+    } catch (e) {
+      console.error('[AppInitializer] Failed to initialize right sidebar:', e);
+    }
+  }
+
+  /**
    * Initialize stats service
    * @private
    */
@@ -334,6 +370,7 @@ export class AppInitializer {
    * Clean up resources
    */
   destroy(): void {
+    this.rightSidebarManager?.destroy();
     if (this.statsService) {
       this.statsService.destroy();
     }
