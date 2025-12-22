@@ -133,7 +133,8 @@ export class SchedulerService {
     private _unsubscribeEditing: (() => void) | null = null;
 
     // Selection change callbacks for external listeners (e.g., RightSidebarManager)
-    private _selectionChangeCallbacks: Array<(taskId: string | null, task: Task | null) => void> = [];
+    private _selectionChangeCallbacks: Array<(taskId: string | null, task: Task | null, field?: string) => void> = [];
+    private _lastClickedField: string | undefined = undefined; // Track which field was clicked
 
     // Panel open request callbacks (for double-click to open behavior)
     private _openPanelCallbacks: Array<(panelId: string) => void> = [];
@@ -631,9 +632,16 @@ export class SchedulerService {
         const primaryId = selectedIds.length > 0 ? selectedIds[selectedIds.length - 1] : null;
         const primaryTask = primaryId ? this.taskStore.getById(primaryId) || null : null;
         
+        // Pass the clicked field (if any) to callbacks
+        // Only pass field if this selection change was triggered by a click (not programmatic)
+        const clickedField = this._lastClickedField;
+        // Clear immediately after reading to avoid stale values
+        const fieldToPass = clickedField;
+        this._lastClickedField = undefined;
+        
         this._selectionChangeCallbacks.forEach(cb => {
             try {
-                cb(primaryId, primaryTask);
+                cb(primaryId, primaryTask, fieldToPass);
             } catch (e) {
                 console.error('[SchedulerService] Selection callback error:', e);
             }
@@ -1654,6 +1662,37 @@ export class SchedulerService {
      * @param e - Click event
      */
     private _handleRowClick(taskId: string, e: MouseEvent): void {
+        // Detect which field was clicked (if any) by checking the event target
+        // This allows the Properties panel to focus the correct field when syncing
+        // Note: e.target should be preserved even when GridRenderer creates a modified event
+        const target = (e.target || e.currentTarget) as HTMLElement;
+        
+        if (!target) {
+            this._lastClickedField = undefined;
+        } else {
+            // Skip field detection for checkboxes, action buttons, and collapse buttons
+            if (target.closest('.vsg-checkbox') || 
+                target.closest('[data-action]') || 
+                target.closest('.vsg-collapse-btn')) {
+                this._lastClickedField = undefined;
+            } else {
+                // Check if clicking directly on an input/select
+                const input = target.closest('.vsg-input, .vsg-select') as HTMLElement | null;
+                if (input) {
+                    this._lastClickedField = input.getAttribute('data-field') || undefined;
+                } else {
+                    // Check if clicking on a cell (which contains an input)
+                    const cell = target.closest('[data-field]') as HTMLElement | null;
+                    if (cell) {
+                        this._lastClickedField = cell.getAttribute('data-field') || undefined;
+                    } else {
+                        // No field detected - clear it (e.g., clicking on row background)
+                        this._lastClickedField = undefined;
+                    }
+                }
+            }
+        }
+        
         // Selection logic here
         if (e.shiftKey && this.anchorId) {
             // Range selection
@@ -3136,7 +3175,7 @@ export class SchedulerService {
      * @param callback - Function called when selection changes
      * @returns Unsubscribe function
      */
-    public onTaskSelect(callback: (taskId: string | null, task: Task | null) => void): () => void {
+    public onTaskSelect(callback: (taskId: string | null, task: Task | null, field?: string) => void): () => void {
         this._selectionChangeCallbacks.push(callback);
         
         // Return unsubscribe function

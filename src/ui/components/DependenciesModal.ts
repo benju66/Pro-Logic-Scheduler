@@ -25,8 +25,10 @@ export interface DependenciesModalOptions {
   container?: HTMLElement;
   isPanel?: boolean; // NEW: Flag for panel mode
   onSave?: (taskId: string, dependencies: Dependency[]) => void;
+  onSaveSuccessors?: (taskId: string, successorIds: string[]) => void; // NEW: For saving successors
   getTasks?: () => Task[];
   isParent?: (taskId: string) => boolean;
+  getDepth?: (taskId: string) => number;
 }
 
 /**
@@ -63,6 +65,7 @@ export class DependenciesModal {
     private dom!: DependenciesModalDOM; // Initialized in _buildDOM()
     private activeTaskId: string | null = null;
     private tempDependencies: Dependency[] = [];
+    private tempSuccessors: Array<{id: string, type: LinkType, lag: number}> = []; // NEW: Track selected successors
     private isPanel: boolean; // NEW
     private panelElement: HTMLElement | null = null; // NEW: Separate element for panel mode
 
@@ -102,18 +105,109 @@ export class DependenciesModal {
     public syncPanel(task: Task): void {
         if (!this.isPanel) return;
         
+        // Ensure panel element exists
+        if (!this.panelElement) {
+            console.warn('[DependenciesModal] Panel element not initialized');
+            return;
+        }
+        
+        // If panel body was cleared by showEmptyState(), restore it
+        const body = this.panelElement.querySelector('.deps-panel-body');
+        if (body && !body.querySelector('#panel-pred')) {
+            // Restore the panel body structure
+            body.innerHTML = this._getPanelBodyHTML();
+            // Re-cache DOM references
+            this._cachePanelDOM();
+            // Re-bind events
+            this._bindEvents();
+        }
+        
         this.activeTaskId = task.id;
         this.tempDependencies = JSON.parse(JSON.stringify(task.dependencies || [])) as Dependency[];
         
+        // Initialize tempSuccessors from existing successors (tasks that have this task as a dependency)
+        const tasks = this.options.getTasks ? this.options.getTasks() : [];
+        const existingSuccessors = tasks.filter(t => 
+            t.dependencies && t.dependencies.some(d => d.id === task.id)
+        );
+        this.tempSuccessors = existingSuccessors.map(succ => {
+            const link = succ.dependencies.find(d => d.id === task.id);
+            return {
+                id: succ.id,
+                type: link?.type || 'FS',
+                lag: link?.lag || 0,
+            };
+        });
+        
         // Update task name display
-        const taskNameEl = this.isPanel 
-            ? this.panelElement?.querySelector('.panel-task-name')
-            : this.dom.taskName;
+        const taskNameEl = this.panelElement.querySelector('.panel-task-name');
         if (taskNameEl) {
             taskNameEl.textContent = task.name;
         }
         
+        // Switch to Predecessors tab (default view)
+        this._switchTab('pred');
+        
+        // Ensure the Predecessors tab is visible before rendering
+        const predTab = this.panelElement.querySelector('#panel-pred') as HTMLElement;
+        if (predTab) {
+            predTab.classList.add('active');
+        }
+        
+        // Render the dependencies (this will render the tree)
         this._render();
+    }
+
+    /**
+     * Get panel body HTML (for rebuilding after showEmptyState)
+     * @private
+     */
+    private _getPanelBodyHTML(): string {
+        return `
+                <!-- Predecessors Tab -->
+                <div class="deps-tab-panel active" id="panel-pred">
+                    <div class="deps-tree-selector">
+                        <div class="deps-tree-header">Select Predecessors</div>
+                        <div class="deps-tree-container" id="panel-pred-tree"></div>
+                    </div>
+                    <div class="deps-table-wrapper">
+                        <table class="deps-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Task</th>
+                                    <th>Type</th>
+                                    <th>Lag</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="panel-pred-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+                
+                <!-- Successors Tab -->
+                <div class="deps-tab-panel" id="panel-succ">
+                    <div class="deps-tree-selector">
+                        <div class="deps-tree-header">Select Successors</div>
+                        <div class="deps-tree-container" id="panel-succ-tree"></div>
+                    </div>
+                    <div class="deps-table-wrapper">
+                        <table class="deps-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Task</th>
+                                    <th>Type</th>
+                                    <th>Lag</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="panel-succ-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+        `;
     }
 
     /**
@@ -124,6 +218,7 @@ export class DependenciesModal {
         
         this.activeTaskId = null;
         this.tempDependencies = [];
+        this.tempSuccessors = [];
         
         const body = this.panelElement.querySelector('.deps-panel-body');
         if (body) {
@@ -176,16 +271,15 @@ export class DependenciesModal {
             <div class="deps-panel-body">
                 <!-- Predecessors Tab -->
                 <div class="deps-tab-panel active" id="panel-pred">
-                    <div class="deps-add-row">
-                        <select class="form-input form-select" id="panel-pred-select">
-                            <option value="">Add predecessor...</option>
-                        </select>
-                        <button class="btn btn-primary btn-sm" id="panel-add-pred-btn">Add</button>
+                    <div class="deps-tree-selector">
+                        <div class="deps-tree-header">Select Predecessors</div>
+                        <div class="deps-tree-container" id="panel-pred-tree"></div>
                     </div>
                     <div class="deps-table-wrapper">
                         <table class="deps-table">
                             <thead>
                                 <tr>
+                                    <th>ID</th>
                                     <th>Task</th>
                                     <th>Type</th>
                                     <th>Lag</th>
@@ -199,13 +293,19 @@ export class DependenciesModal {
                 
                 <!-- Successors Tab -->
                 <div class="deps-tab-panel" id="panel-succ">
+                    <div class="deps-tree-selector">
+                        <div class="deps-tree-header">Select Successors</div>
+                        <div class="deps-tree-container" id="panel-succ-tree"></div>
+                    </div>
                     <div class="deps-table-wrapper">
                         <table class="deps-table">
                             <thead>
                                 <tr>
+                                    <th>ID</th>
                                     <th>Task</th>
                                     <th>Type</th>
                                     <th>Lag</th>
+                                    <th></th>
                                 </tr>
                             </thead>
                             <tbody id="panel-succ-body"></tbody>
@@ -249,8 +349,8 @@ export class DependenciesModal {
             succCount: getElement<HTMLElement>('panel-succ-count'),
             tabBtns: this.panelElement.querySelectorAll('.deps-tab-btn'),
             panels: this.panelElement.querySelectorAll('.deps-tab-panel'),
-            predSelect: getElement<HTMLSelectElement>('panel-pred-select'),
-            addPredBtn: getElement<HTMLButtonElement>('panel-add-pred-btn'),
+            predSelect: null as any, // Not used in panel mode - replaced with tree
+            addPredBtn: null as any, // Not used in panel mode - replaced with tree
             predBody: getElement<HTMLElement>('panel-pred-body'),
             succBody: getElement<HTMLElement>('panel-succ-body'),
             closeBtn: this.panelElement.querySelector('.panel-close-btn') as HTMLElement || document.createElement('div'), // Not used in panel mode
@@ -435,8 +535,10 @@ export class DependenciesModal {
             });
         });
         
-        // Add predecessor
-        this.dom.addPredBtn.addEventListener('click', () => this._addPredecessor());
+        // Add predecessor (only in modal mode - panel mode uses tree checkboxes)
+        if (!this.isPanel && this.dom.addPredBtn) {
+            this.dom.addPredBtn.addEventListener('click', () => this._addPredecessor());
+        }
         
         // Close on backdrop click (only in modal mode)
         if (!this.isPanel && this.element) {
@@ -479,7 +581,12 @@ export class DependenciesModal {
     private _render(): void {
         this._renderPredecessors();
         this._renderSuccessors();
-        this._populatePredSelect();
+        if (this.isPanel) {
+            this._renderPredTree();
+            this._renderSuccTree();
+        } else {
+            this._populatePredSelect();
+        }
         this._updateCounts();
     }
 
@@ -493,7 +600,7 @@ export class DependenciesModal {
         if (this.tempDependencies.length === 0) {
             tbody.innerHTML = `
                 <tr class="empty-row">
-                    <td colspan="4">No predecessors. Add one above.</td>
+                    <td colspan="5">No predecessors. Add one above.</td>
                 </tr>
             `;
             return;
@@ -501,12 +608,37 @@ export class DependenciesModal {
         
         const tasks = this.options.getTasks ? this.options.getTasks() : [];
         
+        // Build task index map (same logic as tree)
+        const buildFlatList = (parentId: string | null, list: Array<{task: Task, index: number}> = [], index: number = 1): number => {
+            const children = tasks.filter(t => t.parentId === parentId).sort((a, b) => {
+                if (a.sortKey && b.sortKey) {
+                    return a.sortKey.localeCompare(b.sortKey);
+                }
+                return a.name.localeCompare(b.name);
+            });
+            
+            for (const child of children) {
+                list.push({ task: child, index });
+                index = buildFlatList(child.id, list, index + 1);
+            }
+            
+            return index;
+        };
+        
+        const flatList: Array<{task: Task, index: number}> = [];
+        buildFlatList(null, flatList);
+        const taskIndexMap = new Map(flatList.map(item => [item.task.id, item.index]));
+        
         tbody.innerHTML = this.tempDependencies.map((dep, idx) => {
             const task = tasks.find(t => t.id === dep.id);
             if (!task) return '';
+            const taskIndex = taskIndexMap.get(task.id) || 0;
             
             return `
                 <tr data-index="${idx}">
+                    <td class="task-id-cell" style="text-align: right; font-weight: 600; color: #94a3b8; font-variant-numeric: tabular-nums;">
+                        ${taskIndex}
+                    </td>
                     <td class="task-name-cell">
                         <span class="task-name">${this._escapeHtml(task.name)}</span>
                     </td>
@@ -567,61 +699,414 @@ export class DependenciesModal {
     }
 
     /**
-     * Render successors list (read-only)
+     * Render successors list (editable in panel mode)
      * @private
      */
     private _renderSuccessors(): void {
         const tbody = this.dom.succBody;
         const tasks = this.options.getTasks ? this.options.getTasks() : [];
         
-        if (!this.activeTaskId) {
+        // Update count
+        this.dom.succCount.textContent = String(this.tempSuccessors.length);
+        
+        if (this.tempSuccessors.length === 0) {
             tbody.innerHTML = `
                 <tr class="empty-row">
-                    <td colspan="3">No successors found.</td>
+                    <td colspan="${this.isPanel ? '5' : '3'}">No successors. Add one above.</td>
                 </tr>
             `;
             return;
         }
         
-        // Find tasks that have this task as a dependency
-        const successors = tasks.filter(t => 
-            t.dependencies && t.dependencies.some(d => d.id === this.activeTaskId)
-        );
+        // Build task index map (same logic as tree)
+        const buildFlatList = (parentId: string | null, list: Array<{task: Task, index: number}> = [], index: number = 1): number => {
+            const children = tasks.filter(t => t.parentId === parentId).sort((a, b) => {
+                if (a.sortKey && b.sortKey) {
+                    return a.sortKey.localeCompare(b.sortKey);
+                }
+                return a.name.localeCompare(b.name);
+            });
+            
+            for (const child of children) {
+                list.push({ task: child, index });
+                index = buildFlatList(child.id, list, index + 1);
+            }
+            
+            return index;
+        };
         
-        this.dom.succCount.textContent = String(successors.length);
+        const flatList: Array<{task: Task, index: number}> = [];
+        buildFlatList(null, flatList);
+        const taskIndexMap = new Map(flatList.map(item => [item.task.id, item.index]));
         
-        if (successors.length === 0) {
-            tbody.innerHTML = `
-                <tr class="empty-row">
-                    <td colspan="3">No successors found.</td>
-                </tr>
-            `;
-            return;
-        }
-        
-        tbody.innerHTML = successors.map(succ => {
-            const link = succ.dependencies.find(d => d.id === this.activeTaskId);
-            if (!link) return '';
-            const typeLabel = DependenciesModal.LINK_TYPES[link.type] || link.type;
+        tbody.innerHTML = this.tempSuccessors.map((succ, idx) => {
+            const task = tasks.find(t => t.id === succ.id);
+            if (!task) return '';
+            const taskIndex = taskIndexMap.get(task.id) || 0;
             
             return `
-                <tr>
-                    <td class="task-name-cell">
-                        <span class="task-name">${this._escapeHtml(succ.name)}</span>
+                <tr data-index="${idx}">
+                    <td class="task-id-cell" style="text-align: right; font-weight: 600; color: #94a3b8; font-variant-numeric: tabular-nums;">
+                        ${taskIndex}
                     </td>
-                    <td class="text-muted">${typeLabel}</td>
-                    <td class="text-muted">${link.lag || 0} days</td>
+                    <td class="task-name-cell">
+                        <span class="task-name">${this._escapeHtml(task.name)}</span>
+                    </td>
+                    <td>
+                        <select class="form-input form-select-sm link-type-select" data-index="${idx}">
+                            <option value="FS" ${succ.type === 'FS' ? 'selected' : ''}>Finish to Start</option>
+                            <option value="SS" ${succ.type === 'SS' ? 'selected' : ''}>Start to Start</option>
+                            <option value="FF" ${succ.type === 'FF' ? 'selected' : ''}>Finish to Finish</option>
+                            <option value="SF" ${succ.type === 'SF' ? 'selected' : ''}>Start to Finish</option>
+                        </select>
+                    </td>
+                    <td>
+                        <input type="number" class="form-input form-input-sm lag-input" 
+                               value="${succ.lag || 0}" data-index="${idx}" 
+                               title="Positive = lag, Negative = lead">
+                    </td>
+                    ${this.isPanel ? `
+                    <td>
+                        <button class="btn-icon btn-danger-icon remove-link-btn" data-index="${idx}" title="Remove link">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+                            </svg>
+                        </button>
+                    </td>
+                    ` : ''}
                 </tr>
             `;
         }).join('');
+        
+        // Bind events to new elements (only in panel mode)
+        if (this.isPanel) {
+            tbody.querySelectorAll('.link-type-select').forEach(select => {
+                const selectEl = select as HTMLSelectElement;
+                selectEl.addEventListener('change', () => {
+                    const idx = parseInt(selectEl.getAttribute('data-index') || '0');
+                    const type = selectEl.value as LinkType;
+                    if (this.tempSuccessors[idx]) {
+                        this.tempSuccessors[idx].type = type;
+                    }
+                });
+            });
+            
+            tbody.querySelectorAll('.lag-input').forEach(input => {
+                const inputEl = input as HTMLInputElement;
+                inputEl.addEventListener('change', () => {
+                    const idx = parseInt(inputEl.getAttribute('data-index') || '0');
+                    const lag = parseInt(inputEl.value) || 0;
+                    if (this.tempSuccessors[idx]) {
+                        this.tempSuccessors[idx].lag = lag;
+                    }
+                });
+            });
+            
+            tbody.querySelectorAll('.remove-link-btn').forEach(btn => {
+                const btnEl = btn as HTMLButtonElement;
+                btnEl.addEventListener('click', () => {
+                    const idx = parseInt(btnEl.getAttribute('data-index') || '0');
+                    this._removeSuccessor(idx);
+                });
+            });
+        }
     }
 
     /**
-     * Populate the predecessor select dropdown
+     * Render predecessor selection tree (panel mode)
+     * @private
+     */
+    private _renderPredTree(): void {
+        if (!this.panelElement) {
+            console.warn('[DependenciesModal] Panel element not initialized');
+            return;
+        }
+        
+        // Find the tree container - it's inside the Predecessors tab panel
+        const predTab = this.panelElement.querySelector('#panel-pred') as HTMLElement;
+        if (!predTab) {
+            console.warn('[DependenciesModal] Predecessors tab not found, panelElement:', this.panelElement);
+            return;
+        }
+        
+        const treeContainer = predTab.querySelector('#panel-pred-tree') as HTMLElement;
+        if (!treeContainer) {
+            console.warn('[DependenciesModal] Tree container not found in Predecessors tab. predTab:', predTab);
+            return;
+        }
+        
+        const tasks = this.options.getTasks ? this.options.getTasks() : [];
+        const isParent = this.options.isParent || (() => false);
+        
+        if (tasks.length === 0) {
+            treeContainer.innerHTML = '<div class="deps-tree-empty">No tasks available</div>';
+            return;
+        }
+        
+        // Get selected predecessor IDs for checkbox state
+        const selectedIds = new Set(this.tempDependencies.map(d => d.id));
+        
+        // Build flat list with indices (similar to grid view)
+        const buildFlatList = (parentId: string | null, list: Array<{task: Task, index: number}> = [], index: number = 1): number => {
+            const children = tasks.filter(t => t.parentId === parentId).sort((a, b) => {
+                // Sort by sortKey if available, otherwise by name
+                if (a.sortKey && b.sortKey) {
+                    return a.sortKey.localeCompare(b.sortKey);
+                }
+                return a.name.localeCompare(b.name);
+            });
+            
+            for (const child of children) {
+                list.push({ task: child, index });
+                index = buildFlatList(child.id, list, index + 1);
+            }
+            
+            return index;
+        };
+        
+        const flatList: Array<{task: Task, index: number}> = [];
+        buildFlatList(null, flatList);
+        const taskIndexMap = new Map(flatList.map(item => [item.task.id, item.index]));
+        
+        // Build hierarchical structure
+        const rootTasks = tasks.filter(t => !t.parentId).sort((a, b) => {
+            if (a.sortKey && b.sortKey) {
+                return a.sortKey.localeCompare(b.sortKey);
+            }
+            return a.name.localeCompare(b.name);
+        });
+        
+        const renderTask = (task: Task, depth: number = 0): string => {
+            // Check if this task should be disabled (can't link to self or parent tasks)
+            const isDisabled = task.id === this.activeTaskId || isParent(task.id);
+            const isSelected = selectedIds.has(task.id);
+            const padding = depth * 20;
+            const children = tasks.filter(t => t.parentId === task.id).sort((a, b) => {
+                if (a.sortKey && b.sortKey) {
+                    return a.sortKey.localeCompare(b.sortKey);
+                }
+                return a.name.localeCompare(b.name);
+            });
+            const taskIndex = taskIndexMap.get(task.id) || 0;
+            
+            // Render the task (always visible, but checkbox may be disabled)
+            let html = `
+                <div class="deps-tree-item ${isDisabled ? 'deps-tree-item-disabled' : ''}" data-task-id="${task.id}" style="padding-left: ${padding}px;">
+                    <label class="deps-tree-label">
+                        <input type="checkbox" class="deps-tree-checkbox" 
+                               ${isSelected ? 'checked' : ''} 
+                               ${isDisabled ? 'disabled' : ''}
+                               data-task-id="${task.id}">
+                        <span class="deps-tree-id">${taskIndex}</span>
+                        <span class="deps-tree-name">${this._escapeHtml(task.name)}</span>
+                    </label>
+                </div>
+            `;
+            
+            // Render children
+            children.forEach(child => {
+                html += renderTask(child, depth + 1);
+            });
+            
+            return html;
+        };
+        
+        let treeHTML = '<div class="deps-tree-list">';
+        if (rootTasks.length === 0) {
+            treeHTML += '<div class="deps-tree-empty">No tasks available</div>';
+        } else {
+            rootTasks.forEach(task => {
+                treeHTML += renderTask(task);
+            });
+        }
+        treeHTML += '</div>';
+        
+        treeContainer.innerHTML = treeHTML;
+        
+        // Bind checkbox events
+        treeContainer.querySelectorAll('.deps-tree-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => {
+                const target = e.target as HTMLInputElement;
+                const taskId = target.dataset.taskId;
+                if (!taskId || target.disabled) return; // Don't process disabled checkboxes
+                
+                if (target.checked) {
+                    // Add as predecessor (only if not already in list)
+                    if (!this.tempDependencies.some(d => d.id === taskId)) {
+                        this.tempDependencies.push({
+                            id: taskId,
+                            type: 'FS',
+                            lag: 0,
+                        });
+                    }
+                } else {
+                    // Remove predecessor
+                    const index = this.tempDependencies.findIndex(d => d.id === taskId);
+                    if (index > -1) {
+                        this.tempDependencies.splice(index, 1);
+                    }
+                }
+                
+                // Re-render to update the table and tree
+                this._renderPredecessors();
+                this._updateCounts();
+                this._renderPredTree(); // Update tree checkboxes (syncs state)
+            });
+        });
+    }
+
+    /**
+     * Render successor selection tree (panel mode)
+     * @private
+     */
+    private _renderSuccTree(): void {
+        if (!this.panelElement) {
+            console.warn('[DependenciesModal] Panel element not initialized');
+            return;
+        }
+        
+        // Find the tree container - it's inside the Successors tab panel
+        const succTab = this.panelElement.querySelector('#panel-succ') as HTMLElement;
+        if (!succTab) {
+            console.warn('[DependenciesModal] Successors tab not found');
+            return;
+        }
+        
+        const treeContainer = succTab.querySelector('#panel-succ-tree') as HTMLElement;
+        if (!treeContainer) {
+            console.warn('[DependenciesModal] Successor tree container not found');
+            return;
+        }
+        
+        const tasks = this.options.getTasks ? this.options.getTasks() : [];
+        const isParent = this.options.isParent || (() => false);
+        
+        if (tasks.length === 0) {
+            treeContainer.innerHTML = '<div class="deps-tree-empty">No tasks available</div>';
+            return;
+        }
+        
+        // Get selected successor IDs for checkbox state
+        const selectedIds = new Set(this.tempSuccessors.map(s => s.id));
+        
+        // Build flat list with indices (similar to grid view)
+        const buildFlatList = (parentId: string | null, list: Array<{task: Task, index: number}> = [], index: number = 1): number => {
+            const children = tasks.filter(t => t.parentId === parentId).sort((a, b) => {
+                if (a.sortKey && b.sortKey) {
+                    return a.sortKey.localeCompare(b.sortKey);
+                }
+                return a.name.localeCompare(b.name);
+            });
+            
+            for (const child of children) {
+                list.push({ task: child, index });
+                index = buildFlatList(child.id, list, index + 1);
+            }
+            
+            return index;
+        };
+        
+        const flatList: Array<{task: Task, index: number}> = [];
+        buildFlatList(null, flatList);
+        const taskIndexMap = new Map(flatList.map(item => [item.task.id, item.index]));
+        
+        // Build hierarchical structure
+        const rootTasks = tasks.filter(t => !t.parentId).sort((a, b) => {
+            if (a.sortKey && b.sortKey) {
+                return a.sortKey.localeCompare(b.sortKey);
+            }
+            return a.name.localeCompare(b.name);
+        });
+        
+        const renderTask = (task: Task, depth: number = 0): string => {
+            // Check if this task should be disabled (can't link to self or parent tasks)
+            const isDisabled = task.id === this.activeTaskId || isParent(task.id);
+            const isSelected = selectedIds.has(task.id);
+            const padding = depth * 20;
+            const children = tasks.filter(t => t.parentId === task.id).sort((a, b) => {
+                if (a.sortKey && b.sortKey) {
+                    return a.sortKey.localeCompare(b.sortKey);
+                }
+                return a.name.localeCompare(b.name);
+            });
+            const taskIndex = taskIndexMap.get(task.id) || 0;
+            
+            // Render the task (always visible, but checkbox may be disabled)
+            let html = `
+                <div class="deps-tree-item ${isDisabled ? 'deps-tree-item-disabled' : ''}" data-task-id="${task.id}" style="padding-left: ${padding}px;">
+                    <label class="deps-tree-label">
+                        <input type="checkbox" class="deps-tree-checkbox" 
+                               ${isSelected ? 'checked' : ''} 
+                               ${isDisabled ? 'disabled' : ''}
+                               data-task-id="${task.id}">
+                        <span class="deps-tree-id">${taskIndex}</span>
+                        <span class="deps-tree-name">${this._escapeHtml(task.name)}</span>
+                    </label>
+                </div>
+            `;
+            
+            // Render children
+            children.forEach(child => {
+                html += renderTask(child, depth + 1);
+            });
+            
+            return html;
+        };
+        
+        let treeHTML = '<div class="deps-tree-list">';
+        if (rootTasks.length === 0) {
+            treeHTML += '<div class="deps-tree-empty">No tasks available</div>';
+        } else {
+            rootTasks.forEach(task => {
+                treeHTML += renderTask(task);
+            });
+        }
+        treeHTML += '</div>';
+        
+        treeContainer.innerHTML = treeHTML;
+        
+        // Bind checkbox events
+        treeContainer.querySelectorAll('.deps-tree-checkbox').forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => {
+                const target = e.target as HTMLInputElement;
+                const taskId = target.dataset.taskId;
+                if (!taskId || target.disabled) return; // Don't process disabled checkboxes
+                
+                if (target.checked) {
+                    // Add as successor (only if not already in list)
+                    if (!this.tempSuccessors.some(s => s.id === taskId)) {
+                        this.tempSuccessors.push({
+                            id: taskId,
+                            type: 'FS',
+                            lag: 0,
+                        });
+                    }
+                } else {
+                    // Remove successor
+                    const index = this.tempSuccessors.findIndex(s => s.id === taskId);
+                    if (index > -1) {
+                        this.tempSuccessors.splice(index, 1);
+                    }
+                }
+                
+                // Re-render to update the table and tree
+                this._renderSuccessors();
+                this._updateCounts();
+                this._renderSuccTree(); // Update tree checkboxes (syncs state)
+            });
+        });
+    }
+
+    /**
+     * Populate the predecessor select dropdown (modal mode)
      * @private
      */
     private _populatePredSelect(): void {
+        if (this.isPanel) return; // Not used in panel mode
+        
         const select = this.dom.predSelect;
+        if (!select) return;
+        
         const tasks = this.options.getTasks ? this.options.getTasks() : [];
         const isParent = this.options.isParent || (() => false);
         
@@ -652,6 +1137,7 @@ export class DependenciesModal {
      */
     private _updateCounts(): void {
         this.dom.predCount.textContent = String(this.tempDependencies.length);
+        this.dom.succCount.textContent = String(this.tempSuccessors.length);
     }
 
     /**
@@ -688,13 +1174,71 @@ export class DependenciesModal {
     }
 
     /**
+     * Remove a successor from the list
+     * @private
+     */
+    private _removeSuccessor(index: number): void {
+        this.tempSuccessors.splice(index, 1);
+        this._render();
+    }
+
+    /**
      * Save dependencies and close
      * @private
      */
     private _save(): void {
-        if (this.options.onSave && this.activeTaskId) {
+        if (!this.activeTaskId) return;
+        
+        // Save predecessors (stored in current task's dependencies)
+        if (this.options.onSave) {
             this.options.onSave(this.activeTaskId, [...this.tempDependencies]);
         }
+        
+        // Save successors (stored in each successor task's dependencies)
+        if (this.isPanel && this.options.getTasks) {
+            const tasks = this.options.getTasks();
+            const currentTaskId = this.activeTaskId;
+            
+            // Get all tasks that currently have this task as a dependency
+            const currentSuccessors = tasks.filter(t => 
+                t.dependencies && t.dependencies.some(d => d.id === currentTaskId)
+            );
+            
+            // Update each successor task's dependencies
+            const successorIds = new Set(this.tempSuccessors.map(s => s.id));
+            
+            // Remove dependencies from tasks that are no longer successors
+            currentSuccessors.forEach(succ => {
+                if (!successorIds.has(succ.id)) {
+                    // Remove the dependency
+                    const updatedDeps = succ.dependencies.filter(d => d.id !== currentTaskId);
+                    if (this.options.onSave) {
+                        this.options.onSave(succ.id, updatedDeps);
+                    }
+                }
+            });
+            
+            // Add/update dependencies for tasks that are now successors
+            this.tempSuccessors.forEach(succ => {
+                const succTask = tasks.find(t => t.id === succ.id);
+                if (!succTask) return;
+                
+                // Get current dependencies, removing any existing link to current task
+                const updatedDeps = (succTask.dependencies || []).filter(d => d.id !== currentTaskId);
+                
+                // Add the new dependency
+                updatedDeps.push({
+                    id: currentTaskId,
+                    type: succ.type,
+                    lag: succ.lag,
+                });
+                
+                if (this.options.onSave) {
+                    this.options.onSave(succ.id, updatedDeps);
+                }
+            });
+        }
+        
         // Only close if in modal mode (panel mode stays open)
         if (!this.isPanel) {
             this.close();

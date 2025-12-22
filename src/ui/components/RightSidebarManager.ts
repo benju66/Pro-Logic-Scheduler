@@ -164,6 +164,7 @@ export class RightSidebarManager {
             isPanel: true, // Flag for panel mode
             getTasks: () => this.scheduler.tasks,
             isParent: (id) => this.scheduler.isParent(id),
+            getDepth: (id) => this.scheduler.getDepth(id),
             onSave: (taskId, deps) => this.scheduler.updateDependencies(taskId, deps),
         });
     }
@@ -184,8 +185,8 @@ export class RightSidebarManager {
         });
 
         // Subscribe to selection changes
-        this._unsubscribeSelection = this.scheduler.onTaskSelect((taskId, task) => {
-            this._onSelectionChange(taskId, task);
+        this._unsubscribeSelection = this.scheduler.onTaskSelect((taskId, task, field) => {
+            this._onSelectionChange(taskId, task, field);
         });
         
         // Also sync with current selection if a task is already selected
@@ -376,7 +377,7 @@ export class RightSidebarManager {
     /**
      * Handle selection change from SchedulerService
      */
-    private _onSelectionChange(taskId: string | null, task: Task | null): void {
+    private _onSelectionChange(taskId: string | null, task: Task | null, field?: string): void {
         this.currentTaskId = taskId;
         
         if (!taskId || !task) {
@@ -389,11 +390,19 @@ export class RightSidebarManager {
         const isParent = this.scheduler.isParent(taskId);
         
         if (this.activePanels.has('details') && this.detailsPanel) {
-            this.detailsPanel.open(task, { isParent });
+            try {
+                this.detailsPanel.open(task, { isParent, focusField: field });
+            } catch (e) {
+                console.error('[RightSidebarManager] Error opening details panel:', e);
+            }
         }
         
         if (this.activePanels.has('links') && this.dependenciesPanel) {
-            this.dependenciesPanel.syncPanel(task);
+            try {
+                this.dependenciesPanel.syncPanel(task);
+            } catch (e) {
+                console.error('[RightSidebarManager] Error syncing links panel:', e);
+            }
         }
     }
 

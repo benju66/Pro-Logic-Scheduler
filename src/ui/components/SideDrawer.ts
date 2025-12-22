@@ -350,6 +350,36 @@ export class SideDrawer {
             this.dom.closeBtn.addEventListener('click', () => this.close());
         }
         
+        // Ensure inputs focus on single click (especially important for date inputs)
+        // This fixes the issue where users need to double-click to edit
+        const focusableInputs = [
+            this.dom.name,
+            this.dom.duration,
+            this.dom.progress,
+            this.dom.start,
+            this.dom.end,
+            this.dom.constraintType,
+            this.dom.constraintDate,
+            this.dom.actualStart,
+            this.dom.actualFinish,
+            this.dom.notes,
+        ];
+        
+        focusableInputs.forEach(input => {
+            if (input && !input.disabled) {
+                input.addEventListener('click', () => {
+                    // Ensure the input gets focus on single click
+                    if (document.activeElement !== input) {
+                        input.focus();
+                        // For text/number inputs, select the text for easier editing
+                        if ((input.type === 'text' || input.type === 'number') && input instanceof HTMLInputElement) {
+                            input.select();
+                        }
+                    }
+                }, { capture: true });
+            }
+        });
+        
         // Field changes
         this.dom.name.addEventListener('change', () => this._handleChange('name', this.dom.name.value));
         this.dom.duration.addEventListener('change', () => this._handleChange('duration', this.dom.duration.value));
@@ -715,7 +745,7 @@ export class SideDrawer {
      * @param task - The task object to edit
      * @param options - Additional options
      */
-    open(task: Task, options: { isParent?: boolean } = {}): void {
+    open(task: Task, options: { isParent?: boolean; focusField?: string } = {}): void {
         if (!task) return;
         
         // Toggle if same task (only in standalone mode)
@@ -773,6 +803,10 @@ export class SideDrawer {
                 this._bindEvents();
             }
         }
+        
+        // Check if this is a new task or the same task (to avoid refocusing)
+        const isNewTask = this.activeTaskId !== task.id;
+        const wasClosed = !this.isOpen;
         
         this.activeTaskId = task.id;
         this.isOpen = true;
@@ -892,8 +926,59 @@ export class SideDrawer {
         }
         this.isOpen = true;
         
-        // Focus name field
-        setTimeout(() => this.dom.name.focus(), 100);
+        // Focus the requested field, or name field if this is a new task or drawer was closed
+        // Always sync data even if it's the same task (in case data changed)
+        const focusField = options.focusField;
+        
+        // Focus field if:
+        // 1. A specific field was requested (user clicked on a field)
+        // 2. This is a new task
+        // 3. Drawer was closed
+        if (focusField || isNewTask || wasClosed) {
+            setTimeout(() => {
+                // Map grid field names to drawer field names
+                const fieldMap: Record<string, keyof SideDrawerDOM> = {
+                    'name': 'name',
+                    'duration': 'duration',
+                    'progress': 'progress',
+                    'start': 'start',
+                    'end': 'end',
+                    'constraintType': 'constraintType',
+                    'constraintDate': 'constraintDate',
+                    'actualStart': 'actualStart',
+                    'actualFinish': 'actualFinish',
+                    'notes': 'notes',
+                };
+                
+                const targetField = focusField ? fieldMap[focusField] : 'name';
+                const targetInput = targetField ? this.dom[targetField] : null;
+                
+                if (targetInput && targetInput instanceof HTMLElement) {
+                    // Check if disabled (for input/select elements)
+                    const isDisabled = (targetInput instanceof HTMLInputElement || targetInput instanceof HTMLSelectElement) 
+                        ? targetInput.disabled 
+                        : false;
+                    
+                    if (!isDisabled) {
+                        targetInput.focus();
+                        // For text/number inputs, select the text for easier editing
+                        if (targetInput instanceof HTMLInputElement && 
+                            (targetInput.type === 'text' || targetInput.type === 'number')) {
+                            targetInput.select();
+                        }
+                        // For date inputs, trigger click to open picker
+                        if (targetInput instanceof HTMLInputElement && targetInput.type === 'date') {
+                            setTimeout(() => {
+                                targetInput.click();
+                            }, 50);
+                        }
+                    }
+                } else if (!focusField && (isNewTask || wasClosed)) {
+                    // Fallback to name field if no specific field requested
+                    this.dom.name.focus();
+                }
+            }, 100);
+        }
     }
 
     /**
