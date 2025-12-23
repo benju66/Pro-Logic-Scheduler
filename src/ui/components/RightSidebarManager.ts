@@ -171,13 +171,12 @@ export class RightSidebarManager {
             onSave: (taskId, deps) => this.scheduler.updateDependencies(taskId, deps),
         });
 
-        // Initialize Trade Partners Panel
-        const tradePartnersWrapper = document.createElement('div');
-        tradePartnersWrapper.className = 'sidebar-panel-content';
-        this.panelWrappers.set('tradePartners', tradePartnersWrapper);
+        // Initialize Trade Partners Panel (container created in constructor)
+        const tradePartnersContainer = document.createElement('div');
+        tradePartnersContainer.className = 'sidebar-panel-content';
         
         this.tradePartnersPanel = new TaskTradePartnersPanel({
-            container: tradePartnersWrapper,
+            container: tradePartnersContainer,
             getTask: (taskId) => this.scheduler.getTask(taskId),
             getTradePartners: () => this.scheduler.getTradePartners(),
             getTaskTradePartners: (taskId) => this.scheduler.getTaskTradePartners(taskId) || [],
@@ -463,7 +462,7 @@ export class RightSidebarManager {
         }
         
         if (this.activePanels.has('tradePartners') && this.tradePartnersPanel) {
-            this.tradePartnersPanel.hide();
+            this.tradePartnersPanel.showEmptyState();
         }
     }
 
@@ -554,17 +553,9 @@ export class RightSidebarManager {
             const el = this.dependenciesPanel.getElement();
             if (el) content.appendChild(el);
         } else if (panelId === 'tradePartners' && this.tradePartnersPanel) {
-            // Trade partners panel - get or create wrapper
-            let panelWrapper = this.panelWrappers.get('tradePartners');
-            if (!panelWrapper) {
-                panelWrapper = document.createElement('div');
-                panelWrapper.className = 'sidebar-panel-content';
-                this.panelWrappers.set('tradePartners', panelWrapper);
-                
-                // Update panel container reference
-                (this.tradePartnersPanel as any).container = panelWrapper;
-            }
-            content.appendChild(panelWrapper);
+            // Trade partners panel - use getElement() like other panels
+            const el = this.tradePartnersPanel.getElement();
+            if (el) content.appendChild(el);
         }
         
         wrapper.appendChild(content);
