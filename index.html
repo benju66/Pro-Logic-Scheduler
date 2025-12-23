@@ -3012,15 +3012,5 @@
     
     <!-- Scripts (ES Modules) -->
     <script type="module" src="/src/main.ts"></script>
-    
-    <!-- Test Script (for debugging - only in dev mode) -->
-    <script>
-        // Only load test script in development
-        if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-            const script = document.createElement('script');
-            script.src = '/test-button-setup.js';
-            document.body.appendChild(script);
-        }
-    </script>
 </body>
 </html>

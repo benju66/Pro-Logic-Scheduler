@@ -51,8 +51,10 @@ export class PersistenceService {
       this.isInitialized = true;
       console.log('[PersistenceService] ✅ Initialized');
     } catch (error) {
-      console.error('[PersistenceService] ❌ Initialization failed:', error);
-      this.isInitialized = true; // Allow app to continue
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('[PersistenceService] ❌ Initialization failed:', errorMessage, error);
+      // Don't mark as initialized if database setup failed - app should handle gracefully
+      this.isInitialized = false;
     }
   }
 
@@ -84,8 +86,9 @@ export class PersistenceService {
           await this.db.execute(statement);
         } catch (err) {
           const error = err as Error;
-          if (!error.message.includes('already exists') && !error.message.includes('duplicate')) {
-            console.warn('[PersistenceService] Schema statement failed:', statement.substring(0, 50), error.message);
+          const errorMessage = error?.message || String(err || 'Unknown error');
+          if (!errorMessage.includes('already exists') && !errorMessage.includes('duplicate')) {
+            console.warn('[PersistenceService] Schema statement failed:', statement.substring(0, 50), errorMessage);
           }
         }
       }
