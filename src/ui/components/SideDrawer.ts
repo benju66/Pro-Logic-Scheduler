@@ -935,59 +935,44 @@ export class SideDrawer {
         // 2. This is a new task
         // 3. Drawer was closed
         if (focusField || isNewTask || wasClosed) {
-            // Map grid field names to drawer field names
-            const fieldMap: Record<string, keyof SideDrawerDOM> = {
-                'name': 'name',
-                'duration': 'duration',
-                'progress': 'progress',
-                'start': 'start',
-                'end': 'end',
-                'constraintType': 'constraintType',
-                'constraintDate': 'constraintDate',
-                'actualStart': 'actualStart',
-                'actualFinish': 'actualFinish',
-                'notes': 'notes',
-            };
+            const targetInput = focusField 
+                ? this._getFocusableFieldElement(focusField)
+                : (isNewTask || wasClosed ? this.dom.name : null);
             
-            const targetField = focusField ? fieldMap[focusField] : 'name';
-            const targetInput = targetField ? this.dom[targetField] : null;
-            
-            if (targetInput && targetInput instanceof HTMLElement) {
-                // Check if disabled (for input/select elements)
-                const isDisabled = (targetInput instanceof HTMLInputElement || targetInput instanceof HTMLSelectElement) 
-                    ? targetInput.disabled 
-                    : false;
+            if (targetInput) {
+                // Focus immediately - DOM is already populated and ready
+                // Blur any currently focused element (like grid input) first
+                const currentFocus = document.activeElement;
+                if (currentFocus && currentFocus !== targetInput && currentFocus instanceof HTMLElement) {
+                    // Only blur if it's an input/select in the grid (not our panel)
+                    if (currentFocus.closest('.vsg-row-container') && !currentFocus.closest('.drawer-body')) {
+                        currentFocus.blur();
+                    }
+                }
                 
-                if (!isDisabled) {
-                    // Focus immediately - DOM is already populated and ready
-                    // Blur any currently focused element (like grid input) first
-                    const currentFocus = document.activeElement;
-                    if (currentFocus && currentFocus !== targetInput && currentFocus instanceof HTMLElement) {
-                        // Only blur if it's an input/select in the grid (not our panel)
-                        if (currentFocus.closest('.vsg-row-container') && !currentFocus.closest('.drawer-body')) {
-                            currentFocus.blur();
-                        }
-                    }
-                    
-                    // Focus the panel input immediately (synchronously)
-                    targetInput.focus();
-                    
-                    // For text/number inputs, select the text for easier editing
-                    if (targetInput instanceof HTMLInputElement && 
-                        (targetInput.type === 'text' || targetInput.type === 'number')) {
-                        // Select synchronously after focus
+                // Focus the panel input immediately (synchronously)
+                targetInput.focus();
+                
+                // Handle different input types
+                if (targetInput instanceof HTMLInputElement) {
+                    if (targetInput.type === 'text' || targetInput.type === 'number') {
+                        // Select text for easier editing
                         targetInput.select();
-                    }
-                    
-                    // For date inputs, trigger click to open picker after focus is established
-                    if (targetInput instanceof HTMLInputElement && targetInput.type === 'date') {
-                        // Use requestAnimationFrame to ensure focus is established before opening picker
+                    } else if (targetInput.type === 'date') {
+                        // Open date picker after focus is established
                         requestAnimationFrame(() => {
                             if (document.activeElement === targetInput) {
                                 targetInput.click();
                             }
                         });
                     }
+                } else if (targetInput instanceof HTMLTextAreaElement) {
+                    // Place cursor at end of textarea
+                    const length = targetInput.value.length;
+                    targetInput.setSelectionRange(length, length);
+                } else if (targetInput instanceof HTMLSelectElement) {
+                    // Select element is already focused, no additional action needed
+                    // The dropdown will open on focus in most browsers
                 }
             } else if (!focusField && (isNewTask || wasClosed)) {
                 // Fallback to name field if no specific field requested
@@ -1031,6 +1016,79 @@ export class SideDrawer {
         } else {
             this.dom.criticalBadge.style.display = 'none';
         }
+    }
+
+    /**
+     * Convert camelCase to kebab-case
+     * Used for matching grid field names to drawer element IDs
+     * @private
+     */
+    private _toKebabCase(str: string): string {
+        return str.replace(/([A-Z])/g, '-$1').toLowerCase();
+    }
+
+    /**
+     * Check if an element is focusable and editable
+     * @private
+     */
+    private _isFocusable(element: HTMLElement): boolean {
+        if (element instanceof HTMLInputElement) {
+            return !element.disabled && !element.readOnly;
+        }
+        if (element instanceof HTMLSelectElement) {
+            return !element.disabled;
+        }
+        if (element instanceof HTMLTextAreaElement) {
+            return !element.disabled && !element.readOnly;
+        }
+        return false;
+    }
+
+    /**
+     * Get focusable field element by grid field name
+     * Uses explicit map first (type-safe), then falls back to dynamic lookup
+     * @private
+     */
+    private _getFocusableFieldElement(fieldName: string): HTMLElement | null {
+        // Explicit field map (type-safe, handles known fields)
+        const explicitFieldMap: Record<string, keyof SideDrawerDOM> = {
+            'name': 'name',
+            'duration': 'duration',
+            'progress': 'progress',
+            'start': 'start',
+            'end': 'end',
+            'constraintType': 'constraintType',
+            'constraintDate': 'constraintDate',
+            'actualStart': 'actualStart',
+            'actualFinish': 'actualFinish',
+            'notes': 'notes',
+        };
+        
+        // Try explicit map first (type-safe)
+        const drawerField = explicitFieldMap[fieldName];
+        if (drawerField && this.dom[drawerField]) {
+            const el = this.dom[drawerField] as HTMLElement;
+            if (this._isFocusable(el)) {
+                return el;
+            }
+        }
+        
+        // Fallback: Try dynamic lookup with camelCase ID
+        let element = this.element.querySelector(`#drawer-${fieldName}`) as HTMLElement | null;
+        if (element && this._isFocusable(element)) {
+            return element;
+        }
+        
+        // Fallback: Try kebab-case ID (for fields like actualStart -> actual-start)
+        const kebabName = this._toKebabCase(fieldName);
+        if (kebabName !== fieldName) {
+            element = this.element.querySelector(`#drawer-${kebabName}`) as HTMLElement | null;
+            if (element && this._isFocusable(element)) {
+                return element;
+            }
+        }
+        
+        return null;
     }
 
     /**
