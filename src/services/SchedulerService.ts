@@ -19,7 +19,6 @@
  * - Maintains view synchronization
  */
 
-import { CPM } from '../core/CPM';
 import { DateUtils } from '../core/DateUtils';
 import { LINK_TYPES, CONSTRAINT_TYPES } from '../core/Constants';
 import { OperationQueue } from '../core/OperationQueue';
@@ -62,7 +61,6 @@ import type {
     Dependency
 } from '../types';
 import type { ISchedulingEngine, TaskHierarchyContext } from '../core/ISchedulingEngine';
-import { JavaScriptEngine } from '../core/engines/JavaScriptEngine';
 import { debounce } from '../utils/debounce';
 
 /**
@@ -188,7 +186,7 @@ export class SchedulerService {
      */
     constructor(options: SchedulerServiceOptions = {} as SchedulerServiceOptions) {
         this.options = options;
-        this.isTauri = options.isTauri || false;
+        this.isTauri = true; // Desktop-only architecture
 
         // Initialize debounced recalculation (300ms delay for responsive feel)
         this._debouncedRecalc = debounce(() => {
@@ -305,49 +303,58 @@ export class SchedulerService {
     }
 
     /**
-     * Initialize the appropriate scheduling engine based on environment
+     * Initialize the Rust scheduling engine
+     * 
+     * CRITICAL: Desktop-only - if Rust engine fails, app cannot function.
+     * 
      * @private
+     * @throws Error if Rust engine fails to initialize
      */
     private async _initializeEngine(): Promise<void> {
+        // Check for Tauri environment (async check for Tauri v2 compatibility)
+        let tauriAvailable = false;
+        
+        // Quick check: window.__TAURI__ (Tauri v1, or v2 if available)
+        if ((window as Window & { __TAURI__?: unknown }).__TAURI__) {
+            tauriAvailable = true;
+        } else {
+            // Try to detect Tauri v2 by attempting to use the API
+            try {
+                const { invoke } = await import('@tauri-apps/api/core');
+                if (invoke && typeof invoke === 'function') {
+                    tauriAvailable = true;
+                }
+            } catch (e) {
+                // Can't import Tauri API - not in Tauri environment
+                tauriAvailable = false;
+            }
+        }
+        
+        if (!tauriAvailable) {
+            throw new Error(
+                'Pro Logic Scheduler requires the desktop application. ' +
+                'Browser mode is not supported.'
+            );
+        }
+
         const hierarchyContext: TaskHierarchyContext = {
             isParent: (id: string) => this.taskStore.isParent(id),
             getDepth: (id: string) => this.taskStore.getDepth(id),
         };
 
-        if (this.isTauri) {
-            console.log('[SchedulerService] Initializing Rust engine...');
-            try {
-                // Dynamic import to avoid loading Tauri in browser
-                const { RustEngine } = await import('../core/engines/RustEngine');
-                this.engine = new RustEngine();
-                
-                // Initialize with current data (if available)
-                const tasks = this.taskStore.getAll();
-                const calendar = this.calendarStore.get();
-                if (tasks.length > 0 || Object.keys(calendar.exceptions).length > 0) {
-                    await this.engine.initialize(tasks, calendar, hierarchyContext);
-                }
-                
-                console.log('[SchedulerService] Rust engine ready');
-            } catch (error) {
-                console.error('[SchedulerService] Rust engine failed, falling back to JS:', error);
-                this._initializeJavaScriptEngine(hierarchyContext);
-            }
-        } else {
-            console.log('[SchedulerService] Initializing JavaScript engine (browser mode)');
-            this._initializeJavaScriptEngine(hierarchyContext);
-        }
-    }
-
-    /**
-     * Initialize JavaScript engine
-     * @private
-     */
-    private _initializeJavaScriptEngine(context: TaskHierarchyContext): void {
-        const jsEngine = new JavaScriptEngine();
-        this.engine = jsEngine;
+        console.log('[SchedulerService] Initializing Rust engine...');
         
-        // Will be initialized with data in loadData()
+        const { RustEngine } = await import('../core/engines/RustEngine');
+        this.engine = new RustEngine();
+        
+        const tasks = this.taskStore.getAll();
+        const calendar = this.calendarStore.get();
+        
+        // Always initialize the engine, even with empty data
+        // This ensures the engine is ready for calculations
+        await this.engine.initialize(tasks, calendar, hierarchyContext);
+        
+        console.log('[SchedulerService] ✅ Rust engine ready');
     }
 
     /**
@@ -4512,33 +4519,24 @@ export class SchedulerService {
             return;
         }
 
-        // === CHANGED: Handle Async Engine Properly ===
-        // NOTE: Engine state is kept in sync via delta updates (addTask/updateTask/deleteTask)
-        // No need to syncTasks here - engine already has latest state
-        if (this.engine) {
-            // Calculate directly - engine state is already up-to-date
-            this.engine.recalculateAll()
-                .then((result) => {
-                    this._applyCalculationResult(result);
-                    this._lastCalcTime = performance.now() - startTime;
-                })
-                .catch((error) => {
-                    console.error('[SchedulerService] Engine calculation failed:', error);
-                    // Fallback to direct CPM call if engine dies
-                    this._fallbackCalculation(tasks, calendar);
-                })
-                .finally(() => {
-                    // CRITICAL: Only release the lock when the async chain is DONE
-                    this._isRecalculating = false;
-                });
-        } else {
-            // No engine - use direct CPM (synchronous)
-            try {
-                this._fallbackCalculation(tasks, calendar);
-            } finally {
-                this._isRecalculating = false;
-            }
+        if (!this.engine) {
+            this._isRecalculating = false;
+            throw new Error('[SchedulerService] FATAL: Rust engine not initialized');
         }
+
+        this.engine.recalculateAll()
+            .then((result) => {
+                this._applyCalculationResult(result);
+                this._lastCalcTime = performance.now() - startTime;
+            })
+            .catch((error) => {
+                console.error('[SchedulerService] FATAL: CPM calculation failed:', error);
+                this.toastService.error('Schedule calculation failed. Please restart the application.');
+                throw error;
+            })
+            .finally(() => {
+                this._isRecalculating = false;
+            });
     }
 
     /**
@@ -4571,10 +4569,6 @@ export class SchedulerService {
 
         // Restore onChange
         restoreNotifications();
-
-        // Roll up parent dates - KEEP THIS CALL
-        // This ensures parent dates are always correct, even if CPM/Rust engine doesn't calculate them
-        this._rollupParentDates();
         
         // Trigger render updates
         this.render();
@@ -4599,20 +4593,6 @@ export class SchedulerService {
         }
     }
 
-    /**
-     * Fallback to direct CPM calculation (if engine fails)
-     * @private
-     */
-    private _fallbackCalculation(tasks: Task[], calendar: Calendar): void {
-        // console.warn('[SchedulerService] Using fallback CPM calculation');
-        
-        const result = CPM.calculate(tasks, calendar, {
-            isParent: (id) => this.taskStore.isParent(id),
-            getDepth: (id) => this.taskStore.getDepth(id),
-        });
-        
-        this._applyCalculationResult(result);
-    }
 
     /**
      * Roll up parent task dates from children
@@ -4767,151 +4747,69 @@ export class SchedulerService {
      * CRITICAL: Reset editing state at the very start - prevents saving to non-existent task IDs
      * This is called during initialization and when loading a new file/project
      */
+    /**
+     * Load data from SQLite database
+     */
     async loadData(): Promise<void> {
         const editingManager = getEditingStateManager();
-        
-        // CRITICAL: Reset editing state at the very start
-        // This is a cheap insurance policy against corrupting data when switching projects
-        // If editing state persists, it might try to save to a task ID that no longer exists
         editingManager.reset();
-        
         console.log('[SchedulerService] 🔍 loadData() called');
         
+        if (!this.dataLoader) {
+            throw new Error('[SchedulerService] FATAL: DataLoader not initialized');
+        }
+        
         try {
-            // Try SQLite first (Tauri environment)
-            if (this.dataLoader) {
-                const { tasks, calendar } = await this.dataLoader.loadData();
-                
-                if (tasks.length > 0 || Object.keys(calendar.exceptions).length > 0) {
-                    // Migrate tasks to have sortKey (if needed)
-                    const tasksWithSortKeys = this._assignSortKeysToImportedTasks(tasks);
-                    
-                    // CRITICAL: Disable notifications during load to prevent "change" events
-                    const restoreNotifications = this.taskStore.disableNotifications();
-                    this.taskStore.setAll(tasksWithSortKeys);
-                    restoreNotifications();
-                    
-                    // Set calendar without queuing event (skipEvent = true)
-                    this.calendarStore.set(calendar, true);
-                    
-                    // Sync engine with loaded data
-                    if (this.engine) {
-                        const context: TaskHierarchyContext = {
-                            isParent: (id: string) => this.taskStore.isParent(id),
-                            getDepth: (id: string) => this.taskStore.getDepth(id),
-                        };
-                        await this.engine.initialize(tasksWithSortKeys, calendar, context);
-                    }
-                    
-                    // Run CPM to populate calculated fields (start, end, etc.)
-                    this.recalculateAll();
-                    // Note: render() is automatically triggered by _applyCalculationResult() 
-                    // when recalculateAll() completes
-                    
-                    console.log('[SchedulerService] ✅ Loaded from SQLite:', tasks.length, 'tasks');
-                    return;
-                }
-            }
+            const { tasks, calendar } = await this.dataLoader.loadData();
             
-            // Fallback to localStorage logic if SQLite is empty or unavailable
-            console.log('[SchedulerService] SQLite empty or unavailable - trying localStorage');
-            const saved = localStorage.getItem(SchedulerService.STORAGE_KEY);
-            if (saved) {
-                const parsed = JSON.parse(saved) as { 
-                    tasks?: Task[]; 
-                    calendar?: Calendar; 
-                    savedAt?: string;
-                    version?: string;
-                };
+            if (tasks.length > 0 || Object.keys(calendar.exceptions).length > 0) {
+                const tasksWithSortKeys = this._assignSortKeysToImportedTasks(tasks);
                 
-                console.log('[SchedulerService] Loading data from localStorage', {
-                    taskCount: parsed.tasks?.length ?? 0,
-                    hasCalendar: !!parsed.calendar,
-                    savedAt: parsed.savedAt,
-                    version: parsed.version
-                });
+                const restoreNotifications = this.taskStore.disableNotifications();
+                this.taskStore.setAll(tasksWithSortKeys);
+                restoreNotifications();
                 
-                if (parsed.tasks && parsed.tasks.length > 0) {
-                    // Migrate tasks to have sortKey
-                    const tasksWithSortKeys = this._assignSortKeysToImportedTasks(parsed.tasks);
-                    
-                    // Temporarily disable onChange to prevent recursion during load
-                    const restoreNotifications = this.taskStore.disableNotifications();
-                    this.taskStore.setAll(tasksWithSortKeys);
-                    restoreNotifications();
-                    
-                    console.log('[SchedulerService] ✅ Loaded', tasksWithSortKeys.length, 'tasks from localStorage');
-                }
+                this.calendarStore.set(calendar, true);
                 
-                if (parsed.calendar) {
-                    this.calendarStore.set(parsed.calendar, true); // skipEvent = true
-                }
-                
-                // Sync engine with loaded data
-                if (this.engine && (parsed.tasks?.length ?? 0) > 0) {
+                if (this.engine) {
                     const context: TaskHierarchyContext = {
                         isParent: (id: string) => this.taskStore.isParent(id),
                         getDepth: (id: string) => this.taskStore.getDepth(id),
                     };
-                    const tasks = this.taskStore.getAll();
-                    const calendar = this.calendarStore.get();
-                    await this.engine.initialize(tasks, calendar, context);
+                    await this.engine.initialize(tasksWithSortKeys, calendar, context);
                 }
                 
-                // Run CPM to populate calculated fields
-                if ((parsed.tasks?.length ?? 0) > 0) {
-                    this.recalculateAll();
-                    // Note: render() is automatically triggered by _applyCalculationResult() 
-                    // when recalculateAll() completes
-                }
+                this.recalculateAll();
+                console.log('[SchedulerService] ✅ Loaded from SQLite:', tasks.length, 'tasks');
             } else {
                 console.log('[SchedulerService] No saved data found - creating sample data');
                 this._createSampleData();
             }
         } catch (err) {
-            console.error('[SchedulerService] Load data failed:', err);
-            // Clear corrupted data and start fresh
-            console.log('[SchedulerService] Clearing corrupted localStorage data');
-            try {
-                localStorage.removeItem(SchedulerService.STORAGE_KEY);
-            } catch (e) {
-                // Ignore localStorage errors
-            }
-            this._createSampleData();
+            console.error('[SchedulerService] FATAL: Load data failed:', err);
+            this.toastService.error('Failed to load schedule data');
+            throw err;
         }
     }
 
     /**
      * Save data (creates snapshot checkpoint)
-     * Events are auto-persisted via queue - this just creates a checkpoint
      */
     async saveData(): Promise<void> {
-        // Create snapshot checkpoint
-        if (this.snapshotService) {
-            try {
-                await this.snapshotService.createSnapshot(
-                    this.taskStore.getAll(),
-                    this.calendarStore.get()
-                );
-                console.log('[SchedulerService] ✅ Snapshot checkpoint created');
-            } catch (error) {
-                console.error('[SchedulerService] Failed to create snapshot:', error);
-            }
+        if (!this.snapshotService) {
+            console.warn('[SchedulerService] SnapshotService not available');
+            return;
         }
         
-        // Keep localStorage save logic as backup for browser mode
-        if (!this.isTauri) {
-            try {
-                const data = {
-                    tasks: this.taskStore.getAll(),
-                    calendar: this.calendarStore.get(),
-                    savedAt: new Date().toISOString(),
-                    version: '2.1.0'  // Track data format version
-                };
-                localStorage.setItem(SchedulerService.STORAGE_KEY, JSON.stringify(data));
-            } catch (err) {
-                console.error('[SchedulerService] Save data failed:', err);
-            }
+        try {
+            await this.snapshotService.createSnapshot(
+                this.taskStore.getAll(),
+                this.calendarStore.get()
+            );
+            console.log('[SchedulerService] ✅ Snapshot checkpoint created');
+        } catch (error) {
+            console.error('[SchedulerService] Failed to create snapshot:', error);
+            this.toastService.warning('Failed to save checkpoint');
         }
     }
     
@@ -5319,6 +5217,27 @@ export class SchedulerService {
         } catch (err) {
             // Error handled by FileService
         }
+    }
+
+    /**
+     * Import from MS Project XML content (for Tauri native dialog)
+     * 
+     * @param content - XML file content as string
+     */
+    async importFromMSProjectXMLContent(content: string): Promise<void> {
+        const result = await this.fileService.importFromMSProjectXMLContent(content);
+        this.saveCheckpoint();
+        
+        const tasksWithSortKeys = this._assignSortKeysToImportedTasks(result.tasks);
+        this.taskStore.setAll(tasksWithSortKeys);
+        
+        if (result.calendar) {
+            this.calendarStore.set(result.calendar);
+        }
+        
+        this.recalculateAll();
+        this.saveData();
+        this.toastService.success(`Imported ${result.tasks.length} tasks from MS Project`);
     }
 
     /**

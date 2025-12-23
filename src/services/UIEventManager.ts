@@ -45,7 +45,6 @@ export class UIEventManager {
    */
   initialize(): void {
     this.initResizer();
-    this.initFileInputs();
     this.initFileShortcuts();
     this.initColumnResizers();
     this.initButtonHandlers();
@@ -105,38 +104,6 @@ export class UIEventManager {
     document.addEventListener('mouseup', handleMouseUp);
   }
 
-  /**
-   * Initialize file input handlers
-   */
-  initFileInputs(): void {
-    // JSON file input
-    const jsonInput = document.getElementById('file-input-json') as HTMLInputElement | null;
-    if (jsonInput) {
-      jsonInput.addEventListener('change', async (e: Event) => {
-        const target = e.target as HTMLInputElement;
-        const file = target.files?.[0];
-        const scheduler = this.getScheduler();
-        if (file && scheduler) {
-          await scheduler.importFromFile(file);
-        }
-        target.value = '';
-      });
-    }
-    
-    // XML file input
-    const xmlInput = document.getElementById('file-input-xml') as HTMLInputElement | null;
-    if (xmlInput) {
-      xmlInput.addEventListener('change', async (e: Event) => {
-        const target = e.target as HTMLInputElement;
-        const file = target.files?.[0];
-        const scheduler = this.getScheduler();
-        if (file && scheduler) {
-          await scheduler.importFromMSProjectXML(file);
-        }
-        target.value = '';
-      });
-    }
-  }
 
   /**
    * Initialize file operation keyboard shortcuts
@@ -738,11 +705,32 @@ export class UIEventManager {
   }
 
   /**
-   * Handle import XML action
+   * Handle import XML action using native Tauri dialog
    */
-  handleImportXML(): void {
+  async handleImportXML(): Promise<void> {
     document.querySelectorAll('.dropdown-menu').forEach(m => m.classList.remove('show'));
-    document.getElementById('file-input-xml')?.click();
+    
+    const scheduler = this.getScheduler();
+    if (!scheduler) return;
+    
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected = await open({
+        filters: [{ name: 'MS Project XML', extensions: ['xml'] }],
+        multiple: false
+      });
+      
+      if (selected && typeof selected === 'string') {
+        const { readTextFile } = await import('@tauri-apps/plugin-fs');
+        const content = await readTextFile(selected);
+        
+        // Use SchedulerService's import method (handles all logic)
+        await scheduler.importFromMSProjectXMLContent(content);
+      }
+    } catch (error) {
+      console.error('[UIEventManager] XML import failed:', error);
+      this.toastService?.show('Failed to import XML file', 'error');
+    }
   }
 
   /**

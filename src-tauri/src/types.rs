@@ -78,6 +78,30 @@ pub struct Task {
     // === UI State ===
     #[serde(rename = "_collapsed", default)]
     pub collapsed: Option<bool>,
+    
+    // === Actuals Tracking (Driver Mode) ===
+    #[serde(rename = "actualStart", default)]
+    pub actual_start: Option<String>,
+    
+    #[serde(rename = "actualFinish", default)]
+    pub actual_finish: Option<String>,
+    
+    #[serde(rename = "remainingDuration", default)]
+    pub remaining_duration: Option<i32>,
+    
+    // === Baseline Tracking ===
+    #[serde(rename = "baselineStart", default)]
+    pub baseline_start: Option<String>,
+    
+    #[serde(rename = "baselineFinish", default)]
+    pub baseline_finish: Option<String>,
+    
+    #[serde(rename = "baselineDuration", default)]
+    pub baseline_duration: Option<i32>,
+    
+    // === Optional Display ===
+    #[serde(default)]
+    pub wbs: Option<String>,
 }
 
 /// Calendar configuration

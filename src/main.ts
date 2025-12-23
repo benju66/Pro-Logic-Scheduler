@@ -2,7 +2,7 @@
  * Pro Logic Scheduler - Main Entry Point
  * 
  * This module imports all components and initializes the application.
- * Works in both browser and Tauri environments.
+ * Desktop-only: Requires Tauri environment.
  */
 
 /// <reference path="./types/globals.d.ts" />
@@ -33,47 +33,107 @@ let scheduler: SchedulerService | null = null;
 let uiEventManager: UIEventManager | null = null;
 
 // Initialize app
-function initApp(): void {
-    if (appInitializer) {
-        console.log('⚠️ Already initializing, skipping duplicate initApp() call');
+async function initApp(): Promise<void> {
+    // Fatal error boundary - desktop-only requirement
+    // Check for Tauri environment (works for both v1 and v2)
+    // In Tauri v2, window.__TAURI__ might not exist, so we check by trying to use the API
+    let tauriAvailable = false;
+    
+    // Quick check: window.__TAURI__ (Tauri v1, or v2 if available)
+    if ((window as Window & { __TAURI__?: unknown }).__TAURI__) {
+        tauriAvailable = true;
+    } else {
+        // Try to detect Tauri v2 by attempting to use the API
+        // This is async, so we need to wait
+        try {
+            const { invoke } = await import('@tauri-apps/api/core');
+            // If we can import and invoke exists, we're in Tauri
+            if (invoke && typeof invoke === 'function') {
+                tauriAvailable = true;
+            }
+        } catch (e) {
+            // Can't import Tauri API - not in Tauri environment
+            tauriAvailable = false;
+        }
+    }
+    
+    if (!tauriAvailable) {
+        document.body.innerHTML = `
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:system-ui;background:#1a1a2e;color:#eee;">
+                <h1 style="color:#ff6b6b;">⚠️ Desktop Application Required</h1>
+                <p>Pro Logic Scheduler must be run as a desktop application.</p>
+                <p style="margin-top:1em;font-size:0.9em;color:#999;">Please use: <code style="background:#000;padding:0.2em 0.4em;border-radius:3px;">npm run tauri dev</code></p>
+            </div>
+        `;
+        console.error('[main] FATAL: Tauri environment required');
         return;
     }
     
-    appInitializer = new AppInitializer({ isTauri });
-    appInitializer.initialize().then(sched => {
-        scheduler = sched;
+    try {
+        if (appInitializer) {
+            console.log('⚠️ Already initializing, skipping duplicate initApp() call');
+            return;
+        }
         
-        // Initialize keyboard shortcuts (after scheduler is fully initialized)
-        scheduler.initKeyboard();
-        
-        // Initialize UI event manager
-        uiEventManager = new UIEventManager({
-            getScheduler: () => scheduler,
-            toastService: scheduler?.toastService || null,
-            isTauri: isTauri
+        appInitializer = new AppInitializer({ isTauri });
+        appInitializer.initialize().then(sched => {
+            scheduler = sched;
+            
+            // Initialize keyboard shortcuts (after scheduler is fully initialized)
+            scheduler.initKeyboard();
+            
+            // Initialize UI event manager
+            uiEventManager = new UIEventManager({
+                getScheduler: () => scheduler,
+                toastService: scheduler?.toastService || null,
+                isTauri: isTauri
+            });
+            uiEventManager.initialize();
+            
+            // Make UIEventManager available globally for window functions (backward compatibility)
+            window.uiEventManager = uiEventManager;
+            
+            // Initialize zoom controls
+            initZoomControls();
+        }).catch(error => {
+            console.error('[main] FATAL: App initialization failed:', error);
+            document.body.innerHTML = `
+                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:system-ui;background:#1a1a2e;color:#eee;">
+                    <h1 style="color:#ff6b6b;">❌ Initialization Failed</h1>
+                    <p>Failed to initialize application.</p>
+                    <pre style="margin-top:1em;padding:1em;background:#000;border-radius:4px;font-size:0.8em;max-width:80%;overflow:auto;">${String(error)}</pre>
+                </div>
+            `;
         });
-        uiEventManager.initialize();
-        
-        // Make UIEventManager available globally for window functions (backward compatibility)
-        window.uiEventManager = uiEventManager;
-        
-        // Initialize zoom controls
-        initZoomControls();
-    }).catch(error => {
-        console.error('Failed to initialize app:', error);
-    });
+    } catch (error) {
+        console.error('[main] FATAL: App initialization failed:', error);
+        document.body.innerHTML = `
+            <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:system-ui;background:#1a1a2e;color:#eee;">
+                <h1 style="color:#ff6b6b;">❌ Initialization Failed</h1>
+                <p>Failed to initialize application.</p>
+                <pre style="margin-top:1em;padding:1em;background:#000;border-radius:4px;font-size:0.8em;max-width:80%;overflow:auto;">${String(error)}</pre>
+            </div>
+        `;
+    }
 }
 
 // Wait for DOM to be ready, then initialize
+// Give Tauri a moment to inject its APIs (especially important in dev mode)
+async function waitForTauriAndInit(): Promise<void> {
+    // Small delay to allow Tauri to inject APIs
+    await new Promise(resolve => setTimeout(resolve, 100));
+    await initApp();
+}
+
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', () => {
         console.log('📄 DOMContentLoaded fired');
-        initApp();
+        waitForTauriAndInit().catch(console.error);
     });
 } else {
     // DOM already loaded
     console.log('📄 DOM already loaded, initializing immediately');
-    initApp();
+    waitForTauriAndInit().catch(console.error);
 }
 
 // Also try on window load as fallback
@@ -82,37 +142,21 @@ window.addEventListener('load', () => {
     // Only initialize if scheduler wasn't already initialized
     if (!(window as Window & { scheduler?: SchedulerService }).scheduler && (!appInitializer || !appInitializer.isInitialized)) {
         console.warn('⚠️ Scheduler not initialized on DOMContentLoaded, trying again on window load');
-        initApp();
+        initApp().catch(console.error);
     } else {
         console.log('✅ Scheduler already initialized or initializing, skipping window load init');
     }
 });
 
-// Setup shutdown handler
+/**
+ * Setup Tauri shutdown handler
+ */
 async function setupShutdownHandler(): Promise<void> {
-    // Check if we're in Tauri
-    if (!(window as any).__TAURI__) {
-        // Fallback for browser - still unreliable but better than nothing
-        window.addEventListener('beforeunload', () => {
-            if (window.scheduler) {
-                // Synchronous save to localStorage as backup
-                try {
-                    const data = {
-                        tasks: window.scheduler.tasks || [],
-                        calendar: window.scheduler.calendarStore?.get() || {},
-                        savedAt: new Date().toISOString(),
-                        version: '2.1.0'
-                    };
-                    localStorage.setItem('pro_scheduler_v10', JSON.stringify(data));
-                } catch (e) {
-                    console.error('Emergency save failed:', e);
-                }
-            }
-        });
+    if (!window.__TAURI__) {
+        console.error('[main] FATAL: Tauri environment required');
         return;
     }
     
-    // Tauri: Listen for native shutdown event
     const { listen } = await import('@tauri-apps/api/event');
     const { invoke } = await import('@tauri-apps/api/core');
     
@@ -123,22 +167,20 @@ async function setupShutdownHandler(): Promise<void> {
             if (window.scheduler) {
                 await window.scheduler.onShutdown();
             }
-            console.log('[main] Shutdown complete - closing window');
+            console.log('[main] Shutdown complete');
         } catch (error) {
             console.error('[main] Shutdown error:', error);
         }
         
-        // Tell Tauri to actually close the window now
         try {
             await invoke('close_window');
         } catch (error) {
             console.error('[main] Failed to close window:', error);
-            // Force close as fallback
             window.close();
         }
     });
     
-    console.log('[main] Tauri shutdown handler registered');
+    console.log('[main] ✅ Tauri shutdown handler registered');
 }
 
 // Call setup during initialization

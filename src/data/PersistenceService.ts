@@ -40,13 +40,11 @@ export class PersistenceService {
   async init(): Promise<void> {
     if (this.isInitialized) return;
 
-    try {
-      if (typeof window === 'undefined' || !(window as any).__TAURI__) {
-        console.warn('[PersistenceService] Not in Tauri environment - persistence disabled');
-        this.isInitialized = true;
-        return;
-      }
+    if (typeof window === 'undefined' || !(window as any).__TAURI__) {
+      throw new Error('[PersistenceService] FATAL: Tauri environment required');
+    }
 
+    try {
       this.db = await Database.load('sqlite:scheduler.db') as DatabaseInterface;
       await this.runMigrations();
       this.startFlushLoop();

@@ -10,7 +10,6 @@
 import { SchedulerService } from './SchedulerService';
 import { StatsService } from './StatsService';
 import { PersistenceService } from '../data/PersistenceService';
-import { MigrationService } from '../data/MigrationService';
 import { ActivityBar } from '../ui/components/ActivityBar';
 import { SettingsModal } from '../ui/components/SettingsModal';
 import { RightSidebarManager } from '../ui/components/RightSidebarManager';
@@ -32,7 +31,6 @@ export class AppInitializer {
   private scheduler: SchedulerService | null = null;
   private statsService: StatsService | null = null;
   private persistenceService: PersistenceService | null = null;
-  private migrationService: MigrationService | null = null;
   private activityBar: ActivityBar | null = null;
   private settingsModal: SettingsModal | null = null;
   private rightSidebarManager: RightSidebarManager | null = null;
@@ -68,7 +66,7 @@ export class AppInitializer {
     this.isInitializing = true;
     console.log('🏎️ Pro Logic Scheduler - VS Code of Scheduling Tools');
     console.log('==================================================');
-    console.log(`Environment: ${this.isTauri ? 'Tauri Desktop' : 'Web Browser'}`);
+    console.log('Environment: Tauri Desktop');
     console.log('🦀 Tauri detected:', this.isTauri);
     console.log('📄 Document ready state:', document.readyState);
     
@@ -82,9 +80,6 @@ export class AppInitializer {
       
       // Initialize persistence service (for SQLite)
       await this._initializePersistence();
-      
-      // Run migration from localStorage to SQLite (if needed)
-      await this._runMigration();
       
       // Initialize scheduler
       await this._initializeScheduler();
@@ -132,11 +127,6 @@ export class AppInitializer {
    * @private
    */
   private async _initializePersistence(): Promise<void> {
-    if (!this.isTauri) {
-      console.log('[AppInitializer] Skipping persistence (not Tauri environment)');
-      return;
-    }
-
     try {
       console.log('[AppInitializer] Initializing PersistenceService...');
       this.persistenceService = new PersistenceService();
@@ -148,31 +138,6 @@ export class AppInitializer {
     }
   }
 
-  /**
-   * Run migration from localStorage to SQLite
-   * @private
-   */
-  private async _runMigration(): Promise<void> {
-    if (!this.isTauri || !this.persistenceService) {
-      console.log('[AppInitializer] Skipping migration (not Tauri or persistence not available)');
-      return;
-    }
-
-    try {
-      console.log('[AppInitializer] Running migration from localStorage to SQLite...');
-      this.migrationService = new MigrationService(this.persistenceService);
-      const migrated = await this.migrationService.migrateFromLocalStorage();
-      
-      if (migrated) {
-        console.log('[AppInitializer] ✅ Migration completed successfully');
-      } else {
-        console.log('[AppInitializer] No migration needed (no localStorage data found)');
-      }
-    } catch (error) {
-      console.error('[AppInitializer] Migration failed:', error);
-      // Continue anyway - migration failure shouldn't block app startup
-    }
-  }
 
   /**
    * Setup Tauri APIs

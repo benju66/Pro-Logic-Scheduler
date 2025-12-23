@@ -1,7 +1,8 @@
 /**
  * Engine exports
+ * 
+ * Desktop-only: RustEngine is the sole scheduling engine.
  */
-export { JavaScriptEngine } from './JavaScriptEngine';
 export { RustEngine } from './RustEngine';
 export type { ISchedulingEngine, TaskHierarchyContext } from '../ISchedulingEngine';
 

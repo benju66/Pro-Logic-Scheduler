@@ -16,42 +16,28 @@ export interface FileServiceOptions {
 
 /**
  * File service for handling schedule file operations
- * Supports both browser File System Access API and Tauri native dialogs
+ * Desktop-only: Uses Tauri native dialogs
  */
 export class FileService {
-  private isTauri: boolean;
   private onToast: (message: string, type: 'success' | 'error') => void;
 
   /**
    * @param options - Configuration
    */
   constructor(options: FileServiceOptions = {}) {
-    this.isTauri = options.isTauri || false;
     this.onToast = options.onToast || (() => {});
   }
 
   /**
-   * Check if File System Access API is supported
-   * @returns True if supported
-   */
-  static isFileSystemAccessSupported(): boolean {
-    return 'showSaveFilePicker' in window && 'showOpenFilePicker' in window;
-  }
-
-  /**
-   * Save schedule data to file
+   * Save schedule data to file using Tauri native dialog
    * @param data - Schedule data to save
    * @returns Promise that resolves when saved
    */
   async saveToFile(data: ProjectData): Promise<void> {
-    if (this.isTauri && window.tauriDialog && window.tauriFs) {
-      return this._saveTauri(data);
-    } else if (FileService.isFileSystemAccessSupported()) {
-      return this._saveBrowser(data);
-    } else {
-      // Fallback to download
-      this.exportAsDownload(data);
+    if (!window.tauriDialog || !window.tauriFs) {
+      throw new Error('Tauri APIs not available - desktop application required');
     }
+    return this._saveTauri(data);
   }
 
   /**
@@ -88,55 +74,16 @@ export class FileService {
     }
   }
 
-  /**
-   * Save using browser File System Access API
-   * @private
-   * @param data - Schedule data
-   */
-  private async _saveBrowser(data: ProjectData): Promise<void> {
-    try {
-      const options = {
-        suggestedName: 'My_Schedule.json',
-        types: [{
-          description: 'Pro Logic Schedule',
-          accept: { 'application/json': ['.json'] },
-        }],
-      };
-      const handle = await (window as any).showSaveFilePicker(options);
-
-      const writable = await handle.createWritable();
-      const jsonData = JSON.stringify({
-        ...data,
-        exportedAt: new Date().toISOString(),
-        version: '2.0.0'
-      }, null, 2);
-
-      await writable.write(jsonData);
-      await writable.close();
-
-      this.onToast('Saved to disk successfully', 'success');
-    } catch (err) {
-      const error = err as Error;
-      if (error.name !== 'AbortError') {
-        console.error('[FileService] Save failed:', error);
-        throw error;
-      }
-    }
-  }
 
   /**
-   * Open schedule from file
-   * @returns Schedule data or undefined if cancelled
+   * Open schedule file using Tauri native dialog
+   * @returns Promise that resolves with project data or undefined if cancelled
    */
   async openFromFile(): Promise<ProjectData | undefined> {
-    if (this.isTauri && window.tauriDialog && window.tauriFs) {
-      return this._openTauri();
-    } else if (FileService.isFileSystemAccessSupported()) {
-      return this._openBrowser();
-    } else {
-      // Fallback - return undefined, caller should use file input
-      return undefined;
+    if (!window.tauriDialog || !window.tauriFs) {
+      throw new Error('Tauri APIs not available - desktop application required');
     }
+    return this._openTauri();
   }
 
   /**
@@ -172,38 +119,6 @@ export class FileService {
     }
   }
 
-  /**
-   * Open using browser File System Access API
-   * @private
-   * @returns Schedule data or undefined
-   */
-  private async _openBrowser(): Promise<ProjectData | undefined> {
-    try {
-      const [handle] = await (window as any).showOpenFilePicker({
-        types: [{
-          description: 'Pro Logic Schedule',
-          accept: { 'application/json': ['.json'] },
-        }],
-      });
-
-      const file = await handle.getFile();
-      const text = await file.text();
-      const parsed = JSON.parse(text) as ProjectData;
-
-      if (parsed.tasks) {
-        return parsed;
-      } else {
-        throw new Error('Invalid schedule file format');
-      }
-    } catch (err) {
-      const error = err as Error;
-      if (error.name !== 'AbortError') {
-        console.error('[FileService] Open failed:', error);
-        this.onToast('Failed to open file - invalid format', 'error');
-        throw error;
-      }
-    }
-  }
 
   /**
    * Import schedule from File object (from file input)
@@ -254,15 +169,16 @@ export class FileService {
   }
 
   /**
-   * Import MS Project XML file
-   * @param file - XML file object
-   * @returns Schedule data with imported tasks and calendar
+   * Import MS Project XML from content string
+   * Used by native Tauri dialog flow
+   * 
+   * @param content - XML file content as string
+   * @returns Parsed tasks and calendar
    */
-  async importFromMSProjectXML(file: File): Promise<{ tasks: Task[], calendar: Calendar }> {
+  async importFromMSProjectXMLContent(content: string): Promise<{ tasks: Task[], calendar: Calendar }> {
     try {
-      const text = await file.text();
       const parser = new DOMParser();
-      const xmlDoc = parser.parseFromString(text, 'text/xml');
+      const xmlDoc = parser.parseFromString(content, 'text/xml');
 
       // Check for parsing errors
       const parseError = xmlDoc.querySelector('parsererror');
@@ -407,10 +323,20 @@ export class FileService {
       return { tasks: importedTasks, calendar };
     } catch (err) {
       const error = err as Error;
-      console.error('[FileService] MS Project XML import failed:', error);
-      this.onToast('Failed to import MS Project XML: ' + error.message, 'error');
+      console.error('[FileService] XML import failed:', error);
+      this.onToast('Failed to parse XML file', 'error');
       throw error;
     }
+  }
+
+  /**
+   * Import MS Project XML from File object (legacy browser API)
+   * @param file - File object from file input
+   * @returns Parsed tasks and calendar
+   */
+  async importFromMSProjectXML(file: File): Promise<{ tasks: Task[], calendar: Calendar }> {
+    const content = await file.text();
+    return this.importFromMSProjectXMLContent(content);
   }
 
   /**

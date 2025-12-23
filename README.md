@@ -26,7 +26,8 @@ Most schedulers crash because they try to sync two independent scroll areas (Gri
 
 ### 2. Native Foundation
 * **Tauri (Rust):** Provides a secure, tiny-footprint native wrapper with system-level performance.
-* **SQLite (Coming Soon):** True offline-first capability. No "loading spinners"—your data is local and instant.
+* **Rust CPM Engine:** High-performance Critical Path Method calculations in Rust (O(N) complexity).
+* **SQLite:** True offline-first capability. No "loading spinners"—your data is local and instant.
 
 ---
 
@@ -64,8 +65,10 @@ We are executing a 4-Phase Strategy to disrupt the market:
 * [x] DOM Pooling & Virtualization
 * [x] 60 FPS Rendering Benchmark
 
-### Phase 3: Field Utility (🚧 In Progress)
-* [ ] **SQLite Migration:** True Offline-First reliability.
+### Phase 3: Field Utility (✅ Complete)
+* [x] **SQLite Migration:** True Offline-First reliability.
+* [x] **Rust CPM Engine:** High-performance scheduling calculations.
+* [x] **Desktop-Only Architecture:** Native performance, no browser fallbacks.
 * [ ] **Swipe-to-Status:** Mobile-friendly updating for Superintendents.
 * [ ] **Lookahead Views:** Auto-generated 3-week lookaheads.
 
@@ -86,8 +89,8 @@ We are executing a 4-Phase Strategy to disrupt the market:
 # Install dependencies
 npm install
 
-# Run in Development Mode (Browser)
-npm run dev
-
-# Run Native App (Tauri)
+# Run Native App (Tauri Desktop)
 npm run tauri dev
+
+# Build for Production
+npm run tauri build

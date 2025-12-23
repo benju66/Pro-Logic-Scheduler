@@ -2,11 +2,10 @@
  * RustEngine.ts - Tauri Desktop CPM Engine
  * 
  * Communicates with stateful Rust backend via Tauri commands.
- * Phase 3a: Plumbing only - returns passthrough results
- * Phase 3b: Will use actual Rust CPM calculations
+ * Uses full Rust CPM implementation (src-tauri/src/cpm.rs) for all calculations.
  * 
  * @author Pro Logic Scheduler
- * @version 3.0.0 - Phase 3 Dual Engine
+ * @version 4.0.0 - Desktop Only
  */
 
 import { invoke } from '@tauri-apps/api/core';
@@ -145,11 +144,6 @@ export class RustEngine implements ISchedulingEngine {
         try {
             const resultJson = await invoke<string>('calculate_cpm');
             const result: CPMResult = JSON.parse(resultJson);
-            
-            // Log if we got passthrough result
-            if (result.stats.error?.includes('passthrough')) {
-                console.log('[RustEngine] Using passthrough result (Rust CPM not yet implemented)');
-            }
             
             return result;
         } catch (error) {

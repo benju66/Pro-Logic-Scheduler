@@ -5,7 +5,7 @@
 
 use crate::types::{Task, Calendar, CPMResult, CPMStats};
 use crate::date_utils::{add_work_days, calc_work_days, calc_work_days_difference, today};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 const MAX_CPM_ITERATIONS: usize = 50;
 
@@ -29,6 +29,9 @@ fn get_duration_offset(duration: i32) -> i32 {
 }
 
 /// Check if a task is a parent (has children)
+/// 
+/// @deprecated Use parent_ids HashSet instead for O(1) lookup
+#[deprecated(note = "Use parent_ids HashSet instead")]
 fn is_parent(task_id: &str, tasks: &[Task]) -> bool {
     tasks.iter().any(|t| t.parent_id.as_ref().map_or(false, |pid| pid == task_id))
 }
@@ -69,15 +72,9 @@ fn build_successor_map(tasks: &[Task]) -> HashMap<String, Vec<SuccessorEntry>> {
 }
 
 /// Forward pass - calculate Early Start (ES) and Early Finish (EF)
-pub fn forward_pass(tasks: &mut [Task], calendar: &Calendar) {
+pub fn forward_pass(tasks: &mut [Task], calendar: &Calendar, parent_ids: &HashSet<String>) {
     let mut iterations = 0;
     let mut changed = true;
-    
-    // Collect parent IDs upfront to avoid borrow issues
-    let parent_ids: Vec<String> = tasks.iter()
-        .filter(|t| is_parent(&t.id, tasks))
-        .map(|t| t.id.clone())
-        .collect();
     
     while changed && iterations < MAX_CPM_ITERATIONS {
         changed = false;
@@ -207,17 +204,11 @@ pub fn forward_pass(tasks: &mut [Task], calendar: &Calendar) {
 }
 
 /// Calculate parent (summary) task dates from children
-pub fn calculate_parent_dates(tasks: &mut [Task], calendar: &Calendar) {
+pub fn calculate_parent_dates(tasks: &mut [Task], calendar: &Calendar, parent_ids: &HashSet<String>) {
     let max_depth = tasks.iter()
         .map(|t| get_depth(&t.id, tasks, 0))
         .max()
         .unwrap_or(0);
-    
-    // Collect parent info upfront
-    let parent_ids: Vec<String> = tasks.iter()
-        .filter(|t| is_parent(&t.id, tasks))
-        .map(|t| t.id.clone())
-        .collect();
     
     let task_depths: HashMap<String, i32> = tasks.iter()
         .map(|t| (t.id.clone(), get_depth(&t.id, tasks, 0)))
@@ -277,13 +268,8 @@ pub fn calculate_parent_dates(tasks: &mut [Task], calendar: &Calendar) {
 }
 
 /// Backward pass - calculate Late Start (LS) and Late Finish (LF)
-pub fn backward_pass(tasks: &mut [Task], calendar: &Calendar, successor_map: &HashMap<String, Vec<SuccessorEntry>>) {
+pub fn backward_pass(tasks: &mut [Task], calendar: &Calendar, successor_map: &HashMap<String, Vec<SuccessorEntry>>, parent_ids: &HashSet<String>) {
     // Find project end date (latest Early Finish among leaf tasks)
-    let parent_ids: Vec<String> = tasks.iter()
-        .filter(|t| is_parent(&t.id, tasks))
-        .map(|t| t.id.clone())
-        .collect();
-    
     let mut project_end = String::new();
     for task in tasks.iter() {
         if !parent_ids.contains(&task.id) && !task.end.is_empty() {
@@ -406,13 +392,7 @@ pub fn backward_pass(tasks: &mut [Task], calendar: &Calendar, successor_map: &Ha
 }
 
 /// Calculate Total Float and Free Float for all tasks
-pub fn calculate_float(tasks: &mut [Task], calendar: &Calendar, successor_map: &HashMap<String, Vec<SuccessorEntry>>) {
-    // Collect parent IDs upfront
-    let parent_ids: Vec<String> = tasks.iter()
-        .filter(|t| is_parent(&t.id, tasks))
-        .map(|t| t.id.clone())
-        .collect();
-    
+pub fn calculate_float(tasks: &mut [Task], calendar: &Calendar, successor_map: &HashMap<String, Vec<SuccessorEntry>>, parent_ids: &HashSet<String>) {
     // First pass: calculate float for leaf tasks
     // Collect task data for lookup
     let task_data: HashMap<String, (String, String, bool)> = tasks.iter()
@@ -536,13 +516,7 @@ pub fn calculate_float(tasks: &mut [Task], calendar: &Calendar, successor_map: &
 }
 
 /// Mark critical path based on Total Float
-pub fn mark_critical_path(tasks: &mut [Task]) {
-    // Collect parent IDs upfront
-    let parent_ids: Vec<String> = tasks.iter()
-        .filter(|t| is_parent(&t.id, tasks))
-        .map(|t| t.id.clone())
-        .collect();
-    
+pub fn mark_critical_path(tasks: &mut [Task], parent_ids: &HashSet<String>) {
     // First pass: mark leaf tasks based on float
     for task in tasks.iter_mut() {
         if parent_ids.contains(&task.id) {
@@ -608,31 +582,31 @@ pub fn calculate(tasks: &mut [Task], calendar: &Calendar) -> CPMResult {
         };
     }
     
+    // O(N) pre-computation - build lookup sets ONCE
+    let parent_ids: HashSet<String> = tasks.iter()
+        .filter_map(|t| t.parent_id.as_ref())
+        .cloned()
+        .collect();
+    
     // Step 1: Build successor map for backward pass
     let successor_map = build_successor_map(tasks);
     
     // Step 2: Forward pass - calculate Early Start and Early Finish
-    forward_pass(tasks, calendar);
+    forward_pass(tasks, calendar, &parent_ids);
     
     // Step 3: Calculate parent dates from children
-    calculate_parent_dates(tasks, calendar);
+    calculate_parent_dates(tasks, calendar, &parent_ids);
     
     // Step 4: Backward pass - calculate Late Start and Late Finish
-    backward_pass(tasks, calendar, &successor_map);
+    backward_pass(tasks, calendar, &successor_map, &parent_ids);
     
     // Step 5: Calculate float values
-    calculate_float(tasks, calendar, &successor_map);
+    calculate_float(tasks, calendar, &successor_map, &parent_ids);
     
     // Step 6: Mark critical path based on float
-    mark_critical_path(tasks);
+    mark_critical_path(tasks, &parent_ids);
     
     let calc_time = start_time.elapsed().as_secs_f64() * 1000.0; // Convert to milliseconds
-    
-    // Collect parent IDs for filtering
-    let parent_ids: Vec<String> = tasks.iter()
-        .filter(|t| is_parent(&t.id, tasks))
-        .map(|t| t.id.clone())
-        .collect();
     
     // Find project end date
     let valid_ends: Vec<String> = tasks.iter()

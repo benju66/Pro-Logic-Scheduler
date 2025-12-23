@@ -105,6 +105,41 @@ impl ProjectState {
                                 task.dependencies = deps;
                             }
                         }
+                        "actualStart" => {
+                            task.actual_start = value.as_str().map(|s| s.to_string());
+                        }
+                        "actualFinish" => {
+                            task.actual_finish = value.as_str().map(|s| s.to_string());
+                        }
+                        "remainingDuration" => {
+                            if let Some(v) = value.as_i64() {
+                                // Bounds check to prevent overflow
+                                if v >= i32::MIN as i64 && v <= i32::MAX as i64 {
+                                    task.remaining_duration = Some(v as i32);
+                                } else {
+                                    eprintln!("[engine_state] remainingDuration overflow: {}", v);
+                                }
+                            }
+                        }
+                        "baselineStart" => {
+                            task.baseline_start = value.as_str().map(|s| s.to_string());
+                        }
+                        "baselineFinish" => {
+                            task.baseline_finish = value.as_str().map(|s| s.to_string());
+                        }
+                        "baselineDuration" => {
+                            if let Some(v) = value.as_i64() {
+                                // Bounds check to prevent overflow
+                                if v >= i32::MIN as i64 && v <= i32::MAX as i64 {
+                                    task.baseline_duration = Some(v as i32);
+                                } else {
+                                    eprintln!("[engine_state] baselineDuration overflow: {}", v);
+                                }
+                            }
+                        }
+                        "wbs" => {
+                            task.wbs = value.as_str().map(|s| s.to_string());
+                        }
                         // Add more fields as needed
                         _ => {
                             // Ignore unknown fields for forward compatibility
