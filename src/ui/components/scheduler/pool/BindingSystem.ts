@@ -95,6 +95,33 @@ export class BindingSystem {
             return;
         }
 
+        // Handle custom renderer (check before standard binding)
+        if (col.renderer) {
+            const rendered = col.renderer(task, {
+                isParent,
+                depth,
+                isCollapsed,
+                index: ctx.index,
+            });
+            
+            if (cell.text) {
+                // Check if rendered content contains HTML
+                if (rendered.includes('<')) {
+                    cell.text.innerHTML = rendered;
+                } else {
+                    cell.text.textContent = rendered;
+                }
+            } else if (cell.container) {
+                // Fallback to container if text node doesn't exist
+                if (rendered.includes('<')) {
+                    cell.container.innerHTML = rendered;
+                } else {
+                    cell.container.textContent = rendered;
+                }
+            }
+            return;
+        }
+
         const value = getTaskFieldValue(task, col.field);
 
         // Handle different cell types
@@ -215,32 +242,6 @@ export class BindingSystem {
             this._bindConstraintIcon(cell, col, task, ctx);
         }
 
-        // Handle custom renderer
-        if (col.renderer) {
-            const rendered = col.renderer(task, {
-                isParent,
-                depth,
-                isCollapsed,
-                index: ctx.index,
-            });
-            if (typeof rendered === 'string') {
-                // If renderer returns HTML (contains tags), always use innerHTML on container
-                // Otherwise use textContent for text nodes
-                const isHTML = rendered.includes('<') && rendered.includes('>');
-                if (isHTML) {
-                    // Force use of container for HTML rendering
-                    cell.container.innerHTML = rendered;
-                } else {
-                    // Use text node if available, otherwise container
-                    const container = cell.text || cell.container;
-                    if (container === cell.text) {
-                        container.textContent = rendered;
-                    } else {
-                        container.textContent = rendered;
-                    }
-                }
-            }
-        }
     }
 
     /**

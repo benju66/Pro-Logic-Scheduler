@@ -75,6 +75,7 @@ export class GridRenderer {
             onSelectionChange: options.onSelectionChange ?? (() => {}),
             onRowMove: options.onRowMove ?? (() => {}),
             onEnterLastRow: options.onEnterLastRow,
+            onTradePartnerClick: options.onTradePartnerClick,
             isParent: options.isParent ?? (() => false),
             getDepth: options.getDepth ?? (() => 0),
         } as Required<GridRendererOptions>;
@@ -433,7 +434,18 @@ export class GridRenderer {
         const taskId = row.dataset.taskId;
         if (!taskId) return;
 
-        // Check for collapse toggle FIRST
+        // Check for trade partner chip click FIRST
+        const chip = target.closest('.trade-chip') as HTMLElement | null;
+        if (chip) {
+            const partnerId = chip.getAttribute('data-partner-id');
+            if (partnerId && this.options.onTradePartnerClick) {
+                e.stopPropagation();
+                this.options.onTradePartnerClick(taskId, partnerId, e);
+            }
+            return;
+        }
+
+        // Check for collapse toggle
         const collapseBtn = target.closest('.vsg-collapse-btn') as HTMLElement | null;
         if (collapseBtn) {
             e.stopPropagation();

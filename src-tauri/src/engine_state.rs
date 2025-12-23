@@ -140,6 +140,17 @@ impl ProjectState {
                         "wbs" => {
                             task.wbs = value.as_str().map(|s| s.to_string());
                         }
+                        "tradePartnerIds" => {
+                            if let Some(arr) = value.as_array() {
+                                task.trade_partner_ids = Some(
+                                    arr.iter()
+                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                        .collect()
+                                );
+                            } else if value.is_null() {
+                                task.trade_partner_ids = None;
+                            }
+                        }
                         // Add more fields as needed
                         _ => {
                             // Ignore unknown fields for forward compatibility

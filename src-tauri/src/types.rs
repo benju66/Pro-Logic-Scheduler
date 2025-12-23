@@ -108,6 +108,11 @@ pub struct Task {
     // === Optional Display ===
     #[serde(default)]
     pub wbs: Option<String>,
+    
+    // === Trade Partners ===
+    /// Assigned trade partner IDs (display-only, does not affect CPM)
+    #[serde(rename = "tradePartnerIds", default)]
+    pub trade_partner_ids: Option<Vec<String>>,
 }
 
 /// Calendar configuration

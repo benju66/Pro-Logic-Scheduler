@@ -9,7 +9,7 @@
  */
 
 import Database from '@tauri-apps/plugin-sql';
-import type { Task, Calendar } from '../types';
+import type { Task, Calendar, TradePartner } from '../types';
 
 interface DatabaseInterface {
   execute(query: string, bindings?: unknown[]): Promise<{ lastInsertId: number; rowsAffected: number }>;
@@ -28,6 +28,7 @@ export class SnapshotService {
   // Callbacks to get current state (set by SchedulerService)
   private getTasksCallback: (() => Task[]) | null = null;
   private getCalendarCallback: (() => Calendar) | null = null;
+  private getTradePartnersCallback: (() => TradePartner[]) | null = null;
   
   async init(): Promise<void> {
     if (this.db) return;
@@ -50,9 +51,14 @@ export class SnapshotService {
   /**
    * Set callbacks to access current state for automatic snapshots
    */
-  setStateAccessors(getTasks: () => Task[], getCalendar: () => Calendar): void {
+  setStateAccessors(
+    getTasks: () => Task[], 
+    getCalendar: () => Calendar,
+    getTradePartners?: () => TradePartner[]
+  ): void {
     this.getTasksCallback = getTasks;
     this.getCalendarCallback = getCalendar;
+    this.getTradePartnersCallback = getTradePartners || null;
   }
   
   /**
@@ -72,7 +78,8 @@ export class SnapshotService {
       try {
         const tasks = this.getTasksCallback();
         const calendar = this.getCalendarCallback();
-        await this.createSnapshot(tasks, calendar);
+        const tradePartners = this.getTradePartnersCallback?.() || [];
+        await this.createSnapshot(tasks, calendar, tradePartners);
       } catch (error) {
         console.error('[SnapshotService] Periodic snapshot failed:', error);
       }
@@ -99,16 +106,24 @@ export class SnapshotService {
   /**
    * Called by PersistenceService after events are flushed
    */
-  async onEventsPersisted(count: number, tasks: unknown, calendar: unknown): Promise<void> {
+  async onEventsPersisted(count: number, tasks: unknown, calendar: unknown, tradePartners?: unknown): Promise<void> {
     this.eventsSinceSnapshot += count;
     
     if (this.eventsSinceSnapshot >= this.eventThreshold) {
       console.log(`[SnapshotService] Event threshold reached (${this.eventsSinceSnapshot})`);
-      await this.createSnapshot(tasks as Task[], calendar as Calendar);
+      await this.createSnapshot(
+        tasks as Task[], 
+        calendar as Calendar, 
+        (tradePartners as TradePartner[]) || []
+      );
     }
   }
-  
-  async createSnapshot(tasks: Task[], calendar: Calendar): Promise<void> {
+
+  async createSnapshot(
+    tasks: Task[], 
+    calendar: Calendar,
+    tradePartners?: TradePartner[]
+  ): Promise<void> {
     if (!this.db) {
       console.warn('[SnapshotService] Database not initialized');
       return;
@@ -149,13 +164,27 @@ export class SnapshotService {
         baselineFinish: task.baselineFinish,
         baselineDuration: task.baselineDuration,
         _collapsed: task._collapsed,
+        tradePartnerIds: task.tradePartnerIds || [],
+      }));
+
+      // Persist trade partners
+      const persistableTradePartners = (tradePartners || []).map(tp => ({
+        id: tp.id,
+        name: tp.name,
+        contact: tp.contact || '',
+        phone: tp.phone || '',
+        email: tp.email || '',
+        color: tp.color,
+        notes: tp.notes || '',
       }));
       
       await this.db.execute(
-        `INSERT INTO snapshots (tasks_json, calendar_json, event_id) VALUES (?, ?, ?)`,
+        `INSERT INTO snapshots (tasks_json, calendar_json, trade_partners_json, event_id) 
+         VALUES (?, ?, ?, ?)`,
         [
           JSON.stringify(persistableTasks),
           JSON.stringify(calendar),
+          JSON.stringify(persistableTradePartners),
           currentEventId
         ]
       );
@@ -163,7 +192,7 @@ export class SnapshotService {
       this.lastSnapshotEventId = currentEventId;
       this.eventsSinceSnapshot = 0;
       
-      console.log(`[SnapshotService] ✅ Created snapshot at event ${currentEventId} (${persistableTasks.length} tasks)`);
+      console.log(`[SnapshotService] ✅ Created snapshot at event ${currentEventId} (${persistableTasks.length} tasks, ${persistableTradePartners.length} trade partners)`);
     } catch (error) {
       console.error('[SnapshotService] ❌ Failed to create snapshot:', error);
       throw error;

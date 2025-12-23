@@ -15,6 +15,7 @@ import type { ToastType } from './types';
 
 // Import Unified Scheduler V2 styles
 import './ui/components/scheduler/styles/scheduler.css';
+import './styles/trade-partners.css';
 
 // NOTE: Using clean architecture - no globals, dependency injection only
 

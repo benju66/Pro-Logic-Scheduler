@@ -431,6 +431,21 @@ export class UIEventManager {
     console.log('🔧 Environment:', this.isTauri ? 'Tauri' : 'Browser');
     
     const clickHandler = (e: MouseEvent): void => {
+      // Check for view switching buttons first
+      const viewButton = (e.target as HTMLElement).closest('[data-view]') as HTMLElement | null;
+      if (viewButton) {
+        const view = viewButton.dataset.view;
+        if (view) {
+          this._handleViewSwitch(view);
+          // Update button states
+          document.querySelectorAll('[data-view]').forEach(btn => {
+            btn.classList.toggle('active', btn === viewButton);
+          });
+          e.stopPropagation();
+          return;
+        }
+      }
+      
       // Find the clicked button (closest handles SVG/icon clicks inside buttons)
       const button = (e.target as HTMLElement).closest('[data-action]') as HTMLElement | null;
       
@@ -994,5 +1009,88 @@ To copy console output:
     if (saved === 'false') {
       this._toggleGantt();
     }
+  }
+
+  /**
+   * Handle view switching (schedule, trades, etc.)
+   * @private
+   * @param view - View name
+   */
+  private _handleViewSwitch(view: string): void {
+    // Hide all views
+    document.querySelectorAll('.main-view').forEach(el => {
+      const elId = el.id;
+      if (elId === 'view-schedule') {
+        // For schedule view with display: contents, hide the children instead
+        const gridPane = document.getElementById('grid-pane');
+        const resizer = document.getElementById('resizer');
+        const ganttPane = document.getElementById('gantt-pane');
+        const rightPanel = document.getElementById('right-panel-container');
+        if (gridPane) gridPane.style.display = 'none';
+        if (resizer) resizer.style.display = 'none';
+        if (ganttPane) ganttPane.style.display = 'none';
+        if (rightPanel) rightPanel.style.display = 'none';
+      } else {
+        (el as HTMLElement).style.display = 'none';
+      }
+    });
+    
+    // Show selected view
+    if (view === 'schedule') {
+      // Show schedule view children
+      const gridPane = document.getElementById('grid-pane');
+      const resizer = document.getElementById('resizer');
+      const ganttPane = document.getElementById('gantt-pane');
+      const rightPanel = document.getElementById('right-panel-container');
+      if (gridPane) gridPane.style.display = '';
+      if (resizer) resizer.style.display = '';
+      if (ganttPane) ganttPane.style.display = '';
+      if (rightPanel) rightPanel.style.display = '';
+    } else {
+      const viewContainer = document.getElementById(`view-${view}`);
+      if (viewContainer) {
+        viewContainer.style.display = 'flex';
+        
+        // Initialize trade partners view if switching to it
+        if (view === 'trades') {
+          this._initializeTradePartnersView(viewContainer);
+        }
+      }
+    }
+  }
+
+  /**
+   * Initialize trade partners directory view
+   * @private
+   */
+  private _initializeTradePartnersView(container: HTMLElement): void {
+    const scheduler = this.getScheduler();
+    if (!scheduler) return;
+    
+    // Check if already initialized
+    if (container.querySelector('.trade-directory')) return;
+    
+    // Import and create directory view
+    import('../ui/views/TradePartnerDirectoryView').then(({ TradePartnerDirectoryView }) => {
+      const directoryView = new TradePartnerDirectoryView({
+        container,
+        getPartners: () => scheduler.getTradePartners(),
+        onCreate: (data) => scheduler.createTradePartner(data),
+        onUpdate: (id, field, value) => scheduler.updateTradePartner(id, field, value),
+        onDelete: (id) => scheduler.deleteTradePartner(id),
+        onSelect: (id) => {
+          // TODO: Phase 12 - Open details panel
+          const partner = scheduler.getTradePartner(id);
+          if (partner) {
+            this._showToast(`Selected: ${partner.name}`, 'info');
+          }
+        },
+      });
+      
+      // Store reference for cleanup if needed
+      (container as any)._tradeDirectoryView = directoryView;
+    }).catch(error => {
+      console.error('[UIEventManager] Failed to load TradePartnerDirectoryView:', error);
+    });
   }
 }

@@ -150,6 +150,10 @@ export interface Task {
   baselineFinish?: string | null;
   /** Baseline duration in work days */
   baselineDuration?: number;
+  
+  // === Trade Partners ===
+  /** Assigned trade partner IDs */
+  tradePartnerIds?: string[];
 }
 
 /**
@@ -172,6 +176,39 @@ export interface Calendar {
   workingDays: number[];
   /** Date-specific exceptions - can be CalendarException object or string (legacy format) */
   exceptions: Record<string, CalendarException | string>;
+}
+
+// =============================================================================
+// TRADE PARTNER TYPES
+// =============================================================================
+
+/**
+ * Trade Partner entity - represents a subcontractor/company
+ */
+export interface TradePartner {
+  /** Unique identifier */
+  id: string;
+  /** Company/contractor name */
+  name: string;
+  /** Primary contact person */
+  contact?: string;
+  /** Phone number */
+  phone?: string;
+  /** Email address */
+  email?: string;
+  /** Display color (hex format) */
+  color: string;
+  /** Additional notes */
+  notes?: string;
+}
+
+/**
+ * Trade Partner assignment to a task
+ */
+export interface TaskTradePartnerAssignment {
+  taskId: string;
+  tradePartnerId: string;
+  assignedAt?: string;
 }
 
 /**
@@ -371,7 +408,7 @@ export type EventHandler<E = Event> = (event: E) => void;
 /**
  * Panel identifiers for the right sidebar
  */
-export type RightPanelId = 'details' | 'links';
+export type RightPanelId = 'details' | 'links' | 'tradePartners';
 
 /**
  * State for the right sidebar (for persistence)

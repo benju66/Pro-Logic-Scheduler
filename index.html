@@ -2821,7 +2821,7 @@
                         <line x1="3" y1="10" x2="21" y2="10"></line>
                     </svg>
                 </button>
-                <button class="activity-btn" data-view="resources" title="Resources" disabled>
+                <button class="activity-btn" data-view="trades" title="Trade Partners">
                     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
                         <circle cx="9" cy="7" r="4"></circle>
@@ -2849,6 +2849,8 @@
         
         <!-- Main Content -->
         <main class="main" id="main-content">
+        <!-- Schedule View (default) -->
+        <div class="main-view" id="view-schedule" style="display: contents;">
         <!-- Grid Pane -->
         <div class="grid-pane" id="grid-pane">
             <!-- Grid header is built dynamically by SchedulerService._buildGridHeader() -->
@@ -2878,6 +2880,10 @@
         
         <!-- NEW: Right Panel Container -->
         <div id="right-panel-container" class="right-panel-container"></div>
+        </div>
+        
+        <!-- Trade Partners View -->
+        <div class="main-view" id="view-trades" style="display: none; height: 100%; width: 100%;"></div>
     </main>
     
     <!-- NEW: Right Activity Bar -->
@@ -2896,6 +2902,14 @@
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                     <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
                     <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                </svg>
+            </button>
+            <button class="activity-btn" data-panel="tradePartners" title="Trade Partners">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                    <circle cx="9" cy="7" r="4"></circle>
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
                 </svg>
             </button>
         </div>

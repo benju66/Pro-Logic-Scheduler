@@ -36,6 +36,7 @@ export class PersistenceService {
   private snapshotService: SnapshotService | null = null;
   private getTasksForSnapshot: (() => unknown[]) | null = null;
   private getCalendarForSnapshot: (() => unknown) | null = null;
+  private getTradePartnersForSnapshot: (() => unknown[]) | null = null;
 
   async init(): Promise<void> {
     if (this.isInitialized) return;
@@ -69,6 +70,13 @@ export class PersistenceService {
     this.snapshotService = service;
     this.getTasksForSnapshot = getTasks;
     this.getCalendarForSnapshot = getCalendar;
+  }
+
+  /**
+   * Set trade partners accessor for snapshots
+   */
+  setTradePartnersAccessor(getter: () => unknown[]): void {
+    this.getTradePartnersForSnapshot = getter;
   }
 
   private async runMigrations(): Promise<void> {
@@ -144,6 +152,34 @@ CREATE TABLE IF NOT EXISTS calendar (
 
 INSERT OR IGNORE INTO calendar (id) VALUES (1);
 
+-- TRADE PARTNERS TABLE
+CREATE TABLE IF NOT EXISTS trade_partners (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    contact TEXT DEFAULT '',
+    phone TEXT DEFAULT '',
+    email TEXT DEFAULT '',
+    color TEXT NOT NULL DEFAULT '#3B82F6',
+    notes TEXT DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_trade_partners_name ON trade_partners(name);
+
+-- TASK <-> TRADE PARTNER JUNCTION TABLE
+CREATE TABLE IF NOT EXISTS task_trade_partners (
+    task_id TEXT NOT NULL,
+    trade_partner_id TEXT NOT NULL,
+    assigned_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (task_id, trade_partner_id),
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    FOREIGN KEY (trade_partner_id) REFERENCES trade_partners(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_ttp_task ON task_trade_partners(task_id);
+CREATE INDEX IF NOT EXISTS idx_ttp_partner ON task_trade_partners(trade_partner_id);
+
 -- EVENTS TABLE
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -163,6 +199,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     tasks_json TEXT NOT NULL,
     calendar_json TEXT NOT NULL,
+    trade_partners_json TEXT DEFAULT '[]',
     event_id INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (event_id) REFERENCES events(id)
@@ -227,7 +264,8 @@ CREATE TABLE IF NOT EXISTS snapshots (
             await this.snapshotService.onEventsPersisted(
               batch.length,
               this.getTasksForSnapshot(),
-              this.getCalendarForSnapshot()
+              this.getCalendarForSnapshot(),
+              this.getTradePartnersForSnapshot?.() || []
             );
           }
         }
@@ -322,6 +360,61 @@ CREATE TABLE IF NOT EXISTS snapshots (
               JSON.stringify(event.payload.new_working_days || [1,2,3,4,5]),
               JSON.stringify(event.payload.new_exceptions || {})
             ]
+          );
+          break;
+
+        // =========== TRADE PARTNERS ===========
+        case 'TRADE_PARTNER_CREATED':
+          await this.db.execute(
+            `INSERT INTO trade_partners (id, name, contact, phone, email, color, notes)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [
+              event.payload.id,
+              event.payload.name ?? 'New Trade Partner',
+              event.payload.contact ?? '',
+              event.payload.phone ?? '',
+              event.payload.email ?? '',
+              event.payload.color ?? '#3B82F6',
+              event.payload.notes ?? ''
+            ]
+          );
+          break;
+
+        case 'TRADE_PARTNER_UPDATED':
+          const tpField = event.payload.field as string;
+          const tpValue = event.payload.new_value;
+          
+          // Whitelist allowed fields
+          const allowedFields = ['name', 'contact', 'phone', 'email', 'color', 'notes'];
+          if (!allowedFields.includes(tpField)) return;
+          
+          await this.db.execute(
+            `UPDATE trade_partners SET ${tpField} = ?, updated_at = datetime('now') WHERE id = ?`,
+            [tpValue, event.targetId]
+          );
+          break;
+
+        case 'TRADE_PARTNER_DELETED':
+          // Junction table entries auto-deleted via CASCADE
+          await this.db.execute(
+            `DELETE FROM trade_partners WHERE id = ?`,
+            [event.targetId]
+          );
+          break;
+
+        case 'TASK_TRADE_PARTNER_ASSIGNED':
+          await this.db.execute(
+            `INSERT OR IGNORE INTO task_trade_partners (task_id, trade_partner_id)
+             VALUES (?, ?)`,
+            [event.targetId, event.payload.trade_partner_id]
+          );
+          break;
+
+        case 'TASK_TRADE_PARTNER_UNASSIGNED':
+          await this.db.execute(
+            `DELETE FROM task_trade_partners 
+             WHERE task_id = ? AND trade_partner_id = ?`,
+            [event.targetId, event.payload.trade_partner_id]
           );
           break;
 

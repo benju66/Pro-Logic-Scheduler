@@ -24,6 +24,7 @@ import { LINK_TYPES, CONSTRAINT_TYPES } from '../core/Constants';
 import { OperationQueue } from '../core/OperationQueue';
 import { TaskStore } from '../data/TaskStore';
 import { CalendarStore } from '../data/CalendarStore';
+import { TradePartnerStore, getTradePartnerStore } from '../data/TradePartnerStore';
 import { HistoryManager } from '../data/HistoryManager';
 import { PersistenceService } from '../data/PersistenceService';
 import { DataLoader } from '../data/DataLoader';
@@ -51,6 +52,7 @@ import { ColumnSettingsModal } from '../ui/components/ColumnSettingsModal';
 import type { 
     Task, 
     Calendar, 
+    TradePartner,
     GridColumn, 
     SchedulerServiceOptions,
     ViewMode,
@@ -98,6 +100,7 @@ export class SchedulerService {
     // Data stores
     private taskStore!: TaskStore;
     private calendarStore!: CalendarStore;
+    private tradePartnerStore!: TradePartnerStore;
     private historyManager!: HistoryManager;
 
     // UI services
@@ -227,7 +230,7 @@ export class SchedulerService {
             }
         }
 
-        // 2. Initialize stores (TaskStore/CalendarStore) normally
+        // 2. Initialize stores (TaskStore/CalendarStore/TradePartnerStore) normally
         this.taskStore = new TaskStore({
             onChange: () => this._onTasksChanged()
         });
@@ -235,6 +238,8 @@ export class SchedulerService {
         this.calendarStore = new CalendarStore({
             onChange: () => this._onCalendarChanged()
         });
+
+        this.tradePartnerStore = getTradePartnerStore();
 
         // 3. Inject persistence into stores (if available)
         if (this.persistenceService) {
@@ -274,7 +279,8 @@ export class SchedulerService {
             // Set state accessors for automatic snapshots
             this.snapshotService.setStateAccessors(
                 () => this.taskStore.getAll(),
-                () => this.calendarStore.get()
+                () => this.calendarStore.get(),
+                () => this.tradePartnerStore.getAll()
             );
             
             // Connect to persistence service
@@ -282,6 +288,11 @@ export class SchedulerService {
                 this.snapshotService,
                 () => this.taskStore.getAll(),
                 () => this.calendarStore.get()
+            );
+            
+            // Set trade partners accessor
+            this.persistenceService.setTradePartnersAccessor(
+                () => this.tradePartnerStore.getAll()
             );
             
             // Start periodic snapshots
@@ -426,6 +437,7 @@ export class SchedulerService {
             onRowMove: (taskIds, targetId, position) => this._handleRowMove(taskIds, targetId, position),
             onEnterLastRow: (lastTaskId, field) => this._handleEnterLastRow(lastTaskId, field),
             onEditEnd: () => this.exitEditMode(),
+            onTradePartnerClick: (taskId, tradePartnerId, e) => this._handleTradePartnerClick(taskId, tradePartnerId, e),
             isParent: (id) => this.taskStore.isParent(id),
             getDepth: (id) => this.taskStore.getDepth(id),
         };
@@ -836,6 +848,37 @@ export class SchedulerService {
                 showConstraintIcon: true,
                 readonlyForParent: true,
                 minWidth: 80,
+            },
+            {
+                id: 'tradePartners',
+                label: 'Trade Partners',
+                field: 'tradePartnerIds' as keyof Task,
+                type: 'readonly',
+                width: 180,
+                editable: false,
+                align: 'left',
+                minWidth: 120,
+                renderer: (task: Task) => {
+                    const partnerIds = task.tradePartnerIds || [];
+                    if (partnerIds.length === 0) return '';
+                    
+                    return partnerIds
+                        .map(id => {
+                            const partner = this.tradePartnerStore.get(id);
+                            if (!partner) return '';
+                            // Return HTML for chips - will be set as innerHTML
+                            const shortName = partner.name.length > 12 
+                                ? partner.name.substring(0, 10) + '...' 
+                                : partner.name;
+                            return `<span class="trade-chip" data-partner-id="${id}" 
+                                    style="background-color:${partner.color}; color: white; 
+                                    padding: 2px 8px; border-radius: 12px; font-size: 11px;
+                                    margin-right: 4px; cursor: pointer; display: inline-block;
+                                    white-space: nowrap; max-width: 100px; overflow: hidden;
+                                    text-overflow: ellipsis;" title="${partner.name}">${shortName}</span>`;
+                        })
+                        .join('');
+                },
             },
             {
                 id: 'constraintType',
@@ -2172,6 +2215,20 @@ export class SchedulerService {
                 needsRecalc = true;
                 break;
                 
+            case 'tradePartnerIds':
+                // Trade partner assignments - display only, doesn't affect CPM
+                this.taskStore.update(taskId, { tradePartnerIds: Array.isArray(value) ? value as string[] : [] });
+                
+                // Sync to engine (for data round-trip preservation)
+                if (this.engine) {
+                    this.engine.updateTask(taskId, { tradePartnerIds: Array.isArray(value) ? value as string[] : [] }).catch(error => {
+                        console.warn('[SchedulerService] Failed to sync tradePartnerIds to engine:', error);
+                    });
+                }
+                
+                needsRender = true;
+                break;
+                
             default:
                 // All other fields - simple update (name, notes, progress, etc.)
                 this.taskStore.update(taskId, { [field]: value } as Partial<Task>);
@@ -2256,6 +2313,25 @@ export class SchedulerService {
                 }, 100);
             }
         });
+    }
+
+    /**
+     * Handle trade partner chip click
+     * @private
+     * @param taskId - Task ID
+     * @param tradePartnerId - Trade Partner ID
+     * @param e - Click event
+     */
+    private _handleTradePartnerClick(taskId: string, tradePartnerId: string, e: MouseEvent): void {
+        e.stopPropagation(); // Prevent row click from firing
+        
+        // For now, just show a toast - Phase 12 will add details panel
+        const partner = this.tradePartnerStore.get(tradePartnerId);
+        if (partner) {
+            this.toastService.info(`Trade Partner: ${partner.name}`);
+        }
+        
+        // TODO: Phase 12 - Open trade partner details panel
     }
 
     /**
@@ -4760,7 +4836,11 @@ export class SchedulerService {
         }
         
         try {
-            const { tasks, calendar } = await this.dataLoader.loadData();
+            const { tasks, calendar, tradePartners } = await this.dataLoader.loadData();
+            
+            // Load trade partners first
+            this.tradePartnerStore.setAll(tradePartners);
+            console.log('[SchedulerService] ✅ Loaded trade partners:', tradePartners.length);
             
             if (tasks.length > 0 || Object.keys(calendar.exceptions).length > 0) {
                 const tasksWithSortKeys = this._assignSortKeysToImportedTasks(tasks);
@@ -4804,7 +4884,8 @@ export class SchedulerService {
         try {
             await this.snapshotService.createSnapshot(
                 this.taskStore.getAll(),
-                this.calendarStore.get()
+                this.calendarStore.get(),
+                this.tradePartnerStore.getAll()
             );
             console.log('[SchedulerService] ✅ Snapshot checkpoint created');
         } catch (error) {
@@ -4826,7 +4907,8 @@ export class SchedulerService {
         if (this.snapshotService) {
             await this.snapshotService.createSnapshot(
                 this.taskStore.getAll(),
-                this.calendarStore.get()
+                this.calendarStore.get(),
+                this.tradePartnerStore.getAll()
             );
             this.snapshotService.stopPeriodicSnapshots();
         }
@@ -5509,6 +5591,163 @@ export class SchedulerService {
     /**
      * Clean up resources
      */
+    // =========================================================================
+    // TRADE PARTNER OPERATIONS
+    // =========================================================================
+
+    /**
+     * Get all trade partners
+     */
+    getTradePartners(): TradePartner[] {
+        return this.tradePartnerStore.getAll();
+    }
+
+    /**
+     * Get a trade partner by ID
+     */
+    getTradePartner(id: string): TradePartner | undefined {
+        return this.tradePartnerStore.get(id);
+    }
+
+    /**
+     * Create a new trade partner
+     */
+    createTradePartner(data: Omit<TradePartner, 'id'>): TradePartner {
+        const partner = this.tradePartnerStore.add(data);
+        
+        // Queue persistence event
+        if (this.persistenceService) {
+            this.persistenceService.queueEvent('TRADE_PARTNER_CREATED', partner.id, {
+                id: partner.id,
+                name: partner.name,
+                contact: partner.contact,
+                phone: partner.phone,
+                email: partner.email,
+                color: partner.color,
+                notes: partner.notes,
+            });
+        }
+        
+        this.toastService.success(`Created trade partner: ${partner.name}`);
+        return partner;
+    }
+
+    /**
+     * Update a trade partner
+     */
+    updateTradePartner(id: string, field: keyof TradePartner, value: unknown): void {
+        const existing = this.tradePartnerStore.get(id);
+        if (!existing) return;
+        
+        const oldValue = existing[field];
+        this.tradePartnerStore.update(id, { [field]: value });
+        
+        // Queue persistence event
+        if (this.persistenceService) {
+            this.persistenceService.queueEvent('TRADE_PARTNER_UPDATED', id, {
+                field,
+                old_value: oldValue,
+                new_value: value,
+            });
+        }
+        
+        // Re-render if color changed (affects task display)
+        if (field === 'color' || field === 'name') {
+            this.render();
+        }
+    }
+
+    /**
+     * Delete a trade partner
+     */
+    deleteTradePartner(id: string): void {
+        const partner = this.tradePartnerStore.get(id);
+        if (!partner) return;
+        
+        // Remove from all tasks first
+        const affectedTasks = this.taskStore.getAll().filter(
+            t => t.tradePartnerIds?.includes(id)
+        );
+        
+        for (const task of affectedTasks) {
+            this.unassignTradePartner(task.id, id, false); // Don't show toast for each
+        }
+        
+        // Delete the partner
+        this.tradePartnerStore.delete(id);
+        
+        // Queue persistence event
+        if (this.persistenceService) {
+            this.persistenceService.queueEvent('TRADE_PARTNER_DELETED', id, {
+                name: partner.name,
+            });
+        }
+        
+        this.toastService.info(`Deleted trade partner: ${partner.name}`);
+        this.render();
+    }
+
+    /**
+     * Assign a trade partner to a task
+     */
+    assignTradePartner(taskId: string, tradePartnerId: string): void {
+        const task = this.taskStore.get(taskId);
+        const partner = this.tradePartnerStore.get(tradePartnerId);
+        if (!task || !partner) return;
+        
+        // Check if already assigned
+        if (task.tradePartnerIds?.includes(tradePartnerId)) return;
+        
+        // Update task
+        const newIds = [...(task.tradePartnerIds || []), tradePartnerId];
+        this.taskStore.update(taskId, 'tradePartnerIds', newIds);
+        
+        // Queue persistence event
+        if (this.persistenceService) {
+            this.persistenceService.queueEvent('TASK_TRADE_PARTNER_ASSIGNED', taskId, {
+                trade_partner_id: tradePartnerId,
+                trade_partner_name: partner.name,
+            });
+        }
+        
+        this.render();
+    }
+
+    /**
+     * Unassign a trade partner from a task
+     */
+    unassignTradePartner(taskId: string, tradePartnerId: string, showToast = true): void {
+        const task = this.taskStore.get(taskId);
+        if (!task || !task.tradePartnerIds) return;
+        
+        // Check if assigned
+        if (!task.tradePartnerIds.includes(tradePartnerId)) return;
+        
+        // Update task
+        const newIds = task.tradePartnerIds.filter(id => id !== tradePartnerId);
+        this.taskStore.update(taskId, 'tradePartnerIds', newIds);
+        
+        // Queue persistence event
+        if (this.persistenceService) {
+            this.persistenceService.queueEvent('TASK_TRADE_PARTNER_UNASSIGNED', taskId, {
+                trade_partner_id: tradePartnerId,
+            });
+        }
+        
+        if (showToast) {
+            this.render();
+        }
+    }
+
+    /**
+     * Get trade partners for a task
+     */
+    getTaskTradePartners(taskId: string): TradePartner[] {
+        const task = this.taskStore.get(taskId);
+        if (!task?.tradePartnerIds) return [];
+        return this.tradePartnerStore.getMany(task.tradePartnerIds);
+    }
+
     /**
      * Cleanup on destroy
      */

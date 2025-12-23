@@ -8,7 +8,7 @@
  */
 
 import Database from '@tauri-apps/plugin-sql';
-import type { Task, Calendar, ConstraintType, Dependency } from '../types';
+import type { Task, Calendar, ConstraintType, Dependency, TradePartner } from '../types';
 import { DEFAULT_WORKING_DAYS } from '../core/Constants';
 
 interface DatabaseInterface {
@@ -49,6 +49,7 @@ interface SnapshotRow {
   id: number;
   tasks_json: string;
   calendar_json: string;
+  trade_partners_json: string;
   event_id: number;
   created_at: string;
 }
@@ -73,15 +74,20 @@ export class DataLoader {
     }
   }
   
-  async loadData(): Promise<{ tasks: Task[]; calendar: Calendar }> {
+  async loadData(): Promise<{ 
+    tasks: Task[]; 
+    calendar: Calendar; 
+    tradePartners: TradePartner[];
+  }> {
     if (!this.db) {
       await this.init();
     }
 
     if (!this.db) {
-      return {
-        tasks: [],
+      return { 
+        tasks: [], 
         calendar: { workingDays: [...DEFAULT_WORKING_DAYS], exceptions: {} },
+        tradePartners: []
       };
     }
 
@@ -90,32 +96,44 @@ export class DataLoader {
     
     let tasks: Task[];
     let calendar: Calendar;
+    let tradePartners: TradePartner[] = [];
     let lastEventId = 0;
     
     if (snapshot) {
-      console.log('[DataLoader] Loading from snapshot', {
-        eventId: snapshot.event_id,
-        taskCount: JSON.parse(snapshot.tasks_json).length
-      });
+      console.log(`[DataLoader] Loading from snapshot (event ${snapshot.event_id})`);
       
-      // Parse and hydrate with required calculated field defaults
-      // Snapshots strip level/start/end (calculated fields), but Rust requires them
-      const rawTasks = JSON.parse(snapshot.tasks_json) as Array<Partial<Task>>;
-      tasks = rawTasks.map(t => ({
+      const snapshotTasks = JSON.parse(snapshot.tasks_json);
+      tasks = snapshotTasks.map((t: any) => ({
         ...t,
-        level: t.level ?? 0,    // Default to root level (will be recalculated)
-        start: t.start ?? '',   // Will be calculated by CPM
-        end: t.end ?? '',       // Will be calculated by CPM
+        level: t.level ?? 0,
+        start: t.start ?? '',
+        end: t.end ?? '',
+        tradePartnerIds: t.tradePartnerIds ?? [],
       })) as Task[];
       
       calendar = JSON.parse(snapshot.calendar_json) as Calendar;
+      
+      // Load trade partners from snapshot
+      try {
+        tradePartners = JSON.parse(snapshot.trade_partners_json || '[]') as TradePartner[];
+      } catch {
+        tradePartners = [];
+      }
+      
       lastEventId = snapshot.event_id;
     } else {
       console.log('[DataLoader] No snapshot, loading from tables');
       
-      const result = await this.db.select<PersistedTask[]>(`SELECT * FROM tasks ORDER BY sort_key`);
-      tasks = (result || []).map(row => this.hydrateTask(row));
+      const taskResult = await this.db.select<PersistedTask[]>(
+        `SELECT * FROM tasks ORDER BY sort_key`
+      );
+      tasks = (taskResult || []).map(row => this.hydrateTask(row));
+      
+      // Load task trade partner assignments
+      tasks = await this.loadTaskTradePartnerAssignments(tasks);
+      
       calendar = await this.loadCalendar();
+      tradePartners = await this.loadTradePartners();
     }
     
     // Step 2: Replay events since snapshot
@@ -126,12 +144,13 @@ export class DataLoader {
     
     if (newEvents && newEvents.length > 0) {
       console.log(`[DataLoader] Replaying ${newEvents.length} events`);
-      const result = this.replayEvents(tasks, calendar, newEvents);
+      const result = this.replayEvents(tasks, calendar, tradePartners, newEvents);
       tasks = result.tasks;
       calendar = result.calendar;
+      tradePartners = result.tradePartners;
     }
     
-    return { tasks, calendar };
+    return { tasks, calendar, tradePartners };
   }
   
   private async loadLatestSnapshot(): Promise<SnapshotRow | null> {
@@ -172,14 +191,78 @@ export class DataLoader {
   }
   
   /**
+   * Load trade partners from database
+   */
+  private async loadTradePartners(): Promise<TradePartner[]> {
+    if (!this.db) return [];
+
+    try {
+      const result = await this.db.select<Array<{
+        id: string;
+        name: string;
+        contact: string;
+        phone: string;
+        email: string;
+        color: string;
+        notes: string;
+      }>>(`SELECT * FROM trade_partners ORDER BY name`);
+      
+      return (result || []).map(row => ({
+        id: row.id,
+        name: row.name,
+        contact: row.contact || '',
+        phone: row.phone || '',
+        email: row.email || '',
+        color: row.color || '#3B82F6',
+        notes: row.notes || '',
+      }));
+    } catch (error) {
+      console.error('[DataLoader] Failed to load trade partners:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Load task trade partner assignments and merge into tasks
+   */
+  private async loadTaskTradePartnerAssignments(tasks: Task[]): Promise<Task[]> {
+    if (!this.db) return tasks;
+
+    try {
+      const result = await this.db.select<Array<{
+        task_id: string;
+        trade_partner_id: string;
+      }>>(`SELECT task_id, trade_partner_id FROM task_trade_partners`);
+      
+      // Group by task_id
+      const assignmentMap = new Map<string, string[]>();
+      for (const row of result || []) {
+        const existing = assignmentMap.get(row.task_id) || [];
+        existing.push(row.trade_partner_id);
+        assignmentMap.set(row.task_id, existing);
+      }
+      
+      // Merge into tasks
+      return tasks.map(task => ({
+        ...task,
+        tradePartnerIds: assignmentMap.get(task.id) || [],
+      }));
+    } catch (error) {
+      console.error('[DataLoader] Failed to load task trade partner assignments:', error);
+      return tasks;
+    }
+  }
+
+  /**
    * Replay events to reconstruct state
    * Handles ALL event types defined in schema
    */
   private replayEvents(
     tasks: Task[], 
     calendar: Calendar,
+    tradePartners: TradePartner[],
     events: EventRow[]
-  ): { tasks: Task[]; calendar: Calendar } {
+  ): { tasks: Task[]; calendar: Calendar; tradePartners: TradePartner[] } {
     
     for (const event of events) {
       const payload = JSON.parse(event.payload);
@@ -291,13 +374,67 @@ export class DataLoader {
             tasks = tasks.filter(t => !idsToDelete.has(t.id));
           }
           break;
-          
+
+        // =========== TRADE PARTNERS ===========
+        case 'TRADE_PARTNER_CREATED':
+          tradePartners.push({
+            id: payload.id,
+            name: payload.name || 'New Trade Partner',
+            contact: payload.contact || '',
+            phone: payload.phone || '',
+            email: payload.email || '',
+            color: payload.color || '#3B82F6',
+            notes: payload.notes || '',
+          });
+          break;
+
+        case 'TRADE_PARTNER_UPDATED':
+          const tpIndex = tradePartners.findIndex(tp => tp.id === event.target_id);
+          if (tpIndex !== -1 && payload.field) {
+            (tradePartners[tpIndex] as any)[payload.field] = payload.new_value;
+          }
+          break;
+
+        case 'TRADE_PARTNER_DELETED':
+          tradePartners = tradePartners.filter(tp => tp.id !== event.target_id);
+          // Also remove from all task assignments
+          for (const task of tasks) {
+            if (task.tradePartnerIds) {
+              task.tradePartnerIds = task.tradePartnerIds.filter(
+                id => id !== event.target_id
+              );
+            }
+          }
+          break;
+
+        case 'TASK_TRADE_PARTNER_ASSIGNED':
+          const assignTask = tasks.find(t => t.id === event.target_id);
+          if (assignTask) {
+            if (!assignTask.tradePartnerIds) {
+              assignTask.tradePartnerIds = [];
+            }
+            if (!assignTask.tradePartnerIds.includes(payload.trade_partner_id)) {
+              assignTask.tradePartnerIds.push(payload.trade_partner_id);
+            }
+          }
+          break;
+
+        case 'TASK_TRADE_PARTNER_UNASSIGNED':
+          const unassignTask = tasks.find(t => t.id === event.target_id);
+          if (unassignTask && unassignTask.tradePartnerIds) {
+            unassignTask.tradePartnerIds = unassignTask.tradePartnerIds.filter(
+              id => id !== payload.trade_partner_id
+            );
+          }
+          break;
+        
         default:
-          console.debug(`[DataLoader] Unknown event type: ${event.event_type}`);
+          // Unknown event type - skip
+          break;
       }
     }
     
-    return { tasks, calendar };
+    return { tasks, calendar, tradePartners };
   }
   
   private applyTaskUpdate(tasks: Task[], targetId: string | null, payload: any): void {
@@ -340,6 +477,7 @@ export class DataLoader {
       baselineFinish: (payload.baseline_finish as string | null) ?? (payload.baselineFinish as string | null) ?? null,
       baselineDuration: (payload.baseline_duration as number | null) ?? (payload.baselineDuration as number | null) ?? null,
       _collapsed: Boolean(payload.is_collapsed ?? payload._collapsed),
+      tradePartnerIds: (payload.trade_partner_ids as string[]) ?? (payload.tradePartnerIds as string[]) ?? [],
       level: 0,
       start: '',
       end: '',
@@ -365,6 +503,7 @@ export class DataLoader {
       baselineFinish: row.baseline_finish ?? null,
       baselineDuration: row.baseline_duration ?? null,
       _collapsed: Boolean(row.is_collapsed),
+      tradePartnerIds: [],
       level: 0,
       start: '',
       end: '',

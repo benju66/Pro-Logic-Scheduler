@@ -99,6 +99,8 @@ export interface GridRendererOptions {
     onEnterLastRow?: (lastTaskId: string, field: string) => void;
     /** Called when cell editing ends (blur, Enter, Escape, Tab) */
     onEditEnd?: () => void;
+    /** Called when a trade partner chip is clicked */
+    onTradePartnerClick?: (taskId: string, tradePartnerId: string, event: MouseEvent) => void;
     
     // Metadata providers
     isParent?: (taskId: string) => boolean;

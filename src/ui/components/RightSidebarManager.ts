@@ -22,6 +22,7 @@ import type { SchedulerService } from '../../services/SchedulerService';
 import type { Task, RightPanelId, RightSidebarState, PanelOpenOptions } from '../../types';
 import { SideDrawer } from './SideDrawer';
 import { DependenciesModal } from './DependenciesModal';
+import { TaskTradePartnersPanel } from '../panels/TaskTradePartnersPanel';
 
 // ============================================================================
 // CONSTANTS
@@ -29,10 +30,11 @@ import { DependenciesModal } from './DependenciesModal';
 
 const STORAGE_KEY = 'pls_right_sidebar_state';
 const PANEL_WIDTH = 400;
-const PANEL_ORDER: RightPanelId[] = ['details', 'links'];
+const PANEL_ORDER: RightPanelId[] = ['details', 'links', 'tradePartners'];
 const PANEL_TITLES: Record<RightPanelId, string> = {
     details: 'Properties',
     links: 'Logic Network',
+    tradePartners: 'Trade Partners',
 };
 
 // ============================================================================
@@ -64,6 +66,7 @@ export class RightSidebarManager {
     // Panel instances
     private detailsPanel: SideDrawer | null = null;
     private dependenciesPanel: DependenciesModal | null = null;
+    private tradePartnersPanel: TaskTradePartnersPanel | null = null;
     
     // Panel wrappers (for layout)
     private panelWrappers: Map<RightPanelId, HTMLElement> = new Map();
@@ -166,6 +169,24 @@ export class RightSidebarManager {
             isParent: (id) => this.scheduler.isParent(id),
             getDepth: (id) => this.scheduler.getDepth(id),
             onSave: (taskId, deps) => this.scheduler.updateDependencies(taskId, deps),
+        });
+
+        // Initialize Trade Partners Panel
+        const tradePartnersWrapper = document.createElement('div');
+        tradePartnersWrapper.className = 'sidebar-panel-content';
+        this.panelWrappers.set('tradePartners', tradePartnersWrapper);
+        
+        this.tradePartnersPanel = new TaskTradePartnersPanel({
+            container: tradePartnersWrapper,
+            getTask: (taskId) => this.scheduler.getTask(taskId),
+            getTradePartners: () => this.scheduler.getTradePartners(),
+            getTaskTradePartners: (taskId) => this.scheduler.getTaskTradePartners(taskId) || [],
+            onAssign: (taskId, tradePartnerId) => {
+                this.scheduler.assignTradePartner(taskId, tradePartnerId);
+            },
+            onUnassign: (taskId, tradePartnerId) => {
+                this.scheduler.unassignTradePartner(taskId, tradePartnerId);
+            },
         });
     }
 
@@ -404,6 +425,14 @@ export class RightSidebarManager {
                 console.error('[RightSidebarManager] Error syncing links panel:', e);
             }
         }
+        
+        if (this.activePanels.has('tradePartners') && this.tradePartnersPanel) {
+            try {
+                this.tradePartnersPanel.show(taskId);
+            } catch (e) {
+                console.error('[RightSidebarManager] Error syncing trade partners panel:', e);
+            }
+        }
     }
 
     /**
@@ -416,6 +445,8 @@ export class RightSidebarManager {
             this.detailsPanel.open(task, { isParent });
         } else if (panelId === 'links' && this.dependenciesPanel) {
             this.dependenciesPanel.syncPanel(task);
+        } else if (panelId === 'tradePartners' && this.tradePartnersPanel) {
+            this.tradePartnersPanel.show(task.id);
         }
     }
 
@@ -429,6 +460,10 @@ export class RightSidebarManager {
         
         if (this.activePanels.has('links') && this.dependenciesPanel) {
             this.dependenciesPanel.showEmptyState();
+        }
+        
+        if (this.activePanels.has('tradePartners') && this.tradePartnersPanel) {
+            this.tradePartnersPanel.hide();
         }
     }
 
@@ -459,13 +494,21 @@ export class RightSidebarManager {
 
         // Clear and rebuild container
         this.container.innerHTML = '';
+        
+        // Recreate panel wrappers map (but preserve tradePartners wrapper)
+        const tradePartnersWrapper = this.panelWrappers.get('tradePartners');
         this.panelWrappers.clear();
+        if (tradePartnersWrapper) {
+            this.panelWrappers.set('tradePartners', tradePartnersWrapper);
+        }
         
         // Render panels in defined order
         PANEL_ORDER.forEach(panelId => {
             if (this.activePanels.has(panelId)) {
                 const wrapper = this._createPanelWrapper(panelId);
-                this.panelWrappers.set(panelId, wrapper);
+                if (panelId !== 'tradePartners') {
+                    this.panelWrappers.set(panelId, wrapper);
+                }
                 this.container.appendChild(wrapper);
             }
         });
@@ -510,6 +553,18 @@ export class RightSidebarManager {
         } else if (panelId === 'links' && this.dependenciesPanel) {
             const el = this.dependenciesPanel.getElement();
             if (el) content.appendChild(el);
+        } else if (panelId === 'tradePartners' && this.tradePartnersPanel) {
+            // Trade partners panel - get or create wrapper
+            let panelWrapper = this.panelWrappers.get('tradePartners');
+            if (!panelWrapper) {
+                panelWrapper = document.createElement('div');
+                panelWrapper.className = 'sidebar-panel-content';
+                this.panelWrappers.set('tradePartners', panelWrapper);
+                
+                // Update panel container reference
+                (this.tradePartnersPanel as any).container = panelWrapper;
+            }
+            content.appendChild(panelWrapper);
         }
         
         wrapper.appendChild(content);
