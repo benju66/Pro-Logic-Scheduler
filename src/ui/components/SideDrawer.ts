@@ -3,8 +3,13 @@
  * SideDrawer.ts
  * ============================================================================
  * * Slide-in panel component for detailed task editing.
+ * Provides a form interface for editing task properties including:
+ * - Task name
+ * - Duration
+ * - Progress (% complete)
+ * - Constraint type and date
  * * @author Pro Logic Scheduler
- * @version 2.0.1 - Fix for embedded mode crashes
+ * @version 2.0.2 - Full Implementation
  */
 
 import type { Task, ConstraintType } from '../../types';
@@ -62,6 +67,9 @@ interface SideDrawerDOM {
 
 export class SideDrawer {
     
+    /**
+     * Constraint type descriptions for help text
+     */
     static readonly CONSTRAINT_DESCRIPTIONS: Readonly<Record<ConstraintType, string>> = {
         'asap': 'Task flows naturally based on predecessors.',
         'snet': 'Task cannot start before this date, but can start later if needed.',
@@ -73,8 +81,8 @@ export class SideDrawer {
 
     private options: SideDrawerOptions;
     private container: HTMLElement;
-    private element!: HTMLElement;
-    private dom!: SideDrawerDOM;
+    private element!: HTMLElement; 
+    private dom!: SideDrawerDOM; 
     private activeTaskId: string | null = null;
     private isOpen: boolean = false;
     private isEmbedded: boolean;
@@ -109,7 +117,12 @@ export class SideDrawer {
                 ${this._getFormBodyHTML()}
             </div>
             <div class="drawer-footer">
-                <button class="btn btn-danger btn-block" id="drawer-delete-btn">Delete Task</button>
+                <button class="btn btn-danger btn-block" id="drawer-delete-btn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline-block; vertical-align: middle; margin-right: 4px;">
+                        <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+                    </svg>
+                    Delete Task
+                </button>
             </div>
         `;
         
@@ -120,7 +133,6 @@ export class SideDrawer {
     private _cacheDOM(): void {
         const getElement = <T extends HTMLElement>(id: string): T => {
             const el = this.element.querySelector(`#${id}`) as T;
-            // Graceful fallback for missing elements to prevent crash
             if (!el) console.warn(`SideDrawer: Element #${id} not found`);
             return el;
         };
@@ -164,20 +176,26 @@ export class SideDrawer {
     private _bindEvents(): void {
         if (!this.dom) return;
 
-        // Close button
         if (this.dom.closeBtn) {
             this.dom.closeBtn.addEventListener('click', () => this.close());
         }
         
-        // Field changes - SAFE GUARDS ADDED
-        if (this.dom.name) this.dom.name.addEventListener('change', () => this._handleChange('name', this.dom.name.value));
-        if (this.dom.duration) this.dom.duration.addEventListener('change', () => this._handleChange('duration', this.dom.duration.value));
-        if (this.dom.progress) this.dom.progress.addEventListener('change', () => this._handleChange('progress', this.dom.progress.value));
-        if (this.dom.notes) this.dom.notes.addEventListener('change', () => this._handleChange('notes', this.dom.notes.value));
-        
-        if (this.dom.start) this.dom.start.addEventListener('change', () => this._handleChange('start', this.dom.start.value));
-        if (this.dom.end) this.dom.end.addEventListener('change', () => this._handleChange('end', this.dom.end.value));
-        
+        // Inputs
+        const bindChange = (el: HTMLElement | null, field: string) => {
+            if (el && (el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement)) {
+                el.addEventListener('change', () => this._handleChange(field, el.value));
+            }
+        };
+
+        bindChange(this.dom.name, 'name');
+        bindChange(this.dom.duration, 'duration');
+        bindChange(this.dom.progress, 'progress');
+        bindChange(this.dom.notes, 'notes');
+        bindChange(this.dom.start, 'start');
+        bindChange(this.dom.end, 'end');
+        bindChange(this.dom.actualStart, 'actualStart');
+        bindChange(this.dom.actualFinish, 'actualFinish');
+
         if (this.dom.constraintType) {
             this.dom.constraintType.addEventListener('change', () => {
                 const type = this.dom.constraintType.value as ConstraintType;
@@ -203,18 +221,6 @@ export class SideDrawer {
             });
         }
         
-        if (this.dom.actualStart) {
-            this.dom.actualStart.addEventListener('change', () => {
-                this._handleChange('actualStart', this.dom.actualStart.value || null);
-            });
-        }
-        
-        if (this.dom.actualFinish) {
-            this.dom.actualFinish.addEventListener('change', () => {
-                this._handleChange('actualFinish', this.dom.actualFinish.value || null);
-            });
-        }
-        
         if (this.dom.deleteBtn) {
             this.dom.deleteBtn.addEventListener('click', () => {
                 if (this.activeTaskId && this.options.onDelete) {
@@ -231,7 +237,7 @@ export class SideDrawer {
             });
         }
         
-        // Remove existing listener before adding new one
+        // Keyboard
         if (this._keydownHandler) {
             document.removeEventListener('keydown', this._keydownHandler);
         }
@@ -244,7 +250,6 @@ export class SideDrawer {
     }
 
     private _getFormBodyHTML(): string {
-        // ... (Same HTML string as before, omitted for brevity) ...
         return `
             <div class="form-group">
                 <label class="form-label">Task Name</label>
@@ -281,6 +286,10 @@ export class SideDrawer {
                     <div class="cpm-item"><span class="cpm-label">Late Finish</span><span class="cpm-value" id="drawer-late-finish">-</span></div>
                 </div>
                 <div class="cpm-critical" id="drawer-critical-badge" style="display: none;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px;">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                        <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
                     Critical Path Task
                 </div>
             </div>
@@ -326,7 +335,13 @@ export class SideDrawer {
                     <input type="date" id="drawer-constraintDate" class="form-input">
                 </div>
                 <div class="form-group">
-                    <button class="btn btn-outline btn-block" id="drawer-links-btn">Manage Dependencies</button>
+                    <button class="btn btn-outline btn-block" id="drawer-links-btn">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display: inline-block; vertical-align: middle; margin-right: 4px;">
+                            <path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/>
+                            <path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/>
+                        </svg>
+                        Manage Dependencies
+                    </button>
                 </div>
             </div>
             <div class="form-section">
@@ -357,6 +372,10 @@ export class SideDrawer {
         if (body) {
             body.innerHTML = `
                 <div class="drawer-empty-state">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#cbd5e1" stroke-width="1.5">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                        <polyline points="14 2 14 8 20 8"/>
+                    </svg>
                     <p>Select a task to view details</p>
                 </div>
             `;
@@ -384,7 +403,7 @@ export class SideDrawer {
         this.activeTaskId = task.id;
         this.isOpen = true;
         
-        // SAFE POPULATION: Check if elements exist before assigning
+        // Populate fields (Null-safe)
         if (this.dom.name) this.dom.name.value = task.name || '';
         if (this.dom.duration) this.dom.duration.value = String(task.duration || 1);
         if (this.dom.progress) this.dom.progress.value = String(task.progress || 0);
@@ -394,35 +413,91 @@ export class SideDrawer {
         if (this.dom.constraintDate) this.dom.constraintDate.value = task.constraintDate || '';
         if (this.dom.notes) this.dom.notes.value = task.notes || '';
         
-        // ... (rest of the logic remains similar but safe) ...
+        // Update derived state
+        if (this.dom.constraintType) {
+            const type = task.constraintType || 'asap';
+            this._updateConstraintDesc(type);
+            this._updateConstraintIcon(type, task.constraintDate || '');
+        }
         
-        // Ensure panel is visible
+        if (this.dom.schedulingMode) {
+            const mode = task.schedulingMode || 'Auto';
+            this.dom.schedulingMode.value = mode;
+            this._updateModeDisplay(mode);
+            
+            // Handle parent task restriction
+            const isParent = options.isParent || false;
+            this.dom.schedulingMode.disabled = isParent;
+            if (isParent && this.dom.modeDescription) {
+                this.dom.modeDescription.textContent = 'Parent tasks are always auto-scheduled.';
+            }
+        }
+        
+        // Handle read-only fields for parents
+        const isParent = options.isParent || false;
+        const setReadOnly = (el: HTMLInputElement | HTMLSelectElement | null, readonly: boolean) => {
+            if (!el) return;
+            el.disabled = readonly;
+            if (readonly) el.classList.add('form-input-readonly');
+            else el.classList.remove('form-input-readonly');
+        };
+        
+        setReadOnly(this.dom.duration, isParent);
+        setReadOnly(this.dom.start, isParent);
+        setReadOnly(this.dom.end, isParent);
+        setReadOnly(this.dom.constraintType, isParent);
+        setReadOnly(this.dom.constraintDate, isParent);
+        setReadOnly(this.dom.actualStart, isParent);
+        setReadOnly(this.dom.actualFinish, isParent);
+        
+        if (this.dom.linksBtn) {
+            this.dom.linksBtn.style.display = isParent ? 'none' : 'block';
+        }
+
+        // CPM & Progress Data
+        this._updateCPMData(task);
+        this._updateHealthStatus(task);
+        this._updateProgressSection(task);
+
         if (!this.isEmbedded) {
             this.element.classList.add('open');
         }
         
-        // Sync rest of the data
-        this.sync(task);
-    }
-
-    // ... (rest of methods)
-    private _handleChange(field: string, value: unknown): void {
-        if (!this.activeTaskId) return;
-        if (this.options.onUpdate) {
-            this.options.onUpdate(this.activeTaskId, field, value);
+        // Focus handling
+        if (options.focusField) {
+            const el = this._getFocusableFieldElement(options.focusField);
+            if (el) {
+                requestAnimationFrame(() => el.focus());
+            }
         }
     }
-    
-    // ... (include other private helper methods like _updateCPMData, _updateModeDisplay etc.)
-    
-    // Stub for other methods to ensure complete class...
+
     sync(task: Task): void {
-       // Implementation similar to open() but without rebuilding DOM
-       // Add null checks for all this.dom.* accesses
        if (!task || task.id !== this.activeTaskId) return;
+       
        if (this.dom.start) this.dom.start.value = task.start || '';
        if (this.dom.end) this.dom.end.value = task.end || '';
-       // ... etc
+       if (this.dom.duration) this.dom.duration.value = String(task.duration || 1);
+       if (this.dom.progress) this.dom.progress.value = String(task.progress || 0);
+       
+       // Sync Constraint
+       if (this.dom.constraintType) {
+           this.dom.constraintType.value = task.constraintType || 'asap';
+           this._updateConstraintDesc(task.constraintType || 'asap');
+           this._updateConstraintIcon(task.constraintType || 'asap', task.constraintDate || '');
+       }
+       if (this.dom.constraintDate) this.dom.constraintDate.value = task.constraintDate || '';
+       
+       // Sync Mode
+       if (this.dom.schedulingMode) {
+           const mode = task.schedulingMode || 'Auto';
+           this.dom.schedulingMode.value = mode;
+           this._updateModeDisplay(mode);
+       }
+       
+       this._updateCPMData(task);
+       this._updateHealthStatus(task);
+       this._updateProgressSection(task);
     }
     
     close(): void {
@@ -442,6 +517,15 @@ export class SideDrawer {
         return this.element;
     }
     
+    // --- Helpers ---
+
+    private _handleChange(field: string, value: unknown): void {
+        if (!this.activeTaskId) return;
+        if (this.options.onUpdate) {
+            this.options.onUpdate(this.activeTaskId, field, value);
+        }
+    }
+
     private _formatDateForDisplay(dateStr: string | null | undefined): string {
         if (!dateStr) return '-';
         const date = new Date(dateStr + 'T12:00:00');
@@ -451,26 +535,129 @@ export class SideDrawer {
     private _updateConstraintIcon(type: ConstraintType, constraintDate: string = ''): void {
         if (!this.dom.constraintIcon) return;
         this.dom.constraintIcon.innerHTML = '';
-        // ... implementation ...
+        
+        if (type === 'asap') return;
+        
+        let iconComponent: any = null;
+        let color = '#64748b';
+        
+        switch (type) {
+            case 'snet': iconComponent = Anchor; color = '#3b82f6'; break;
+            case 'snlt': iconComponent = AlarmClock; color = '#f59e0b'; break;
+            case 'fnet': iconComponent = Hourglass; color = '#3b82f6'; break;
+            case 'fnlt': iconComponent = Flag; color = '#f59e0b'; break;
+            case 'mfo': iconComponent = Lock; color = '#ef4444'; break;
+        }
+        
+        if (iconComponent) {
+            const svg = createElement(iconComponent, { size: 14, strokeWidth: 2, color });
+            this.dom.constraintIcon.appendChild(svg);
+            this.dom.constraintIcon.title = `${type.toUpperCase()} ${constraintDate}`;
+        }
     }
     
     private _updateConstraintDesc(type: ConstraintType): void {
         if (!this.dom.constraintDesc) return;
         this.dom.constraintDesc.textContent = SideDrawer.CONSTRAINT_DESCRIPTIONS[type] || '';
-        // ... implementation ...
+        
+        if (this.dom.constraintDateGroup) {
+            this.dom.constraintDateGroup.style.display = type === 'asap' ? 'none' : 'block';
+        }
     }
     
     private _updateModeDisplay(mode: 'Auto' | 'Manual'): void {
         if (!this.dom.modeDescription) return;
-        // ... implementation ...
+        
+        if (mode === 'Manual') {
+            this.dom.modeDescription.textContent = 'Dates are fixed. Task is pinned.';
+            if (this.dom.modeIconDisplay) {
+                this.dom.modeIconDisplay.innerHTML = `<svg class="w-4 h-4 text-amber-500 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg>`;
+            }
+        } else {
+            this.dom.modeDescription.textContent = 'Dates calculated by dependencies.';
+            if (this.dom.modeIconDisplay) {
+                this.dom.modeIconDisplay.innerHTML = `<svg class="w-4 h-4 text-blue-500 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
+            }
+        }
     }
     
     private _updateCPMData(task: Task): void {
-        if (!this.dom.totalFloat) return;
-        // ... implementation ...
+        if (this.dom.totalFloat) this.dom.totalFloat.textContent = task.totalFloat !== undefined ? `${task.totalFloat}d` : '-';
+        if (this.dom.freeFloat) this.dom.freeFloat.textContent = task.freeFloat !== undefined ? `${task.freeFloat}d` : '-';
+        if (this.dom.lateStart) this.dom.lateStart.textContent = this._formatDateForDisplay(task.lateStart);
+        if (this.dom.lateFinish) this.dom.lateFinish.textContent = this._formatDateForDisplay(task.lateFinish);
+        
+        if (this.dom.criticalBadge) {
+            this.dom.criticalBadge.style.display = task._isCritical ? 'flex' : 'none';
+        }
+    }
+    
+    private _updateHealthStatus(task: Task): void {
+        if (!this.dom.healthSection || !this.dom.healthStatus) return;
+        
+        if (task._health) {
+            this.dom.healthSection.style.display = 'block';
+            this.dom.healthStatus.innerHTML = `
+                <div class="health-indicator health-${task._health.status}">
+                    <span>${task._health.icon}</span>
+                    <span>${task._health.summary}</span>
+                </div>
+            `;
+        } else {
+            this.dom.healthSection.style.display = 'none';
+        }
+    }
+    
+    private _updateProgressSection(task: Task): void {
+        if (!this.dom.progressSection) return;
+        
+        const hasBaseline = task.baselineStart || task.baselineFinish;
+        const hasActuals = task.actualStart || task.actualFinish;
+        
+        if (hasBaseline || hasActuals) {
+            this.dom.progressSection.style.display = 'block';
+            
+            if (this.dom.baselineStart) this.dom.baselineStart.value = this._formatDateForDisplay(task.baselineStart);
+            if (this.dom.baselineFinish) this.dom.baselineFinish.value = this._formatDateForDisplay(task.baselineFinish);
+            if (this.dom.actualStart) this.dom.actualStart.value = task.actualStart || '';
+            if (this.dom.actualFinish) this.dom.actualFinish.value = task.actualFinish || '';
+            
+            this._updateVarianceDisplay(task);
+        } else {
+            this.dom.progressSection.style.display = 'none';
+        }
     }
     
     private _updateVarianceDisplay(task: Task): void {
-        // ... implementation ...
+        if (!this.options.getScheduler) return;
+        const scheduler = this.options.getScheduler();
+        if (!scheduler) return;
+        
+        const variance = scheduler.calculateVariance(task);
+        
+        const formatVariance = (el: HTMLInputElement | null, val: number | null) => {
+            if (!el) return;
+            if (val === null) {
+                el.value = '-';
+                el.style.color = '#94a3b8';
+            } else {
+                el.value = val > 0 ? `${val}d early` : val < 0 ? `${Math.abs(val)}d late` : 'On time';
+                el.style.color = val > 0 ? '#22c55e' : val < 0 ? '#ef4444' : '#22c55e';
+            }
+        };
+        
+        formatVariance(this.dom.startVariance, variance.start);
+        formatVariance(this.dom.finishVariance, variance.finish);
+    }
+
+    private _getFocusableFieldElement(fieldName: string): HTMLElement | null {
+        // Simple mapping based on known IDs
+        // Try direct ID match first
+        const el = this.element.querySelector(`#drawer-${fieldName}`) as HTMLElement;
+        if (el) return el;
+        
+        // Try kebab case for compound names
+        const kebab = fieldName.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
+        return this.element.querySelector(`#drawer-${kebab}`) as HTMLElement;
     }
 }
