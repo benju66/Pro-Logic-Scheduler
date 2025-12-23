@@ -1,11 +1,10 @@
 /**
  * @fileoverview Persistence Service - Async Write Queue for SQLite
  * @module data/PersistenceService
- * 
- * ENHANCED: 
- * - Complete event type handling for all defined event types
- * - Integration with SnapshotService for event counting
- * - Proper CALENDAR_UPDATED handling
+ * * ENHANCED: 
+ * - Retry logic for SQLITE_BUSY (database locked)
+ * - Safe transaction handling
+ * - Integration with SnapshotService
  */
 
 import Database from '@tauri-apps/plugin-sql';
@@ -28,7 +27,7 @@ export class PersistenceService {
   private db: DatabaseInterface | null = null;
   private writeQueue: QueuedEvent[] = [];
   private isProcessing: boolean = false;
-  private flushInterval: number = 100; // ms
+  private flushInterval: number = 200; // Increased to 200ms to reduce lock contention
   private flushTimer: number | null = null;
   private isInitialized: boolean = false;
   
@@ -47,21 +46,19 @@ export class PersistenceService {
 
     try {
       this.db = await Database.load('sqlite:scheduler.db') as DatabaseInterface;
+      // Enable WAL mode for better concurrency
+      await this.db.execute('PRAGMA journal_mode=WAL;');
       await this.runMigrations();
       this.startFlushLoop();
       this.isInitialized = true;
-      console.log('[PersistenceService] ✅ Initialized');
+      console.log('[PersistenceService] ✅ Initialized (WAL Mode)');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error('[PersistenceService] ❌ Initialization failed:', errorMessage, error);
-      // Don't mark as initialized if database setup failed - app should handle gracefully
       this.isInitialized = false;
     }
   }
 
-  /**
-   * Set snapshot service and data accessors for automatic snapshot triggering
-   */
   setSnapshotService(
     service: SnapshotService,
     getTasks: () => unknown[],
@@ -72,9 +69,6 @@ export class PersistenceService {
     this.getCalendarForSnapshot = getCalendar;
   }
 
-  /**
-   * Set trade partners accessor for snapshots
-   */
   setTradePartnersAccessor(getter: () => unknown[]): void {
     this.getTradePartnersForSnapshot = getter;
   }
@@ -83,19 +77,9 @@ export class PersistenceService {
     if (!this.db) return;
 
     const schema = this.loadSchema();
-    
-    // Split by semicolon and process each statement
     const statements = schema
       .split(';')
-      .map(s => {
-        // Remove SQL comment lines (lines starting with --)
-        // This preserves the actual SQL while removing comments
-        return s
-          .split('\n')
-          .filter(line => !line.trim().startsWith('--'))
-          .join('\n')
-          .trim();
-      })
+      .map(s => s.split('\n').filter(line => !line.trim().startsWith('--')).join('\n').trim())
       .filter(s => s.length > 0);
 
     for (const statement of statements) {
@@ -104,18 +88,15 @@ export class PersistenceService {
       } catch (err) {
         const error = err as Error;
         const errorMessage = error?.message || String(err || 'Unknown error');
-        // Only warn if it's not an expected "already exists" error
         if (!errorMessage.includes('already exists') && !errorMessage.includes('duplicate')) {
           console.warn('[PersistenceService] Schema statement failed:', statement.substring(0, 60) + '...', errorMessage);
         }
       }
     }
 
-    // Explicit migrations for existing databases (add columns if missing)
+    // Explicit migrations
     const migrations = [
-      // Add scheduling_mode to tasks if missing
       `ALTER TABLE tasks ADD COLUMN scheduling_mode TEXT NOT NULL DEFAULT 'Auto'`,
-      // Add trade_partners_json to snapshots if missing
       `ALTER TABLE snapshots ADD COLUMN trade_partners_json TEXT DEFAULT '[]'`
     ];
 
@@ -124,13 +105,7 @@ export class PersistenceService {
         await this.db.execute(migration);
         console.log(`[PersistenceService] ✅ Applied migration: ${migration.substring(0, 50)}...`);
       } catch (e) {
-        // Ignore "duplicate column name" errors which mean migration already applied
-        const err = e as Error;
-        const errorMessage = err?.message || String(e || 'Unknown error');
-        if (!errorMessage.includes('duplicate column name') && !errorMessage.includes('duplicate')) {
-          // Only log if it's a different error (e.g., table doesn't exist yet - that's fine, CREATE TABLE will handle it)
-          // console.debug('[PersistenceService] Migration note:', errorMessage);
-        }
+        // Ignore duplicate column errors
       }
     }
 
@@ -253,18 +228,39 @@ CREATE TABLE IF NOT EXISTS snapshots (
       if (this.isProcessing || this.writeQueue.length === 0) return;
 
       this.isProcessing = true;
+      let transactionStarted = false;
 
       try {
-        const batch = this.writeQueue.splice(0, 50);
-
         if (!this.db) {
           console.warn('[PersistenceService] Database not available - events lost');
+          this.writeQueue = []; // Clear queue to prevent memory leak
           this.isProcessing = false;
           return;
         }
 
-        await this.db.execute('BEGIN TRANSACTION');
+        // Retry logic for obtaining lock
+        let retries = 3;
+        while (retries > 0) {
+          try {
+            await this.db.execute('BEGIN IMMEDIATE TRANSACTION');
+            transactionStarted = true;
+            break;
+          } catch (e) {
+            const err = e as Error;
+            const msg = err?.message || String(e);
+            if (msg.includes('locked') || msg.includes('busy')) {
+              retries--;
+              if (retries === 0) throw e; // Give up after retries
+              await new Promise(resolve => setTimeout(resolve, 50)); // Wait 50ms
+            } else {
+              throw e; // Throw other errors immediately
+            }
+          }
+        }
 
+        // Take a batch of events
+        const batch = this.writeQueue.slice(0, 50); // Peek first
+        
         for (const event of batch) {
           await this.db.execute(
             `INSERT INTO events (event_type, target_id, payload, timestamp)
@@ -281,11 +277,13 @@ CREATE TABLE IF NOT EXISTS snapshots (
         }
 
         await this.db.execute('COMMIT');
+        
+        // Remove processed events from queue ONLY after commit
+        this.writeQueue.splice(0, batch.length);
 
         if (batch.length > 0) {
           console.log(`[PersistenceService] Flushed ${batch.length} events`);
           
-          // Notify snapshot service
           if (this.snapshotService && this.getTasksForSnapshot && this.getCalendarForSnapshot) {
             await this.snapshotService.onEventsPersisted(
               batch.length,
@@ -296,12 +294,19 @@ CREATE TABLE IF NOT EXISTS snapshots (
           }
         }
       } catch (error) {
-        console.error('[PersistenceService] Flush failed:', error);
-        if (this.db) {
+        const err = error as Error;
+        const msg = err?.message || String(error);
+        
+        // Only log error if it's not just a lock (which we retried)
+        if (!msg.includes('locked') && !msg.includes('busy')) {
+          console.error('[PersistenceService] Flush failed:', error);
+        }
+
+        if (this.db && transactionStarted) {
           try {
             await this.db.execute('ROLLBACK');
           } catch (rollbackError) {
-            console.error('[PersistenceService] Rollback failed:', rollbackError);
+            // Ignore rollback errors (likely "no transaction active")
           }
         }
       } finally {
@@ -310,9 +315,6 @@ CREATE TABLE IF NOT EXISTS snapshots (
     }, this.flushInterval);
   }
 
-  /**
-   * Apply event to materialized views (tasks and calendar tables)
-   */
   private async applyEventToMaterializedView(event: QueuedEvent): Promise<void> {
     if (!this.db) return;
 
@@ -371,8 +373,12 @@ CREATE TABLE IF NOT EXISTS snapshots (
             'baselineFinish': 'baseline_finish',
             'baselineDuration': 'baseline_duration',
             'isCollapsed': 'is_collapsed',
+            'tradePartnerIds': 'tradePartnerIds', // Handled via junction, skip here?
           };
           
+          // Skip fields that are handled by other tables or events
+          if (field === 'tradePartnerIds') return;
+
           const dbField = fieldMap[field] || field;
           const dbValue = field === 'dependencies' ? JSON.stringify(value) : value;
           
@@ -428,7 +434,6 @@ CREATE TABLE IF NOT EXISTS snapshots (
           const tpField = event.payload.field as string;
           const tpValue = event.payload.new_value;
           
-          // Whitelist allowed fields
           const allowedFields = ['name', 'contact', 'phone', 'email', 'color', 'notes'];
           if (!allowedFields.includes(tpField)) return;
           
@@ -439,7 +444,6 @@ CREATE TABLE IF NOT EXISTS snapshots (
           break;
 
         case 'TRADE_PARTNER_DELETED':
-          // Junction table entries auto-deleted via CASCADE
           await this.db.execute(
             `DELETE FROM trade_partners WHERE id = ?`,
             [event.targetId]
@@ -461,9 +465,6 @@ CREATE TABLE IF NOT EXISTS snapshots (
             [event.targetId, event.payload.trade_partner_id]
           );
           break;
-
-        default:
-          console.debug(`[PersistenceService] Unhandled event type for materialized view: ${event.type}`);
       }
     } catch (error) {
       console.error(`[PersistenceService] Failed to apply event ${event.type}:`, error);
@@ -481,61 +482,42 @@ CREATE TABLE IF NOT EXISTS snapshots (
 
     while (this.writeQueue.length > 0) {
       const batch = this.writeQueue.splice(0, 50);
-      
       try {
-        await this.db.execute('BEGIN TRANSACTION');
-
+        await this.db.execute('BEGIN IMMEDIATE TRANSACTION');
         for (const event of batch) {
           await this.db.execute(
             `INSERT INTO events (event_type, target_id, payload, timestamp)
              VALUES (?, ?, ?, ?)`,
-            [
-              event.type,
-              event.targetId,
-              JSON.stringify(event.payload),
-              event.timestamp.toISOString()
-            ]
+            [event.type, event.targetId, JSON.stringify(event.payload), event.timestamp.toISOString()]
           );
-
           await this.applyEventToMaterializedView(event);
         }
-
         await this.db.execute('COMMIT');
         console.log(`[PersistenceService] Flushed ${batch.length} events (shutdown)`);
       } catch (error) {
         console.error('[PersistenceService] Final flush failed:', error);
-        if (this.db) {
-          try {
-            await this.db.execute('ROLLBACK');
-          } catch (rollbackError) {
-            // Ignore during shutdown
-          }
-        }
-        this.writeQueue.unshift(...batch);
+        // Try rollback but don't crash
+        try { await this.db.execute('ROLLBACK'); } catch (e) {}
+        this.writeQueue.unshift(...batch); // Put back
         break;
       }
     }
-
     console.log('[PersistenceService] ✅ Shutdown flush complete');
   }
 
   async purgeDatabase(): Promise<void> {
     if (!this.db) return;
-
     try {
       if (this.flushTimer !== null) {
         clearInterval(this.flushTimer);
         this.flushTimer = null;
       }
-
       this.writeQueue = [];
-
       await this.db.execute('DELETE FROM events');
       await this.db.execute('DELETE FROM tasks');
       await this.db.execute('DELETE FROM snapshots');
       await this.db.execute('DELETE FROM calendar');
       await this.db.execute('VACUUM');
-
       console.log('[PersistenceService] ☢️ Database purged');
     } catch (error) {
       console.error('[PersistenceService] Failed to purge database:', error);
