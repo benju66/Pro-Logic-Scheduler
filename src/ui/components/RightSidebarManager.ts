@@ -74,6 +74,7 @@ export class RightSidebarManager {
     // Cleanup
     private _unsubscribeSelection: (() => void) | null = null;
     private _unsubscribePanelOpen: (() => void) | null = null;
+    private _unsubscribeDataChange: (() => void) | null = null;
     private _keydownHandler: ((e: KeyboardEvent) => void) | null = null;
 
     constructor(options: RightSidebarManagerOptions) {
@@ -218,6 +219,11 @@ export class RightSidebarManager {
         // Subscribe to panel open requests (e.g., double-click to open)
         this._unsubscribePanelOpen = this.scheduler.onPanelOpenRequest((panelId) => {
             this.openPanel(panelId as RightPanelId);
+        });
+
+        // Subscribe to unified data changes (for automatic panel refresh)
+        this._unsubscribeDataChange = this.scheduler.onDataChange(() => {
+            this._refreshActivePanels();
         });
 
         // Keyboard shortcuts
@@ -378,6 +384,11 @@ export class RightSidebarManager {
             this._unsubscribePanelOpen = null;
         }
         
+        if (this._unsubscribeDataChange) {
+            this._unsubscribeDataChange();
+            this._unsubscribeDataChange = null;
+        }
+        
         if (this._keydownHandler) {
             document.removeEventListener('keydown', this._keydownHandler);
             this._keydownHandler = null;
@@ -447,6 +458,34 @@ export class RightSidebarManager {
         } else if (panelId === 'tradePartners' && this.tradePartnersPanel) {
             this.tradePartnersPanel.show(task.id);
         }
+    }
+
+    /**
+     * Refresh all active panels with current data
+     * Called automatically when data changes (tasks, calendar, trade partners, etc.)
+     * @private
+     */
+    private _refreshActivePanels(): void {
+        if (!this.currentTaskId) return;
+        
+        const task = this.scheduler.getTask(this.currentTaskId);
+        if (!task) {
+            // Task was deleted - show empty state
+            this._showEmptyState();
+            return;
+        }
+
+        // Refresh each active panel with fresh data
+        this.activePanels.forEach(panelId => {
+            if (panelId === 'details' && this.detailsPanel) {
+                const isParent = this.scheduler.isParent(task.id);
+                this.detailsPanel.open(task, { isParent });
+            } else if (panelId === 'links' && this.dependenciesPanel) {
+                this.dependenciesPanel.syncPanel(task);
+            } else if (panelId === 'tradePartners' && this.tradePartnersPanel) {
+                this.tradePartnersPanel.show(task.id);
+            }
+        });
     }
 
     /**

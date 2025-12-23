@@ -140,6 +140,9 @@ export class SchedulerService {
     // Panel open request callbacks (for double-click to open behavior)
     private _openPanelCallbacks: Array<(panelId: string) => void> = [];
 
+    // Data change callbacks for unified panel sync (e.g., RightSidebarManager)
+    private _dataChangeCallbacks: Array<() => void> = [];
+
     // View state
     public viewMode: ViewMode = 'Week';  // Public for access from StatsService
     
@@ -4544,7 +4547,14 @@ export class SchedulerService {
             });
             // Sync the panel with the task (panel will handle it via selection callback)
             // But we also need to ensure the task is selected
-            this.selectTask(taskId);
+            if (this.focusedId !== taskId) {
+                this.selectedIds.clear();
+                this.selectedIds.add(taskId);
+                this.selectionOrder = [taskId];
+                this.focusedId = taskId;
+                this.anchorId = taskId;
+                this._updateSelection();
+            }
             return;
         }
         
@@ -4758,6 +4768,9 @@ export class SchedulerService {
         // Tasks changed - trigger recalculation and render
         this.recalculateAll();
         this.render();
+        
+        // Notify data change listeners (for unified panel sync)
+        this._notifyDataChange();
     }
 
     /**
@@ -4776,6 +4789,37 @@ export class SchedulerService {
         
         this.recalculateAll();
         this.render();
+        
+        // Notify data change listeners (for unified panel sync)
+        this._notifyDataChange();
+    }
+
+    /**
+     * Notify all data change listeners
+     * @private
+     */
+    private _notifyDataChange(): void {
+        for (const callback of this._dataChangeCallbacks) {
+            try {
+                callback();
+            } catch (error) {
+                console.error('[SchedulerService] Error in data change callback:', error);
+            }
+        }
+    }
+
+    /**
+     * Subscribe to data changes (tasks, calendar, trade partners, etc.)
+     * Returns unsubscribe function
+     */
+    public onDataChange(callback: () => void): () => void {
+        this._dataChangeCallbacks.push(callback);
+        return () => {
+            const index = this._dataChangeCallbacks.indexOf(callback);
+            if (index > -1) {
+                this._dataChangeCallbacks.splice(index, 1);
+            }
+        };
     }
 
     // =========================================================================
@@ -5629,6 +5673,10 @@ export class SchedulerService {
         }
         
         this.toastService.success(`Created trade partner: ${partner.name}`);
+        
+        // Notify data change listeners (for unified panel sync)
+        this._notifyDataChange();
+        
         return partner;
     }
 
@@ -5655,6 +5703,9 @@ export class SchedulerService {
         if (field === 'color' || field === 'name') {
             this.render();
         }
+        
+        // Notify data change listeners (for unified panel sync)
+        this._notifyDataChange();
     }
 
     /**
@@ -5691,7 +5742,7 @@ export class SchedulerService {
      * Assign a trade partner to a task
      */
     assignTradePartner(taskId: string, tradePartnerId: string): void {
-        const task = this.taskStore.get(taskId);
+        const task = this.taskStore.getById(taskId);
         const partner = this.tradePartnerStore.get(tradePartnerId);
         if (!task || !partner) return;
         
@@ -5700,7 +5751,7 @@ export class SchedulerService {
         
         // Update task
         const newIds = [...(task.tradePartnerIds || []), tradePartnerId];
-        this.taskStore.update(taskId, 'tradePartnerIds', newIds);
+        this.taskStore.update(taskId, { tradePartnerIds: newIds });
         
         // Queue persistence event
         if (this.persistenceService) {
@@ -5717,7 +5768,7 @@ export class SchedulerService {
      * Unassign a trade partner from a task
      */
     unassignTradePartner(taskId: string, tradePartnerId: string, showToast = true): void {
-        const task = this.taskStore.get(taskId);
+        const task = this.taskStore.getById(taskId);
         if (!task || !task.tradePartnerIds) return;
         
         // Check if assigned
@@ -5725,7 +5776,7 @@ export class SchedulerService {
         
         // Update task
         const newIds = task.tradePartnerIds.filter(id => id !== tradePartnerId);
-        this.taskStore.update(taskId, 'tradePartnerIds', newIds);
+        this.taskStore.update(taskId, { tradePartnerIds: newIds });
         
         // Queue persistence event
         if (this.persistenceService) {
@@ -5743,7 +5794,7 @@ export class SchedulerService {
      * Get trade partners for a task
      */
     getTaskTradePartners(taskId: string): TradePartner[] {
-        const task = this.taskStore.get(taskId);
+        const task = this.taskStore.getById(taskId);
         if (!task?.tradePartnerIds) return [];
         return this.tradePartnerStore.getMany(task.tradePartnerIds);
     }
