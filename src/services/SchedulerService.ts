@@ -899,43 +899,14 @@ export class SchedulerService {
                 label: 'Mode',
                 field: 'schedulingMode',
                 type: 'select',
-                width: 65,
+                width: 90,
                 editable: true,
                 options: ['Auto', 'Manual'],
                 readonlyForParent: true,
                 align: 'center',
                 resizable: true,
-                minWidth: 50,
-                renderer: (task: Task, meta: { isParent: boolean; depth: number; isCollapsed: boolean; index: number }) => {
-                    const mode = task.schedulingMode ?? 'Auto';
-                    
-                    // Parent tasks show dash (they don't have scheduling mode)
-                    if (meta.isParent) {
-                        return '<span class="text-gray-400 text-sm">—</span>';
-                    }
-                    
-                    // Render icon based on mode
-                    if (mode === 'Manual') {
-                        // Thumbtack/Pin icon for Manual (amber color)
-                        return `
-                            <span class="flex items-center justify-center" title="Manually Scheduled (dates fixed)">
-                                <svg class="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
-                                </svg>
-                            </span>
-                        `;
-                    } else {
-                        // Clock icon for Auto (blue color)
-                        return `
-                            <span class="flex items-center justify-center" title="Auto-Scheduled (CPM-driven)">
-                                <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
-                                    <circle cx="12" cy="12" r="10"/>
-                                    <polyline points="12 6 12 12 16 14"/>
-                                </svg>
-                            </span>
-                        `;
-                    }
-                }
+                minWidth: 80,
+                // No renderer - BindingSystem handles icon + select separately
             },
             {
                 id: 'health',

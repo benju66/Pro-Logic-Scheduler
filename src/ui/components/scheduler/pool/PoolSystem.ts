@@ -220,24 +220,63 @@ export class PoolSystem {
                 break;
 
             case 'select':
-                input = document.createElement('select');
-                input.className = 'vsg-select';
-                input.setAttribute('data-field', col.field);
-                // Add options
-                if (col.options) {
-                    col.options.forEach(opt => {
-                        const option = document.createElement('option');
-                        if (typeof opt === 'string') {
-                            option.value = opt;
-                            option.textContent = opt;
-                        } else {
-                            option.value = opt.value;
-                            option.textContent = opt.label;
-                        }
-                        input.appendChild(option);
-                    });
+                // Special handling for schedulingMode to include icon
+                if (col.field === 'schedulingMode') {
+                    // Create wrapper for icon + select
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'vsg-mode-wrapper';
+                    wrapper.style.cssText = 'display: flex; align-items: center; width: 100%; gap: 4px; padding: 0 4px;';
+                    
+                    // Icon container
+                    const modeIcon = document.createElement('span');
+                    modeIcon.className = 'vsg-mode-icon';
+                    modeIcon.setAttribute('data-field', 'schedulingMode-icon');
+                    modeIcon.style.cssText = 'width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;';
+                    wrapper.appendChild(modeIcon);
+
+                    input = document.createElement('select');
+                    input.className = 'vsg-select';
+                    input.setAttribute('data-field', col.field);
+                    input.style.flex = '1';
+                    input.style.minWidth = '0'; // Allow shrinking
+                    
+                    // Add options
+                    if (col.options) {
+                        col.options.forEach(opt => {
+                            const option = document.createElement('option');
+                            if (typeof opt === 'string') {
+                                option.value = opt;
+                                option.textContent = opt;
+                            } else {
+                                option.value = opt.value;
+                                option.textContent = opt.label;
+                            }
+                            input.appendChild(option);
+                        });
+                    }
+                    wrapper.appendChild(input);
+                    container.appendChild(wrapper);
+                } else {
+                    // Standard select
+                    input = document.createElement('select');
+                    input.className = 'vsg-select';
+                    input.setAttribute('data-field', col.field);
+                    // Add options
+                    if (col.options) {
+                        col.options.forEach(opt => {
+                            const option = document.createElement('option');
+                            if (typeof opt === 'string') {
+                                option.value = opt;
+                                option.textContent = opt;
+                            } else {
+                                option.value = opt.value;
+                                option.textContent = opt.label;
+                            }
+                            input.appendChild(option);
+                        });
+                    }
+                    container.appendChild(input);
                 }
-                container.appendChild(input);
                 break;
 
             case 'readonly':

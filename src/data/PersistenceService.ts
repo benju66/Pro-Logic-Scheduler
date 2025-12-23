@@ -110,6 +110,30 @@ export class PersistenceService {
         }
       }
     }
+
+    // Explicit migrations for existing databases (add columns if missing)
+    const migrations = [
+      // Add scheduling_mode to tasks if missing
+      `ALTER TABLE tasks ADD COLUMN scheduling_mode TEXT NOT NULL DEFAULT 'Auto'`,
+      // Add trade_partners_json to snapshots if missing
+      `ALTER TABLE snapshots ADD COLUMN trade_partners_json TEXT DEFAULT '[]'`
+    ];
+
+    for (const migration of migrations) {
+      try {
+        await this.db.execute(migration);
+        console.log(`[PersistenceService] ✅ Applied migration: ${migration.substring(0, 50)}...`);
+      } catch (e) {
+        // Ignore "duplicate column name" errors which mean migration already applied
+        const err = e as Error;
+        const errorMessage = err?.message || String(e || 'Unknown error');
+        if (!errorMessage.includes('duplicate column name') && !errorMessage.includes('duplicate')) {
+          // Only log if it's a different error (e.g., table doesn't exist yet - that's fine, CREATE TABLE will handle it)
+          // console.debug('[PersistenceService] Migration note:', errorMessage);
+        }
+      }
+    }
+
     console.log('[PersistenceService] ✅ Schema migrations complete');
   }
 
