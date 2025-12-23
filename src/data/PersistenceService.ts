@@ -125,6 +125,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     duration INTEGER NOT NULL DEFAULT 1,
     constraint_type TEXT NOT NULL DEFAULT 'asap',
     constraint_date TEXT,
+    scheduling_mode TEXT NOT NULL DEFAULT 'Auto',
     dependencies TEXT NOT NULL DEFAULT '[]',
     progress INTEGER NOT NULL DEFAULT 0,
     actual_start TEXT,
@@ -141,6 +142,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 
 CREATE INDEX IF NOT EXISTS idx_tasks_parent_sort ON tasks(parent_id, sort_key);
 CREATE INDEX IF NOT EXISTS idx_tasks_id ON tasks(id);
+CREATE INDEX IF NOT EXISTS idx_tasks_scheduling_mode ON tasks(scheduling_mode);
 
 -- CALENDAR TABLE
 CREATE TABLE IF NOT EXISTS calendar (
@@ -295,10 +297,10 @@ CREATE TABLE IF NOT EXISTS snapshots (
         case 'TASK_CREATED':
           await this.db.execute(
             `INSERT OR REPLACE INTO tasks (id, parent_id, sort_key, name, notes, duration, 
-             constraint_type, constraint_date, dependencies, progress, 
+             constraint_type, constraint_date, scheduling_mode, dependencies, progress, 
              actual_start, actual_finish, remaining_duration,
              baseline_start, baseline_finish, baseline_duration, is_collapsed)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               event.payload.id,
               event.payload.parent_id ?? null,
@@ -308,6 +310,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
               event.payload.duration ?? 1,
               event.payload.constraint_type ?? 'asap',
               event.payload.constraint_date ?? null,
+              event.payload.scheduling_mode ?? 'Auto',
               JSON.stringify(event.payload.dependencies || []),
               event.payload.progress ?? 0,
               event.payload.actual_start ?? null,
@@ -330,10 +333,27 @@ CREATE TABLE IF NOT EXISTS snapshots (
                                     'totalFloat', 'freeFloat', '_isCritical', '_health'];
           if (calculatedFields.includes(field)) return;
           
+          // Map field names to database columns
+          const fieldMap: Record<string, string> = {
+            'constraintType': 'constraint_type',
+            'constraintDate': 'constraint_date',
+            'schedulingMode': 'scheduling_mode',
+            'parentId': 'parent_id',
+            'sortKey': 'sort_key',
+            'actualStart': 'actual_start',
+            'actualFinish': 'actual_finish',
+            'remainingDuration': 'remaining_duration',
+            'baselineStart': 'baseline_start',
+            'baselineFinish': 'baseline_finish',
+            'baselineDuration': 'baseline_duration',
+            'isCollapsed': 'is_collapsed',
+          };
+          
+          const dbField = fieldMap[field] || field;
           const dbValue = field === 'dependencies' ? JSON.stringify(value) : value;
           
           await this.db.execute(
-            `UPDATE tasks SET ${field} = ?, updated_at = datetime('now') WHERE id = ?`,
+            `UPDATE tasks SET ${dbField} = ?, updated_at = datetime('now') WHERE id = ?`,
             [dbValue, event.targetId]
           );
           break;

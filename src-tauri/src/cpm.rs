@@ -94,6 +94,33 @@ pub fn forward_pass(tasks: &mut [Task], calendar: &Calendar, parent_ids: &HashSe
                 continue;
             }
             
+            // ═══════════════════════════════════════════════════════════════════
+            // MANUAL MODE: Skip dependency-driven calculation
+            // 
+            // Manual tasks have user-fixed dates. We only ensure that the end date
+            // is consistent with start + duration. Dependencies are ignored.
+            // ═══════════════════════════════════════════════════════════════════
+            if tasks[i].scheduling_mode == "Manual" {
+                // If task has a start date and duration, ensure end is consistent
+                if !tasks[i].start.is_empty() && tasks[i].duration > 0 {
+                    let calculated_end = add_work_days(
+                        &tasks[i].start, 
+                        get_duration_offset(tasks[i].duration), 
+                        calendar
+                    );
+                    if tasks[i].end != calculated_end {
+                        tasks[i].end = calculated_end;
+                        changed = true;
+                    }
+                }
+                // Skip all dependency and constraint processing
+                continue;
+            }
+            
+            // ═══════════════════════════════════════════════════════════════════
+            // AUTO MODE: Standard CPM dependency calculation
+            // ═══════════════════════════════════════════════════════════════════
+            
             let mut earliest_start: Option<String> = None;
             
             // Process dependencies

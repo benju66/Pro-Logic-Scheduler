@@ -137,6 +137,16 @@ impl ProjectState {
                                 }
                             }
                         }
+                        "schedulingMode" => {
+                            if let Some(v) = value.as_str() {
+                                // Validate the mode value
+                                if v == "Auto" || v == "Manual" {
+                                    task.scheduling_mode = v.to_string();
+                                } else {
+                                    eprintln!("[engine_state] Invalid schedulingMode: {}", v);
+                                }
+                            }
+                        }
                         "wbs" => {
                             task.wbs = value.as_str().map(|s| s.to_string());
                         }

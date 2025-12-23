@@ -23,6 +23,14 @@ export type LinkType = 'FS' | 'SS' | 'FF' | 'SF';
 export type ConstraintType = 'asap' | 'snet' | 'snlt' | 'fnet' | 'fnlt' | 'mfo';
 
 /**
+ * Task scheduling mode
+ * - Auto: Dates calculated by CPM engine based on dependencies and constraints
+ * - Manual: Dates are user-fixed, CPM ignores predecessor logic for this task
+ *           (but successors still use this task's dates as anchors)
+ */
+export type SchedulingMode = 'Auto' | 'Manual';
+
+/**
  * Health status for schedule analysis
  * - healthy: Task is on track with adequate float
  * - at-risk: Task has low float or minor constraint variance (1-3 days)
@@ -89,6 +97,20 @@ export interface Task {
   constraintType: ConstraintType;
   /** Constraint date (ISO format, null if ASAP) */
   constraintDate: string | null;
+  
+  /**
+   * Scheduling mode: 'Auto' (default) or 'Manual'
+   * 
+   * Auto: CPM calculates dates based on dependencies and constraints
+   * Manual: User-fixed dates that CPM will not change (task is "pinned")
+   * 
+   * Manual tasks still:
+   * - Participate in backward pass (have Late Start/Finish)
+   * - Have float calculated
+   * - Act as anchors for their successors
+   */
+  schedulingMode?: SchedulingMode;
+  
   /** Notes/comments */
   notes: string;
   
@@ -154,6 +176,20 @@ export interface Task {
   // === Trade Partners ===
   /** Assigned trade partner IDs */
   tradePartnerIds?: string[];
+}
+
+/**
+ * Check if a task is manually scheduled
+ */
+export function isManuallyScheduled(task: Task): boolean {
+  return task.schedulingMode === 'Manual';
+}
+
+/**
+ * Check if a task is auto-scheduled (default)
+ */
+export function isAutoScheduled(task: Task): boolean {
+  return task.schedulingMode !== 'Manual'; // Treat undefined as Auto
 }
 
 /**
@@ -447,6 +483,11 @@ export function getTaskFieldValue(task: Task, field: GridColumn['field']): unkno
   // Computed fields (variance) - these are calculated, not stored
   if (field === 'startVariance' || field === 'finishVariance') {
     return undefined; // Variance is computed in renderer, not stored
+  }
+  
+  // Handle schedulingMode default
+  if (field === 'schedulingMode') {
+    return task.schedulingMode ?? 'Auto';
   }
   
   return task[field as keyof Task];

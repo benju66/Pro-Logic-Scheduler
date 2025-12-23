@@ -53,6 +53,12 @@ pub struct Task {
     #[serde(rename = "constraintDate")]
     pub constraint_date: Option<String>,
     
+    /// Scheduling mode: "Auto" or "Manual"
+    /// Auto: CPM calculates dates from dependencies
+    /// Manual: User-fixed dates, CPM skips dependency calculation
+    #[serde(rename = "schedulingMode", default = "default_scheduling_mode")]
+    pub scheduling_mode: String,
+    
     pub dependencies: Vec<Dependency>,
     
     // === Status ===
@@ -139,6 +145,11 @@ pub struct CPMStats {
     pub duration: i32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// Default scheduling mode for new/imported tasks
+fn default_scheduling_mode() -> String {
+    "Auto".to_string()
 }
 
 /// CPM calculation result

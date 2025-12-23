@@ -6,7 +6,7 @@
  * All constants are exported for use across the application.
  */
 
-import type { LinkType, ConstraintType } from '../types';
+import type { LinkType, ConstraintType, SchedulingMode } from '../types';
 
 /**
  * Link types for task dependencies
@@ -88,4 +88,39 @@ export function isValidLinkType(type: string): type is LinkType {
  */
 export function isValidConstraintType(type: string): type is ConstraintType {
   return CONSTRAINT_TYPES.includes(type as ConstraintType);
+}
+
+/**
+ * Scheduling modes for tasks
+ */
+export const SCHEDULING_MODES: readonly SchedulingMode[] = Object.freeze(['Auto', 'Manual'] as const);
+
+/**
+ * Scheduling mode labels for display
+ */
+export const SCHEDULING_MODE_LABELS: Readonly<Record<SchedulingMode, string>> = Object.freeze({
+  'Auto': 'Auto-Scheduled (CPM)',
+  'Manual': 'Manually Scheduled'
+} as const);
+
+/**
+ * Scheduling mode descriptions for help text
+ */
+export const SCHEDULING_MODE_DESCRIPTIONS: Readonly<Record<SchedulingMode, string>> = Object.freeze({
+  'Auto': 'Dates are calculated by the CPM engine based on dependencies and constraints.',
+  'Manual': 'Dates are fixed by the user. CPM will not change this task\'s dates, but successors will still respect them as anchors.'
+} as const);
+
+/**
+ * Default scheduling mode for new tasks
+ */
+export const DEFAULT_SCHEDULING_MODE: SchedulingMode = 'Auto';
+
+/**
+ * Validate if a value is a valid scheduling mode
+ * @param mode - Scheduling mode to validate
+ * @returns True if valid
+ */
+export function isValidSchedulingMode(mode: string): mode is SchedulingMode {
+  return SCHEDULING_MODES.includes(mode as SchedulingMode);
 }

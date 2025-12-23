@@ -43,6 +43,9 @@ interface SideDrawerDOM {
   constraintDateGroup: HTMLElement;
   constraintDesc: HTMLElement;
   constraintIcon: HTMLElement;
+  schedulingMode: HTMLSelectElement;
+  modeDescription: HTMLElement;
+  modeIconDisplay: HTMLElement;
   notes: HTMLTextAreaElement;
   totalFloat: HTMLElement;
   freeFloat: HTMLElement;
@@ -279,6 +282,25 @@ export class SideDrawer {
                     </div>
                 </div>
                 
+                <!-- Scheduling Mode Section -->
+                <div class="form-section">
+                    <h4 class="form-section-title">Scheduling Mode</h4>
+                    
+                    <div class="form-group">
+                        <label class="form-label flex items-center gap-2">
+                            <span>Scheduling Mode</span>
+                            <span id="drawer-mode-icon-display" class="drawer-mode-icon-display"></span>
+                        </label>
+                        <select id="drawer-schedulingMode" class="form-input form-select">
+                            <option value="Auto">Auto (CPM-driven)</option>
+                            <option value="Manual">Manual (User-fixed)</option>
+                        </select>
+                        <p class="form-hint" id="drawer-mode-description">
+                            Dates are calculated based on dependencies and constraints.
+                        </p>
+                    </div>
+                </div>
+                
                 <!-- Notes Section -->
                 <div class="form-section">
                     <h4 class="form-section-title">Notes</h4>
@@ -318,6 +340,9 @@ export class SideDrawer {
             constraintDateGroup: getElement<HTMLElement>('drawer-constraint-date-group'),
             constraintDesc: getElement<HTMLElement>('drawer-constraint-desc'),
             constraintIcon: getElement<HTMLElement>('drawer-constraint-icon'),
+            schedulingMode: getElement<HTMLSelectElement>('drawer-schedulingMode'),
+            modeDescription: getElement<HTMLElement>('drawer-mode-description'),
+            modeIconDisplay: getElement<HTMLElement>('drawer-mode-icon-display'),
             notes: getElement<HTMLTextAreaElement>('drawer-notes'),
             totalFloat: getElement<HTMLElement>('drawer-total-float'),
             freeFloat: getElement<HTMLElement>('drawer-free-float'),
@@ -395,6 +420,13 @@ export class SideDrawer {
             const type = this.dom.constraintType.value as ConstraintType;
             this._updateConstraintDesc(type);
             this._handleChange('constraintType', type);
+        });
+        
+        // Scheduling mode change
+        this.dom.schedulingMode.addEventListener('change', () => {
+            const newMode = this.dom.schedulingMode.value as 'Auto' | 'Manual';
+            this._updateModeDisplay(newMode);
+            this._handleChange('schedulingMode', newMode);
         });
         
         // Constraint date change - update icon title if constraint type is set
@@ -541,6 +573,33 @@ export class SideDrawer {
         // Update constraint icon
         const constraintDate = this.dom.constraintDate.value || '';
         this._updateConstraintIcon(type, constraintDate);
+    }
+
+    /**
+     * Update mode description and icon display
+     * @private
+     */
+    private _updateModeDisplay(mode: 'Auto' | 'Manual'): void {
+        if (!this.dom.modeDescription || !this.dom.modeIconDisplay) return;
+        
+        if (mode === 'Manual') {
+            this.dom.modeDescription.textContent = 
+                'Dates are fixed. CPM will not change this task\'s dates, but successors will still respect them.';
+            this.dom.modeIconDisplay.innerHTML = `
+                <svg class="w-4 h-4 text-amber-500 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+                </svg>
+            `;
+        } else {
+            this.dom.modeDescription.textContent = 
+                'Dates are calculated based on dependencies and constraints.';
+            this.dom.modeIconDisplay.innerHTML = `
+                <svg class="w-4 h-4 text-blue-500 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                </svg>
+            `;
+        }
     }
 
     /**
@@ -821,6 +880,20 @@ export class SideDrawer {
         this.dom.constraintDate.value = task.constraintDate || '';
         this.dom.notes.value = task.notes || '';
         
+        // Check if this is a parent task (used for multiple checks below)
+        const isParent = this.options.getScheduler?.()?.taskStore?.isParent?.(task.id) ?? false;
+        
+        // Sync scheduling mode
+        const mode = task.schedulingMode ?? 'Auto';
+        this.dom.schedulingMode.value = mode;
+        this._updateModeDisplay(mode);
+        
+        // Disable mode selector for parent tasks
+        this.dom.schedulingMode.disabled = isParent;
+        if (isParent) {
+            this.dom.modeDescription.textContent = 'Parent tasks are always auto-scheduled.';
+        }
+        
         // Update constraint description and icon
         this._updateConstraintDesc(task.constraintType || 'asap');
         
@@ -880,7 +953,6 @@ export class SideDrawer {
         }
         
         // Handle parent tasks (dates roll up from children, not directly editable)
-        const isParent = options.isParent || false;
         this.dom.duration.disabled = isParent;
         this.dom.start.disabled = isParent;
         this.dom.end.disabled = isParent;
@@ -1183,6 +1255,18 @@ export class SideDrawer {
         this.dom.constraintType.value = task.constraintType || 'asap';
         this.dom.constraintDate.value = task.constraintDate || '';
         this._updateConstraintDesc(task.constraintType || 'asap');
+        
+        // Sync scheduling mode
+        const mode = task.schedulingMode ?? 'Auto';
+        this.dom.schedulingMode.value = mode;
+        this._updateModeDisplay(mode);
+        
+        // Disable mode selector for parent tasks
+        const isParent = this.options.getScheduler?.()?.taskStore?.isParent?.(task.id) ?? false;
+        this.dom.schedulingMode.disabled = isParent;
+        if (isParent) {
+            this.dom.modeDescription.textContent = 'Parent tasks are always auto-scheduled.';
+        }
         
         // Update CPM data display
         this._updateCPMData(task);

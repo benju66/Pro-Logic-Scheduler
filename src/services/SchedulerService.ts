@@ -895,6 +895,49 @@ export class SchedulerService {
                 minWidth: 50,
             },
             {
+                id: 'schedulingMode',
+                label: 'Mode',
+                field: 'schedulingMode',
+                type: 'select',
+                width: 65,
+                editable: true,
+                options: ['Auto', 'Manual'],
+                readonlyForParent: true,
+                align: 'center',
+                resizable: true,
+                minWidth: 50,
+                renderer: (task: Task, meta: { isParent: boolean; depth: number; isCollapsed: boolean; index: number }) => {
+                    const mode = task.schedulingMode ?? 'Auto';
+                    
+                    // Parent tasks show dash (they don't have scheduling mode)
+                    if (meta.isParent) {
+                        return '<span class="text-gray-400 text-sm">—</span>';
+                    }
+                    
+                    // Render icon based on mode
+                    if (mode === 'Manual') {
+                        // Thumbtack/Pin icon for Manual (amber color)
+                        return `
+                            <span class="flex items-center justify-center" title="Manually Scheduled (dates fixed)">
+                                <svg class="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+                                </svg>
+                            </span>
+                        `;
+                    } else {
+                        // Clock icon for Auto (blue color)
+                        return `
+                            <span class="flex items-center justify-center" title="Auto-Scheduled (CPM-driven)">
+                                <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <polyline points="12 6 12 12 16 14"/>
+                                </svg>
+                            </span>
+                        `;
+                    }
+                }
+            },
+            {
                 id: 'health',
                 label: 'Health',
                 field: '_health' as keyof Task,
@@ -1819,6 +1862,18 @@ export class SchedulerService {
      * @param value - New value
      * @returns Object indicating what follow-up actions are needed
      */
+    /**
+     * Apply date change immediately (called from SideDrawer)
+     * 
+     * Behavior depends on scheduling mode:
+     * - AUTO: Apply constraints (SNET for start, FNLT for end)
+     * - MANUAL: Update dates directly without constraints
+     * 
+     * @private
+     * @param taskId - Task ID
+     * @param field - 'start', 'end', 'actualStart', or 'actualFinish'
+     * @param value - New date value (ISO format: YYYY-MM-DD)
+     */
     private _applyDateChangeImmediate(taskId: string, field: string, value: string): void {
         const task = this.taskStore.getById(taskId);
         if (!task) return;
@@ -1832,40 +1887,120 @@ export class SchedulerService {
             return;
         }
         
+        const isManual = task.schedulingMode === 'Manual';
+        const calendar = this.calendarStore.get();
+        
+        // ═══════════════════════════════════════════════════════════════════════
+        // SCHEDULED DATE EDITS (start, end)
+        // ═══════════════════════════════════════════════════════════════════════
+        
         if (field === 'start') {
-            const updates: Partial<Task> = { 
-                start: value,
-                constraintType: 'snet' as ConstraintType,
-                constraintDate: value 
-            };
-            this.taskStore.update(taskId, updates);
-            
-            if (this.engine) {
-                this.engine.updateTask(taskId, updates).catch(error => {
-                    console.warn('[SchedulerService] Failed to sync task update to engine:', error);
-                });
+            if (isManual) {
+                // MANUAL MODE: Update start directly, recalculate end from duration
+                // Validation: End must always be >= Start (push End forward)
+                const newEnd = DateUtils.addWorkDays(value, task.duration - 1, calendar);
+                
+                const updates: Partial<Task> = { 
+                    start: value,
+                    end: newEnd  // Always recalculate to ensure End >= Start
+                };
+                this.taskStore.update(taskId, updates);
+                
+                if (this.engine) {
+                    this.engine.updateTask(taskId, updates).catch(error => {
+                        console.warn('[SchedulerService] Failed to sync Manual task update to engine:', error);
+                    });
+                }
+                
+                this.toastService.info('Manual task dates updated');
+            } else {
+                // AUTO MODE: Apply SNET constraint
+                const updates: Partial<Task> = { 
+                    start: value,
+                    constraintType: 'snet' as ConstraintType,
+                    constraintDate: value 
+                };
+                this.taskStore.update(taskId, updates);
+                
+                if (this.engine) {
+                    this.engine.updateTask(taskId, updates).catch(error => {
+                        console.warn('[SchedulerService] Failed to sync task update to engine:', error);
+                    });
+                }
+                
+                this.toastService.info('Start constraint (SNET) applied');
             }
             
-            this.toastService.info('Start constraint (SNET) applied');
-        } else if (field === 'end') {
-            if (task.start && value < task.start) {
-                this.toastService.warning('Deadline is earlier than start date - schedule may be impossible');
+            this.recalculateAll();
+            this.render();
+            return;
+        }
+        
+        if (field === 'end') {
+            if (isManual) {
+                // MANUAL MODE: Update end directly, recalculate duration
+                const effectiveStart = task.actualStart || task.start;
+                if (!effectiveStart) {
+                    this.toastService.warning('Cannot set end date: Task has no start date');
+                    return;
+                }
+                
+                // ═══════════════════════════════════════════════════════════
+                // VALIDATION: End must be >= Start (even in Manual mode)
+                // If user tries to set End before Start, reject with warning
+                // ═══════════════════════════════════════════════════════════
+                if (value < effectiveStart) {
+                    this.toastService.warning('End date cannot be before start date');
+                    return;
+                }
+                
+                const newDuration = DateUtils.calcWorkDays(effectiveStart, value, calendar);
+                
+                const updates: Partial<Task> = { 
+                    end: value,
+                    duration: Math.max(1, newDuration)
+                };
+                this.taskStore.update(taskId, updates);
+                
+                if (this.engine) {
+                    this.engine.updateTask(taskId, updates).catch(error => {
+                        console.warn('[SchedulerService] Failed to sync Manual task update to engine:', error);
+                    });
+                }
+                
+                this.toastService.info('Manual task dates updated');
+            } else {
+                // AUTO MODE: Apply FNLT constraint (deadline)
+                const updates: Partial<Task> = { 
+                    constraintType: 'fnlt' as ConstraintType,
+                    constraintDate: value 
+                };
+                this.taskStore.update(taskId, updates);
+                
+                if (this.engine) {
+                    this.engine.updateTask(taskId, updates).catch(error => {
+                        console.warn('[SchedulerService] Failed to sync task update to engine:', error);
+                    });
+                }
+                
+                // Warn if deadline is before current start
+                if (task.start && value < task.start) {
+                    this.toastService.warning('Deadline is earlier than start date - schedule may be impossible');
+                } else {
+                    this.toastService.info('Finish deadline (FNLT) applied');
+                }
             }
             
-            const endUpdates: Partial<Task> = { 
-                constraintType: 'fnlt' as ConstraintType,
-                constraintDate: value 
-            };
-            this.taskStore.update(taskId, endUpdates);
-            
-            if (this.engine) {
-                this.engine.updateTask(taskId, endUpdates).catch(error => {
-                    console.warn('[SchedulerService] Failed to sync task update to engine:', error);
-                });
-            }
-            
-            this.toastService.info('Finish deadline (FNLT) applied');
-        } else if (field === 'actualStart') {
+            this.recalculateAll();
+            this.render();
+            return;
+        }
+        
+        // ═══════════════════════════════════════════════════════════════════════
+        // ACTUAL DATE EDITS (actualStart, actualFinish) - Same for both modes
+        // ═══════════════════════════════════════════════════════════════════════
+        
+        if (field === 'actualStart') {
             // DRIVER MODE + ANCHOR: actualStart drives schedule and locks history
             const calendar = this.calendarStore.get();
             const updates: Partial<Task> = {
@@ -2230,6 +2365,71 @@ export class SchedulerService {
                 }
                 
                 needsRender = true;
+                break;
+                
+            case 'schedulingMode':
+                // ═══════════════════════════════════════════════════════════
+                // SCHEDULING MODE CHANGE
+                // Auto → Manual: Preserve current dates, task becomes "pinned"
+                // Manual → Auto: Convert current Start to SNET constraint
+                //                (preserves user intent, prevents jarring date jumps)
+                // ═══════════════════════════════════════════════════════════
+                const newMode = String(value) as 'Auto' | 'Manual';
+                
+                // Validate mode value
+                if (newMode !== 'Auto' && newMode !== 'Manual') {
+                    console.warn('[SchedulerService] Invalid scheduling mode:', value);
+                    return { needsRecalc: false, needsRender: false, success: false };
+                }
+                
+                // Parent tasks cannot be Manual
+                if (isParent && newMode === 'Manual') {
+                    this.toastService.warning('Parent tasks cannot be manually scheduled');
+                    return { needsRecalc: false, needsRender: false, success: false };
+                }
+                
+                // Skip if no change
+                if (task.schedulingMode === newMode) {
+                    return { needsRecalc: false, needsRender: false, success: true };
+                }
+                
+                if (newMode === 'Auto' && task.schedulingMode === 'Manual') {
+                    // ═══════════════════════════════════════════════════════
+                    // MANUAL → AUTO TRANSITION
+                    // Convert current Start to SNET constraint to preserve user intent
+                    // This prevents the task from "snapping back" unexpectedly
+                    // User can remove the constraint later if they want ASAP behavior
+                    // ═══════════════════════════════════════════════════════
+                    const updates: Partial<Task> = {
+                        schedulingMode: 'Auto',
+                        constraintType: 'snet' as ConstraintType,
+                        constraintDate: task.start || null
+                    };
+                    
+                    this.taskStore.update(taskId, updates);
+                    
+                    if (this.engine) {
+                        this.engine.updateTask(taskId, updates).catch(error => {
+                            console.warn('[SchedulerService] Failed to sync Manual→Auto transition:', error);
+                        });
+                    }
+                    
+                    this.toastService.info('Task is now auto-scheduled with SNET constraint (remove constraint for ASAP)');
+                } else {
+                    // AUTO → MANUAL: Simple mode change, dates preserved
+                    this.taskStore.update(taskId, { schedulingMode: newMode });
+                    
+                    if (this.engine) {
+                        this.engine.updateTask(taskId, { schedulingMode: newMode }).catch(error => {
+                            console.warn('[SchedulerService] Failed to sync schedulingMode to engine:', error);
+                        });
+                    }
+                    
+                    this.toastService.info('Task is now manually scheduled - dates are fixed');
+                }
+                
+                // Recalculate to apply new mode behavior
+                needsRecalc = true;
                 break;
                 
             default:
@@ -5651,6 +5851,43 @@ export class SchedulerService {
      */
     getTradePartner(id: string): TradePartner | undefined {
         return this.tradePartnerStore.get(id);
+    }
+
+    /**
+     * Set scheduling mode for a task
+     * 
+     * @param taskId - Task ID
+     * @param mode - 'Auto' or 'Manual'
+     */
+    public setSchedulingMode(taskId: string, mode: 'Auto' | 'Manual'): void {
+        const task = this.taskStore.getById(taskId);
+        if (!task) {
+            console.warn('[SchedulerService] Task not found:', taskId);
+            return;
+        }
+        
+        this.saveCheckpoint();
+        
+        const result = this._applyTaskEdit(taskId, 'schedulingMode', mode);
+        
+        if (result.success && result.needsRecalc) {
+            this.recalculateAll();
+            this.saveData();
+            this.render();
+        }
+    }
+
+    /**
+     * Toggle scheduling mode between Auto and Manual
+     * 
+     * @param taskId - Task ID
+     */
+    public toggleSchedulingMode(taskId: string): void {
+        const task = this.taskStore.getById(taskId);
+        if (!task) return;
+        
+        const newMode = task.schedulingMode === 'Manual' ? 'Auto' : 'Manual';
+        this.setSchedulingMode(taskId, newMode);
     }
 
     /**

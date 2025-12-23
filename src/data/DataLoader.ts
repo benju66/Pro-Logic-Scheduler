@@ -26,6 +26,7 @@ interface PersistedTask {
   duration: number;
   constraint_type: string;
   constraint_date: string | null;
+  scheduling_mode?: string;
   dependencies: string;
   progress: number;
   actual_start: string | null;
@@ -108,6 +109,7 @@ export class DataLoader {
         level: t.level ?? 0,
         start: t.start ?? '',
         end: t.end ?? '',
+        schedulingMode: t.schedulingMode ?? 'Auto',
         tradePartnerIds: t.tradePartnerIds ?? [],
       })) as Task[];
       
@@ -468,6 +470,7 @@ export class DataLoader {
       duration: (payload.duration as number) || 1,
       constraintType: ((payload.constraint_type || payload.constraintType) as ConstraintType) || 'asap',
       constraintDate: (payload.constraint_date as string | null) ?? (payload.constraintDate as string | null) ?? null,
+      schedulingMode: ((payload.scheduling_mode || payload.schedulingMode) as 'Auto' | 'Manual') ?? 'Auto',
       dependencies: this.parseDependencies(payload.dependencies),
       progress: (payload.progress as number) || 0,
       actualStart: (payload.actual_start as string | null) ?? (payload.actualStart as string | null) ?? null,
@@ -494,6 +497,7 @@ export class DataLoader {
       duration: row.duration || 1,
       constraintType: (row.constraint_type as ConstraintType) || 'asap',
       constraintDate: row.constraint_date ?? null,
+      schedulingMode: (row.scheduling_mode as 'Auto' | 'Manual') ?? 'Auto',
       dependencies: this.parseDependencies(row.dependencies),
       progress: row.progress || 0,
       actualStart: row.actual_start ?? null,
@@ -528,6 +532,7 @@ export class DataLoader {
       'sort_key': 'sortKey',
       'constraint_type': 'constraintType',
       'constraint_date': 'constraintDate',
+      'scheduling_mode': 'schedulingMode',
       'actual_start': 'actualStart',
       'actual_finish': 'actualFinish',
       'remaining_duration': 'remainingDuration',
