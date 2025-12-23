@@ -75,21 +75,30 @@ export class PersistenceService {
     if (!this.db) return;
 
     const schema = this.loadSchema();
+    
+    // Split by semicolon and process each statement
     const statements = schema
       .split(';')
-      .map(s => s.trim())
-      .filter(s => s.length > 0 && !s.startsWith('--'));
+      .map(s => {
+        // Remove SQL comment lines (lines starting with --)
+        // This preserves the actual SQL while removing comments
+        return s
+          .split('\n')
+          .filter(line => !line.trim().startsWith('--'))
+          .join('\n')
+          .trim();
+      })
+      .filter(s => s.length > 0);
 
     for (const statement of statements) {
-      if (statement.trim()) {
-        try {
-          await this.db.execute(statement);
-        } catch (err) {
-          const error = err as Error;
-          const errorMessage = error?.message || String(err || 'Unknown error');
-          if (!errorMessage.includes('already exists') && !errorMessage.includes('duplicate')) {
-            console.warn('[PersistenceService] Schema statement failed:', statement.substring(0, 50), errorMessage);
-          }
+      try {
+        await this.db.execute(statement);
+      } catch (err) {
+        const error = err as Error;
+        const errorMessage = error?.message || String(err || 'Unknown error');
+        // Only warn if it's not an expected "already exists" error
+        if (!errorMessage.includes('already exists') && !errorMessage.includes('duplicate')) {
+          console.warn('[PersistenceService] Schema statement failed:', statement.substring(0, 60) + '...', errorMessage);
         }
       }
     }
