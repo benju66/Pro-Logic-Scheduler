@@ -11,7 +11,7 @@ const MAX_CPM_ITERATIONS: usize = 50;
 
 /// Successor map entry
 #[derive(Clone)]
-struct SuccessorEntry {
+pub(crate) struct SuccessorEntry {
     id: String,
     link_type: String,
     lag: i32,
@@ -32,6 +32,7 @@ fn get_duration_offset(duration: i32) -> i32 {
 /// 
 /// @deprecated Use parent_ids HashSet instead for O(1) lookup
 #[deprecated(note = "Use parent_ids HashSet instead")]
+#[allow(dead_code)]
 fn is_parent(task_id: &str, tasks: &[Task]) -> bool {
     tasks.iter().any(|t| t.parent_id.as_ref().map_or(false, |pid| pid == task_id))
 }

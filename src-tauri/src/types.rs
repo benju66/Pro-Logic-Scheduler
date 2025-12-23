@@ -34,10 +34,16 @@ pub struct Task {
     #[serde(rename = "sortKey")]
     pub sort_key: String,
     
+    /// Hierarchy level (0 = root). Calculated field - defaults to 0 if missing.
+    #[serde(default)]
     pub level: i32,
     
     // === Scheduling (Input) ===
+    /// Start date. Calculated by CPM - defaults to empty string if missing.
+    #[serde(default)]
     pub start: String,
+    /// End date. Calculated by CPM - defaults to empty string if missing.
+    #[serde(default)]
     pub end: String,
     pub duration: i32,
     

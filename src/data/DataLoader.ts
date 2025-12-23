@@ -98,7 +98,16 @@ export class DataLoader {
         taskCount: JSON.parse(snapshot.tasks_json).length
       });
       
-      tasks = JSON.parse(snapshot.tasks_json) as Task[];
+      // Parse and hydrate with required calculated field defaults
+      // Snapshots strip level/start/end (calculated fields), but Rust requires them
+      const rawTasks = JSON.parse(snapshot.tasks_json) as Array<Partial<Task>>;
+      tasks = rawTasks.map(t => ({
+        ...t,
+        level: t.level ?? 0,    // Default to root level (will be recalculated)
+        start: t.start ?? '',   // Will be calculated by CPM
+        end: t.end ?? '',       // Will be calculated by CPM
+      })) as Task[];
+      
       calendar = JSON.parse(snapshot.calendar_json) as Calendar;
       lastEventId = snapshot.event_id;
     } else {

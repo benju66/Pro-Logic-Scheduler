@@ -203,6 +203,7 @@ impl ProjectState {
 
     /// Create a passthrough CPMResult (returns tasks as-is)
     /// Used until actual Rust CPM is implemented
+    #[allow(dead_code)]
     pub fn create_passthrough_result(&self) -> CPMResult {
         let tasks = self.get_tasks_ordered();
         let task_count = tasks.len() as i32;
