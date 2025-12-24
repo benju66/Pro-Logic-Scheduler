@@ -3,7 +3,15 @@
  * @module ui/components/scheduler/types
  */
 
-import type { Task, GridColumn, LinkType } from '../../../types';
+import type { Task, GridColumn } from '../../../types';
+
+/**
+ * Drop position for row move operations
+ * - 'before': Insert above target (same parent level)
+ * - 'after': Insert below target (same parent level)  
+ * - 'child': Nest under target (indent)
+ */
+export type DropPosition = 'before' | 'after' | 'child';
 
 /**
  * Viewport state passed to renderers
@@ -94,7 +102,7 @@ export interface GridRendererOptions {
     onAction?: (taskId: string, action: string, event: MouseEvent) => void;
     onToggleCollapse?: (taskId: string) => void;
     onSelectionChange?: (selectedIds: string[]) => void;
-    onRowMove?: (taskIds: string[], targetId: string, position: 'before' | 'after') => void;
+    onRowMove?: (taskIds: string[], targetId: string, position: DropPosition) => void;
     /** Called when Enter is pressed on the last task - allows creating a new task */
     onEnterLastRow?: (lastTaskId: string, field: string) => void;
     /** Called when cell editing ends (blur, Enter, Escape, Tab) */
@@ -142,7 +150,7 @@ export interface SchedulerViewportOptions {
     onAction?: (taskId: string, action: string, event: MouseEvent) => void;
     onToggleCollapse?: (taskId: string) => void;
     onSelectionChange?: (selectedIds: string[]) => void;
-    onRowMove?: (taskIds: string[], targetId: string, position: 'before' | 'after') => void;
+    onRowMove?: (taskIds: string[], targetId: string, position: DropPosition) => void;
     onBarClick?: (taskId: string, event: MouseEvent) => void;
     onBarDoubleClick?: (taskId: string, event: MouseEvent) => void;
     onBarDrag?: (task: Task, start: string, end: string) => void;

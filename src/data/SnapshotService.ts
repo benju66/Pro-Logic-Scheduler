@@ -10,12 +10,7 @@
 
 import Database from '@tauri-apps/plugin-sql';
 import type { Task, Calendar, TradePartner } from '../types';
-
-interface DatabaseInterface {
-  execute(query: string, bindings?: unknown[]): Promise<{ lastInsertId: number; rowsAffected: number }>;
-  select<T = unknown>(query: string, bindings?: unknown[]): Promise<T[]>;
-  close(): Promise<void>;
-}
+import type { DatabaseInterface, SnapshotEventIdRow, MaxEventIdRow } from './DatabaseTypes';
 
 export class SnapshotService {
   private db: DatabaseInterface | null = null;
@@ -92,7 +87,7 @@ export class SnapshotService {
     if (!this.db) return;
 
     try {
-      const result = await this.db.select<Array<{ event_id: number }>>(
+      const result = await this.db.select<SnapshotEventIdRow>(
         `SELECT event_id FROM snapshots ORDER BY id DESC LIMIT 1`
       );
       if (result && result.length > 0) {
@@ -130,7 +125,7 @@ export class SnapshotService {
     }
 
     try {
-      const result = await this.db.select<Array<{ max_id: number }>>(
+      const result = await this.db.select<MaxEventIdRow>(
         `SELECT MAX(id) as max_id FROM events`
       );
       const currentEventId = result && result.length > 0 ? (result[0].max_id || 0) : 0;

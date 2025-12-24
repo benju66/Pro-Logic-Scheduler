@@ -9,18 +9,13 @@
 
 import Database from '@tauri-apps/plugin-sql';
 import type { SnapshotService } from './SnapshotService';
+import type { DatabaseInterface } from './DatabaseTypes';
 
 interface QueuedEvent {
   type: string;
   targetId: string | null;
   payload: Record<string, unknown>;
   timestamp: Date;
-}
-
-interface DatabaseInterface {
-  execute(query: string, bindings?: unknown[]): Promise<{ lastInsertId: number; rowsAffected: number }>;
-  select<T = unknown>(query: string, bindings?: unknown[]): Promise<T[]>;
-  close(): Promise<void>;
 }
 
 export class PersistenceService {

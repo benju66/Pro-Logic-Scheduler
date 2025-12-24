@@ -10,50 +10,16 @@
 import Database from '@tauri-apps/plugin-sql';
 import type { Task, Calendar, ConstraintType, Dependency, TradePartner } from '../types';
 import { DEFAULT_WORKING_DAYS } from '../core/Constants';
-
-interface DatabaseInterface {
-  execute(query: string, bindings?: unknown[]): Promise<{ lastInsertId: number; rowsAffected: number }>;
-  select<T = unknown>(query: string, bindings?: unknown[]): Promise<T[]>;
-  close(): Promise<void>;
-}
-
-interface PersistedTask {
-  id: string;
-  parent_id: string | null;
-  sort_key: string;
-  name: string;
-  notes: string;
-  duration: number;
-  constraint_type: string;
-  constraint_date: string | null;
-  scheduling_mode?: string;
-  dependencies: string;
-  progress: number;
-  actual_start: string | null;
-  actual_finish: string | null;
-  remaining_duration: number | null;
-  baseline_start: string | null;
-  baseline_finish: string | null;
-  baseline_duration: number | null;
-  is_collapsed: number;
-}
-
-interface EventRow {
-  id: number;
-  event_type: string;
-  target_id: string | null;
-  payload: string;
-  timestamp: string;
-}
-
-interface SnapshotRow {
-  id: number;
-  tasks_json: string;
-  calendar_json: string;
-  trade_partners_json: string;
-  event_id: number;
-  created_at: string;
-}
+import type { 
+  DatabaseInterface, 
+  PersistedTaskRow,
+  EventRow,
+  SnapshotRow,
+  CalendarRow,
+  TradePartnerRow,
+  TaskTradePartnerRow 
+} from './DatabaseTypes';
+import { nullToUndefined } from './DatabaseTypes';
 
 export class DataLoader {
   private db: DatabaseInterface | null = null;
@@ -126,7 +92,7 @@ export class DataLoader {
     } else {
       console.log('[DataLoader] No snapshot, loading from tables');
       
-      const taskResult = await this.db.select<PersistedTask[]>(
+      const taskResult = await this.db.select<PersistedTaskRow>(
         `SELECT * FROM tasks ORDER BY sort_key`
       );
       tasks = (taskResult || []).map(row => this.hydrateTask(row));
@@ -139,7 +105,7 @@ export class DataLoader {
     }
     
     // Step 2: Replay events since snapshot
-    const newEvents = await this.db.select<EventRow[]>(
+    const newEvents = await this.db.select<EventRow>(
       `SELECT * FROM events WHERE id > ? ORDER BY id ASC`,
       [lastEventId]
     );
@@ -159,7 +125,7 @@ export class DataLoader {
     if (!this.db) return null;
 
     try {
-      const result = await this.db.select<SnapshotRow[]>(
+      const result = await this.db.select<SnapshotRow>(
         `SELECT * FROM snapshots ORDER BY id DESC LIMIT 1`
       );
       return result && result.length > 0 ? result[0] : null;
@@ -175,7 +141,7 @@ export class DataLoader {
     }
 
     try {
-      const result = await this.db.select<Array<{ working_days: string; exceptions: string }>>(
+      const result = await this.db.select<CalendarRow>(
         `SELECT working_days, exceptions FROM calendar WHERE id = 1`
       );
       
@@ -199,15 +165,7 @@ export class DataLoader {
     if (!this.db) return [];
 
     try {
-      const result = await this.db.select<Array<{
-        id: string;
-        name: string;
-        contact: string;
-        phone: string;
-        email: string;
-        color: string;
-        notes: string;
-      }>>(`SELECT * FROM trade_partners ORDER BY name`);
+      const result = await this.db.select<TradePartnerRow>(`SELECT * FROM trade_partners ORDER BY name`);
       
       return (result || []).map(row => ({
         id: row.id,
@@ -231,10 +189,7 @@ export class DataLoader {
     if (!this.db) return tasks;
 
     try {
-      const result = await this.db.select<Array<{
-        task_id: string;
-        trade_partner_id: string;
-      }>>(`SELECT task_id, trade_partner_id FROM task_trade_partners`);
+      const result = await this.db.select<TaskTradePartnerRow>(`SELECT task_id, trade_partner_id FROM task_trade_partners`);
       
       // Group by task_id
       const assignmentMap = new Map<string, string[]>();
@@ -320,18 +275,18 @@ export class DataLoader {
         case 'BASELINE_SET':
           const baselineTask = tasks.find(t => t.id === event.target_id);
           if (baselineTask) {
-            baselineTask.baselineStart = payload.baseline_start ?? null;
-            baselineTask.baselineFinish = payload.baseline_finish ?? null;
-            baselineTask.baselineDuration = payload.baseline_duration ?? null;
+            baselineTask.baselineStart = nullToUndefined(payload.baseline_start as string | null);
+            baselineTask.baselineFinish = nullToUndefined(payload.baseline_finish as string | null);
+            baselineTask.baselineDuration = nullToUndefined(payload.baseline_duration as number | null);
           }
           break;
           
         case 'BASELINE_CLEARED':
           const clearTask = tasks.find(t => t.id === event.target_id);
           if (clearTask) {
-            clearTask.baselineStart = null;
-            clearTask.baselineFinish = null;
-            clearTask.baselineDuration = null;
+            clearTask.baselineStart = undefined;
+            clearTask.baselineFinish = undefined;
+            clearTask.baselineDuration = undefined;
           }
           break;
           
@@ -473,12 +428,13 @@ export class DataLoader {
       schedulingMode: ((payload.scheduling_mode || payload.schedulingMode) as 'Auto' | 'Manual') ?? 'Auto',
       dependencies: this.parseDependencies(payload.dependencies),
       progress: (payload.progress as number) || 0,
-      actualStart: (payload.actual_start as string | null) ?? (payload.actualStart as string | null) ?? null,
-      actualFinish: (payload.actual_finish as string | null) ?? (payload.actualFinish as string | null) ?? null,
-      remainingDuration: (payload.remaining_duration as number | null) ?? (payload.remainingDuration as number | null) ?? null,
-      baselineStart: (payload.baseline_start as string | null) ?? (payload.baselineStart as string | null) ?? null,
-      baselineFinish: (payload.baseline_finish as string | null) ?? (payload.baselineFinish as string | null) ?? null,
-      baselineDuration: (payload.baseline_duration as number | null) ?? (payload.baselineDuration as number | null) ?? null,
+      // Coerce null → undefined for optional fields
+      actualStart: nullToUndefined((payload.actual_start as string | null) ?? (payload.actualStart as string | null)),
+      actualFinish: nullToUndefined((payload.actual_finish as string | null) ?? (payload.actualFinish as string | null)),
+      remainingDuration: nullToUndefined((payload.remaining_duration as number | null) ?? (payload.remainingDuration as number | null)),
+      baselineStart: nullToUndefined((payload.baseline_start as string | null) ?? (payload.baselineStart as string | null)),
+      baselineFinish: nullToUndefined((payload.baseline_finish as string | null) ?? (payload.baselineFinish as string | null)),
+      baselineDuration: nullToUndefined((payload.baseline_duration as number | null) ?? (payload.baselineDuration as number | null)),
       _collapsed: Boolean(payload.is_collapsed ?? payload._collapsed),
       tradePartnerIds: (payload.trade_partner_ids as string[]) ?? (payload.tradePartnerIds as string[]) ?? [],
       level: 0,
@@ -487,7 +443,7 @@ export class DataLoader {
     };
   }
   
-  private hydrateTask(row: PersistedTask): Task {
+  private hydrateTask(row: PersistedTaskRow): Task {
     return {
       id: row.id,
       parentId: row.parent_id ?? null,
@@ -500,12 +456,13 @@ export class DataLoader {
       schedulingMode: (row.scheduling_mode as 'Auto' | 'Manual') ?? 'Auto',
       dependencies: this.parseDependencies(row.dependencies),
       progress: row.progress || 0,
-      actualStart: row.actual_start ?? null,
-      actualFinish: row.actual_finish ?? null,
-      remainingDuration: row.remaining_duration ?? null,
-      baselineStart: row.baseline_start ?? null,
-      baselineFinish: row.baseline_finish ?? null,
-      baselineDuration: row.baseline_duration ?? null,
+      // CRITICAL: Coerce null to undefined for optional number fields
+      actualStart: nullToUndefined(row.actual_start),
+      actualFinish: nullToUndefined(row.actual_finish),
+      remainingDuration: nullToUndefined(row.remaining_duration),
+      baselineStart: nullToUndefined(row.baseline_start),
+      baselineFinish: nullToUndefined(row.baseline_finish),
+      baselineDuration: nullToUndefined(row.baseline_duration),
       _collapsed: Boolean(row.is_collapsed),
       tradePartnerIds: [],
       level: 0,

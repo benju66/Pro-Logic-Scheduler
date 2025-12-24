@@ -437,6 +437,9 @@ export type Callback<T = void> = (value: T) => void;
  */
 export type EventHandler<E = Event> = (event: E) => void;
 
+// Re-export DropPosition for convenience
+export type { DropPosition } from '../ui/components/scheduler/types';
+
 // =============================================================================
 // RIGHT SIDEBAR TYPES
 // =============================================================================
