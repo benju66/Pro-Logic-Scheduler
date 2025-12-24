@@ -56,6 +56,13 @@ export class GridRenderer {
     private _lastDragOverTime: number = 0;
     private readonly _dragThrottleMs: number = 32;
     private readonly _hysteresisPixels: number = 6;
+    
+    // Container keyboard handler for navigation mode
+    private _boundContainerKeyDown: ((e: KeyboardEvent) => void) | null = null;
+    
+    // CRITICAL: Separate from editingCell which gets cleared on blur
+    // This tracks the last focused/highlighted cell for navigation mode
+    private _focusedCell: { taskId: string; field: string } | null = null;
 
     constructor(options: GridRendererOptions) {
         this.container = options.container;
@@ -307,6 +314,9 @@ export class GridRenderer {
      * Focus a specific cell (enters edit mode)
      */
     focusCell(taskId: string, field: string): void {
+        // ADDED: Track focused cell for navigation mode
+        this._focusedCell = { taskId, field };
+        
         const editingManager = getEditingStateManager();
         
         const row = this.rowContainer.querySelector(`[data-task-id="${taskId}"]`) as HTMLElement | null;
@@ -342,6 +352,9 @@ export class GridRenderer {
      * @param field - Column field name
      */
     highlightCell(taskId: string, field: string): void {
+        // ADDED: Track focused cell for navigation mode
+        this._focusedCell = { taskId, field };
+        
         // Remove previous highlight
         const prevHighlight = this.rowContainer.querySelector('.vsg-cell-selected');
         if (prevHighlight) {
@@ -408,6 +421,10 @@ export class GridRenderer {
         
         // Keydown events
         this.rowContainer.addEventListener('keydown', (e) => this._onKeyDown(e));
+        
+        // Navigation mode keyboard handler (when container is focused, not input)
+        this._boundContainerKeyDown = this._onContainerKeyDown.bind(this);
+        this.container.addEventListener('keydown', this._boundContainerKeyDown);
         
         // Drag and drop events
         this.rowContainer.addEventListener('dragstart', (e) => this._onDragStart(e));
@@ -478,6 +495,17 @@ export class GridRenderer {
                 } as MouseEvent;
                 this.options.onRowClick(taskId, event);
             }
+            
+            // ADDED: Set _focusedCell so Enter navigation works after checkbox selection
+            // Default to first editable column (typically 'name')
+            const editableColumns = this.options.columns.filter(col => 
+                col.type === 'text' || col.type === 'number' || col.type === 'date' || col.type === 'select'
+            );
+            if (editableColumns.length > 0 && taskId) {
+                this._focusedCell = { taskId, field: editableColumns[0].field };
+                this.highlightCell(taskId, editableColumns[0].field);
+            }
+            
             return;
         }
 
@@ -704,6 +732,63 @@ export class GridRenderer {
     }
 
     /**
+     * Handle keydown events on grid container (navigation mode)
+     * Processes Enter key when container is focused but not editing
+     */
+    private _onContainerKeyDown(e: KeyboardEvent): void {
+        const target = e.target as HTMLElement;
+        
+        // Skip if from input - let _onKeyDown handle it
+        if (target.classList.contains('vsg-input') || target.classList.contains('vsg-select')) {
+            return;
+        }
+        
+        // Only handle Enter
+        if (e.key !== 'Enter') return;
+        
+        const editingManager = getEditingStateManager();
+        
+        // Only in navigation mode (not editing)
+        if (editingManager.isEditing()) return;
+        
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // CRITICAL: Use _focusedCell (persists after blur), NOT editingCell (cleared on blur)
+        const currentTaskId = this._focusedCell?.taskId;
+        const currentField = this._focusedCell?.field;
+        
+        if (!currentTaskId || !currentField) return;
+        
+        const taskIndex = this.data.findIndex(t => t.id === currentTaskId);
+        let nextTaskId: string | null = null;
+        
+        if (e.shiftKey) {
+            // Shift+Enter: move UP
+            if (taskIndex > 0) {
+                nextTaskId = this.data[taskIndex - 1].id;
+            }
+        } else {
+            // Enter: move DOWN
+            if (taskIndex < this.data.length - 1) {
+                nextTaskId = this.data[taskIndex + 1].id;
+            } else if (this.options.onEnterLastRow) {
+                this.options.onEnterLastRow(currentTaskId, currentField);
+                return;
+            }
+        }
+        
+        if (nextTaskId) {
+            // highlightCell updates _focusedCell automatically (see Change 3)
+            this.highlightCell(nextTaskId, currentField);
+            
+            if (this.options.onSelectionChange) {
+                this.options.onSelectionChange([nextTaskId]);
+            }
+        }
+    }
+
+    /**
      * Handle keydown events
      * Text inputs with smart date formatting - keyboard navigation works naturally
      */
@@ -801,7 +886,8 @@ export class GridRenderer {
         }
 
         // ========================================
-        // ENTER / SHIFT+ENTER: Vertical navigation
+        // ENTER / SHIFT+ENTER: Commit and exit (stay on same cell)
+        // Navigation to next row happens in _onContainerKeyDown when not editing
         // ========================================
         if (e.key === 'Enter' && target.classList.contains('vsg-input')) {
             e.preventDefault();
@@ -816,60 +902,40 @@ export class GridRenderer {
             const currentField = target.getAttribute('data-field');
             if (!currentField) return;
             
-            // For date inputs, parse and save
+            // 1. Save current edit
             if (target.classList.contains('vsg-date-input')) {
                 this._saveDateInput(target as HTMLInputElement, taskId, currentField, true);
             } else {
-                // Save current edit for non-date inputs
                 if (this.options.onCellChange) {
                     this.options.onCellChange(taskId, currentField, (target as HTMLInputElement).value);
                 }
             }
             
+            // 2. Blur input (triggers blur handler cleanup)
             target.blur();
             
-            const taskIndex = this.data.findIndex(t => t.id === taskId);
-            let nextTaskId: string | null = null;
+            // 3. Clear editing state
+            this.editingRows.delete(taskId);
+            this.editingCell = null;  // Let _onBlur clear this naturally
             
-            if (e.shiftKey) {
-                // Shift+Enter: move to previous row
-                if (taskIndex > 0) {
-                    nextTaskId = this.data[taskIndex - 1].id;
-                }
-            } else {
-                // Enter: move to next row
-                if (taskIndex < this.data.length - 1) {
-                    nextTaskId = this.data[taskIndex + 1].id;
-                } else if (taskIndex === this.data.length - 1) {
-                    // ON LAST ROW - trigger callback to create new task
-                    if (this.options.onEnterLastRow) {
-                        this.options.onEnterLastRow(taskId, currentField);
-                    }
-                }
+            // 4. Exit edit mode via state manager
+            // SchedulerService._onEditingStateChange will call highlightCell()
+            // which updates _focusedCell for navigation mode
+            const editingManager = getEditingStateManager();
+            editingManager.exitEditMode('enter');
+            
+            // 5. Ensure cell stays highlighted and _focusedCell is set
+            // (SchedulerService may already do this, but be explicit)
+            this.highlightCell(taskId, currentField);
+            
+            // 6. Focus container for keyboard capture
+            this.container.focus();
+            
+            // 7. Notify editing ended
+            if (this.options.onEditEnd) {
+                this.options.onEditEnd();
             }
             
-            if (nextTaskId) {
-                const nextTask = this.data.find(t => t.id === nextTaskId);
-                const originalValue = nextTask ? getTaskFieldValue(nextTask, currentField as GridColumn['field']) : undefined;
-                const editingManager = getEditingStateManager();
-                editingManager.moveToCell({ taskId: nextTaskId, field: currentField }, 'enter', originalValue);
-                
-                // Update local state
-                this.editingCell = { taskId: nextTaskId, field: currentField };
-                this.editingRows.delete(taskId);
-                this.editingRows.add(nextTaskId);
-                
-                setTimeout(() => this.focusCell(nextTaskId, currentField), 50);
-            } else {
-                // No next cell, exit edit mode
-                const editingManager = getEditingStateManager();
-                editingManager.exitEditMode('enter');
-                this.editingCell = null;
-                this.editingRows.delete(taskId);
-                if (this.options.onEditEnd) {
-                    this.options.onEditEnd();
-                }
-            }
             return;
         }
 
@@ -1328,6 +1394,12 @@ export class GridRenderer {
         }
         this.editingCell = null;
         this.editingRows.clear();
+        
+        // Remove container keydown listener
+        if (this._boundContainerKeyDown) {
+            this.container.removeEventListener('keydown', this._boundContainerKeyDown);
+            this._boundContainerKeyDown = null;
+        }
         
         // Clean up shared date picker
         if (this.sharedDatePicker) {
