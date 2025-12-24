@@ -44,6 +44,7 @@ src/
 │   └── Constants.ts        # Shared constants
 │
 ├── data/                    # Data management layer
+│   ├── DatabaseTypes.ts    # Shared database type definitions (DatabaseInterface, row types)
 │   ├── TaskStore.ts        # Task CRUD & Hierarchy queries
 │   ├── CalendarStore.ts    # Calendar state
 │   ├── HistoryManager.ts   # Undo/Redo snapshots
