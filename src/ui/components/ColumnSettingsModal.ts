@@ -302,6 +302,9 @@ export class ColumnSettingsModal {
             const itemEl = item as HTMLElement;
             
             itemEl.addEventListener('dragstart', (e: DragEvent) => {
+                // Guard: dataTransfer may be null in edge cases
+                if (!e.dataTransfer) return;
+                
                 e.dataTransfer.effectAllowed = 'move';
                 e.dataTransfer.setData('text/plain', itemEl.dataset.columnId || '');
                 this.draggingElement = itemEl;
@@ -311,14 +314,18 @@ export class ColumnSettingsModal {
             itemEl.addEventListener('dragend', () => {
                 itemEl.classList.remove('dragging');
                 this.draggingElement = null;
-                // Remove drag-over classes
+                // Clean up all drag-over indicators
                 list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
             });
         });
         
         list.addEventListener('dragover', (e: DragEvent) => {
             e.preventDefault();
-            e.dataTransfer.dropEffect = 'move';
+            
+            // Guard: dataTransfer may be null in edge cases
+            if (e.dataTransfer) {
+                e.dataTransfer.dropEffect = 'move';
+            }
             
             if (!this.draggingElement) return;
             
@@ -342,12 +349,12 @@ export class ColumnSettingsModal {
         list.addEventListener('drop', (e: DragEvent) => {
             e.preventDefault();
             this._updateOrderFromDOM();
-            // Remove drag-over classes
+            // Clean up all drag-over indicators
             list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
         });
         
         list.addEventListener('dragleave', () => {
-            // Remove drag-over classes when leaving
+            // Clean up when leaving the list entirely
             list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
         });
     }

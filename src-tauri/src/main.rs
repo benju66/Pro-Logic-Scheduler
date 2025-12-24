@@ -74,6 +74,6 @@ fn main() {
 
 /// Called by frontend after shutdown flush is complete
 #[tauri::command]
-async fn close_window(window: tauri::Window) -> Result<(), String> {
-    window.close().map_err(|e| e.to_string())
+async fn close_window(app: tauri::AppHandle) {
+    app.exit(0);
 }

@@ -3,8 +3,9 @@
  * @module ui/services/FileService
  */
 
-import type { Task, ProjectData, Calendar, CalendarException } from '../../types';
+import type { Task, ProjectData, Calendar } from '../../types';
 import { DEFAULT_WORKING_DAYS } from '../../core/Constants';
+import { OrderingService } from '../../services/OrderingService';
 
 /**
  * File service options
@@ -200,6 +201,9 @@ export class FileService {
 
       const importedTasks: Task[] = [];
       const uidToIdMap = new Map<string, string>();
+      
+      // Track the last sortKey for sequential generation
+      let lastSortKey: string | null = null;
 
       // First pass: Create tasks
       const xmlTasksArray = xmlTasks instanceof NodeList ? Array.from(xmlTasks) : Array.isArray(xmlTasks) ? xmlTasks : Array.from(xmlTasks);
@@ -220,6 +224,10 @@ export class FileService {
 
         const taskId = `imported_${uid}_${Date.now()}`;
         uidToIdMap.set(uid, taskId);
+
+        // CRITICAL FIX: Generate sequential sortKey
+        const sortKey = OrderingService.generateAppendKey(lastSortKey);
+        lastSortKey = sortKey;
 
         // Parse duration (PT8H0M0S format or just days)
         let durationDays = 1;
@@ -262,6 +270,7 @@ export class FileService {
           constraintType: (constraintMap[constraintType] || 'asap') as any,
           constraintDate: constraintDate ? constraintDate.split('T')[0] : null,
           notes: notes || '',
+          sortKey: sortKey, // <--- Assign the generated key
           _collapsed: false,
         };
 

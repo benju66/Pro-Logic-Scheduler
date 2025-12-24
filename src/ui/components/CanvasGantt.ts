@@ -227,42 +227,57 @@ export class CanvasGantt {
      * Deep merge options with defaults
      * @private
      */
+    /**
+     * Deep merge options with defaults
+     * @private
+     */
     private _mergeOptions(defaults: typeof CanvasGantt.DEFAULTS, options: CanvasGanttOptions): MergedCanvasGanttOptions {
         const result: any = { ...defaults };
+        
         for (const key in options) {
             const optionKey = key as keyof CanvasGanttOptions;
             const optionValue = options[optionKey];
             
             // Skip null, undefined, and non-objects
-            if (!optionValue || typeof optionValue !== 'object') {
+            if (optionValue === null || optionValue === undefined || typeof optionValue !== 'object') {
                 result[key] = optionValue;
                 continue;
             }
             
+            // Cast to unknown for safe instanceof checks
+            // This is necessary because TypeScript's strict type narrowing
+            // doesn't allow instanceof on narrowed object types
+            const valueAsUnknown = optionValue as unknown;
+            
             // Skip arrays, DOM elements, Date objects, and other non-plain objects
-            if (Array.isArray(optionValue) || 
-                optionValue instanceof HTMLElement ||
-                optionValue instanceof Date ||
-                optionValue instanceof RegExp ||
-                optionValue instanceof Function) {
+            if (
+                Array.isArray(optionValue) ||
+                valueAsUnknown instanceof HTMLElement ||
+                valueAsUnknown instanceof Date ||
+                valueAsUnknown instanceof RegExp ||
+                typeof valueAsUnknown === 'function'
+            ) {
                 result[key] = optionValue;
                 continue;
             }
             
             // Only recursively merge plain objects (POJOs)
             // Check if it's a plain object by verifying constructor
-            const isPlainObject = optionValue.constructor === Object || 
-                                  Object.getPrototypeOf(optionValue) === Object.prototype ||
-                                  Object.getPrototypeOf(optionValue) === null;
+            const objValue = optionValue as unknown as Record<string, unknown>;
+            const isPlainObject = 
+                objValue.constructor === Object ||
+                Object.getPrototypeOf(objValue) === Object.prototype ||
+                Object.getPrototypeOf(objValue) === null;
             
             if (isPlainObject) {
                 const defaultValue = (defaults as any)[key] || {};
-                result[key] = this._mergeOptions(defaultValue, optionValue as any);
+                result[key] = this._mergeOptions(defaultValue, objValue as any);
             } else {
-                // For other object types, just assign directly
+                // For other object types (custom classes, etc.), just assign directly
                 result[key] = optionValue;
             }
         }
+        
         return result as MergedCanvasGanttOptions;
     }
 
