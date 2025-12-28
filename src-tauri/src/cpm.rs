@@ -47,18 +47,36 @@ fn get_depth(task_id: &str, tasks: &[Task], depth: i32) -> i32 {
     depth
 }
 
+/// Check if a task is a blank row (should skip CPM)
+fn is_blank_row(task: &Task) -> bool {
+    task.row_type.as_deref() == Some("blank")
+}
+
 /// Build a map of task successors for efficient backward pass
-fn build_successor_map(tasks: &[Task]) -> HashMap<String, Vec<SuccessorEntry>> {
+fn build_successor_map(tasks: &[Task], blank_row_ids: &HashSet<String>) -> HashMap<String, Vec<SuccessorEntry>> {
     let mut successor_map: HashMap<String, Vec<SuccessorEntry>> = HashMap::new();
     
-    // Initialize empty arrays for all tasks
+    // Initialize empty arrays for all tasks (skip blank rows)
     for task in tasks {
+        if blank_row_ids.contains(&task.id) {
+            continue;
+        }
         successor_map.insert(task.id.clone(), Vec::new());
     }
     
     // Build successor relationships from dependencies
     for task in tasks {
+        // Skip blank rows
+        if blank_row_ids.contains(&task.id) {
+            continue;
+        }
+        
         for dep in &task.dependencies {
+            // Skip dependencies TO blank rows
+            if blank_row_ids.contains(&dep.id) {
+                continue;
+            }
+            
             if let Some(successors) = successor_map.get_mut(&dep.id) {
                 successors.push(SuccessorEntry {
                     id: task.id.clone(),
@@ -73,7 +91,7 @@ fn build_successor_map(tasks: &[Task]) -> HashMap<String, Vec<SuccessorEntry>> {
 }
 
 /// Forward pass - calculate Early Start (ES) and Early Finish (EF)
-pub fn forward_pass(tasks: &mut [Task], calendar: &Calendar, parent_ids: &HashSet<String>) {
+pub fn forward_pass(tasks: &mut [Task], calendar: &Calendar, parent_ids: &HashSet<String>, blank_row_ids: &HashSet<String>) {
     let mut iterations = 0;
     let mut changed = true;
     
@@ -88,6 +106,11 @@ pub fn forward_pass(tasks: &mut [Task], calendar: &Calendar, parent_ids: &HashSe
         
         for i in 0..tasks.len() {
             let task_id = tasks[i].id.clone();
+            
+            // Skip blank rows - they have no dates
+            if blank_row_ids.contains(&task_id) {
+                continue;
+            }
             
             // Skip parent tasks - their dates are calculated from children
             if parent_ids.contains(&task_id) {
@@ -232,7 +255,7 @@ pub fn forward_pass(tasks: &mut [Task], calendar: &Calendar, parent_ids: &HashSe
 }
 
 /// Calculate parent (summary) task dates from children
-pub fn calculate_parent_dates(tasks: &mut [Task], calendar: &Calendar, parent_ids: &HashSet<String>) {
+pub fn calculate_parent_dates(tasks: &mut [Task], calendar: &Calendar, parent_ids: &HashSet<String>, blank_row_ids: &HashSet<String>) {
     let max_depth = tasks.iter()
         .map(|t| get_depth(&t.id, tasks, 0))
         .max()
@@ -254,11 +277,16 @@ pub fn calculate_parent_dates(tasks: &mut [Task], calendar: &Calendar, parent_id
                 continue;
             }
             
-            // Find children
+            // Find children (skip blank rows)
             let mut min_start: Option<String> = None;
             let mut max_end: Option<String> = None;
             
             for child in tasks.iter() {
+                // Skip blank rows
+                if blank_row_ids.contains(&child.id) {
+                    continue;
+                }
+                
                 if child.parent_id.as_ref().map_or(false, |pid| pid == &task.id) {
                     if !child.start.is_empty() {
                         if min_start.is_none() || child.start < *min_start.as_ref().unwrap() {
@@ -296,10 +324,14 @@ pub fn calculate_parent_dates(tasks: &mut [Task], calendar: &Calendar, parent_id
 }
 
 /// Backward pass - calculate Late Start (LS) and Late Finish (LF)
-pub fn backward_pass(tasks: &mut [Task], calendar: &Calendar, successor_map: &HashMap<String, Vec<SuccessorEntry>>, parent_ids: &HashSet<String>) {
-    // Find project end date (latest Early Finish among leaf tasks)
+pub fn backward_pass(tasks: &mut [Task], calendar: &Calendar, successor_map: &HashMap<String, Vec<SuccessorEntry>>, parent_ids: &HashSet<String>, blank_row_ids: &HashSet<String>) {
+    // Find project end date (latest Early Finish among leaf tasks, exclude blank rows)
     let mut project_end = String::new();
     for task in tasks.iter() {
+        // Skip blank rows when finding project end
+        if blank_row_ids.contains(&task.id) {
+            continue;
+        }
         if !parent_ids.contains(&task.id) && !task.end.is_empty() {
             if project_end.is_empty() || task.end > project_end {
                 project_end = task.end.clone();
@@ -335,6 +367,11 @@ pub fn backward_pass(tasks: &mut [Task], calendar: &Calendar, successor_map: &Ha
         
         for i in 0..tasks.len() {
             let task_id = tasks[i].id.clone();
+            
+            // Skip blank rows
+            if blank_row_ids.contains(&task_id) {
+                continue;
+            }
             
             // Skip parent tasks
             if parent_ids.contains(&task_id) {
@@ -420,7 +457,7 @@ pub fn backward_pass(tasks: &mut [Task], calendar: &Calendar, successor_map: &Ha
 }
 
 /// Calculate Total Float and Free Float for all tasks
-pub fn calculate_float(tasks: &mut [Task], calendar: &Calendar, successor_map: &HashMap<String, Vec<SuccessorEntry>>, parent_ids: &HashSet<String>) {
+pub fn calculate_float(tasks: &mut [Task], calendar: &Calendar, successor_map: &HashMap<String, Vec<SuccessorEntry>>, parent_ids: &HashSet<String>, blank_row_ids: &HashSet<String>) {
     // First pass: calculate float for leaf tasks
     // Collect task data for lookup
     let task_data: HashMap<String, (String, String, bool)> = tasks.iter()
@@ -429,6 +466,15 @@ pub fn calculate_float(tasks: &mut [Task], calendar: &Calendar, successor_map: &
     
     for i in 0..tasks.len() {
         let task_id = tasks[i].id.clone();
+        
+        // Skip blank rows
+        if blank_row_ids.contains(&task_id) {
+            tasks[i].total_float_days = None;
+            tasks[i].total_float = None;
+            tasks[i].free_float_days = None;
+            tasks[i].free_float = None;
+            continue;
+        }
         
         if parent_ids.contains(&task_id) {
             // Parent tasks: will calculate from children in second pass
@@ -515,6 +561,11 @@ pub fn calculate_float(tasks: &mut [Task], calendar: &Calendar, successor_map: &
             
             let mut child_floats: Vec<i32> = Vec::new();
             for child in tasks.iter() {
+                // Skip blank rows
+                if blank_row_ids.contains(&child.id) {
+                    continue;
+                }
+                
                 if child.parent_id.as_ref().map_or(false, |pid| pid == &task.id) {
                     if let Some(tf) = child.total_float_days {
                         child_floats.push(tf);
@@ -544,9 +595,15 @@ pub fn calculate_float(tasks: &mut [Task], calendar: &Calendar, successor_map: &
 }
 
 /// Mark critical path based on Total Float
-pub fn mark_critical_path(tasks: &mut [Task], parent_ids: &HashSet<String>) {
+pub fn mark_critical_path(tasks: &mut [Task], parent_ids: &HashSet<String>, blank_row_ids: &HashSet<String>) {
     // First pass: mark leaf tasks based on float
     for task in tasks.iter_mut() {
+        // Blank rows are never critical
+        if blank_row_ids.contains(&task.id) {
+            task.is_critical = Some(false);
+            continue;
+        }
+        
         if parent_ids.contains(&task.id) {
             task.is_critical = Some(false); // Will be set in second pass
         } else {
@@ -577,6 +634,7 @@ pub fn mark_critical_path(tasks: &mut [Task], parent_ids: &HashSet<String>) {
             }
             
             let has_critical_child = tasks.iter()
+                .filter(|c| !blank_row_ids.contains(&c.id)) // Skip blank rows
                 .filter(|c| c.parent_id.as_ref().map_or(false, |pid| pid == &task.id))
                 .any(|c| c.is_critical.unwrap_or(false));
             
@@ -616,28 +674,36 @@ pub fn calculate(tasks: &mut [Task], calendar: &Calendar) -> CPMResult {
         .cloned()
         .collect();
     
+    // Build set of blank row IDs to skip in CPM
+    // Handle Option<String> - only include if row_type is explicitly "blank"
+    let blank_row_ids: HashSet<String> = tasks.iter()
+        .filter(|t| t.row_type.as_deref() == Some("blank"))
+        .map(|t| t.id.clone())
+        .collect();
+    
     // Step 1: Build successor map for backward pass
-    let successor_map = build_successor_map(tasks);
+    let successor_map = build_successor_map(tasks, &blank_row_ids);
     
     // Step 2: Forward pass - calculate Early Start and Early Finish
-    forward_pass(tasks, calendar, &parent_ids);
+    forward_pass(tasks, calendar, &parent_ids, &blank_row_ids);
     
     // Step 3: Calculate parent dates from children
-    calculate_parent_dates(tasks, calendar, &parent_ids);
+    calculate_parent_dates(tasks, calendar, &parent_ids, &blank_row_ids);
     
     // Step 4: Backward pass - calculate Late Start and Late Finish
-    backward_pass(tasks, calendar, &successor_map, &parent_ids);
+    backward_pass(tasks, calendar, &successor_map, &parent_ids, &blank_row_ids);
     
     // Step 5: Calculate float values
-    calculate_float(tasks, calendar, &successor_map, &parent_ids);
+    calculate_float(tasks, calendar, &successor_map, &parent_ids, &blank_row_ids);
     
     // Step 6: Mark critical path based on float
-    mark_critical_path(tasks, &parent_ids);
+    mark_critical_path(tasks, &parent_ids, &blank_row_ids);
     
     let calc_time = start_time.elapsed().as_secs_f64() * 1000.0; // Convert to milliseconds
     
-    // Find project end date
+    // Find project end date (exclude blank rows)
     let valid_ends: Vec<String> = tasks.iter()
+        .filter(|t| !blank_row_ids.contains(&t.id))
         .filter(|t| !t.end.is_empty() && !parent_ids.contains(&t.id))
         .map(|t| t.end.clone())
         .collect();
@@ -647,8 +713,9 @@ pub fn calculate(tasks: &mut [Task], calendar: &Calendar) -> CPMResult {
     sorted_ends.reverse();
     let project_end = sorted_ends.first().cloned().unwrap_or_default();
     
-    // Calculate project duration in work days
+    // Calculate project duration in work days (exclude blank rows)
     let leaf_tasks: Vec<&Task> = tasks.iter()
+        .filter(|t| !blank_row_ids.contains(&t.id))
         .filter(|t| !t.start.is_empty() && !parent_ids.contains(&t.id))
         .collect();
     
@@ -665,6 +732,7 @@ pub fn calculate(tasks: &mut [Task], calendar: &Calendar) -> CPMResult {
     };
     
     let critical_count = tasks.iter()
+        .filter(|t| !blank_row_ids.contains(&t.id))
         .filter(|t| t.is_critical.unwrap_or(false) && !parent_ids.contains(&t.id))
         .count();
     

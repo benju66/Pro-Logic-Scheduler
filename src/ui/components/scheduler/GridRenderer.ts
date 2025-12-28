@@ -19,6 +19,12 @@ import { getEditingStateManager } from '../../../services/EditingStateManager';
 import { getTaskFieldValue } from '../../../types';
 
 /**
+ * Reserved ID for the phantom row (virtual, not in TaskStore)
+ * Used to prevent undefined errors when renderer tries to look up this row
+ */
+export const PHANTOM_ROW_ID = '__PHANTOM_ROW__';
+
+/**
  * Editing cell state
  */
 interface EditingCell {
@@ -208,6 +214,10 @@ export class GridRenderer {
                 console.error(`[GridRenderer] Error binding row ${i}:`, e);
             }
         }
+        
+        // LAST: Render phantom row AFTER all pool operations
+        // This ensures it's not occluded by recycled pooled elements
+        this._renderPhantomRow(state);
     }
 
     /**
@@ -450,6 +460,12 @@ export class GridRenderer {
 
         const taskId = row.dataset.taskId;
         if (!taskId) return;
+        
+        // CRITICAL: Handle phantom row click - prevent TaskStore lookup errors
+        if (taskId === PHANTOM_ROW_ID) {
+            this._activatePhantom();
+            return;
+        }
 
         // Check for trade partner chip click FIRST
         const chip = target.closest('.trade-chip') as HTMLElement | null;
@@ -618,6 +634,15 @@ export class GridRenderer {
             return;
         }
 
+        // Check if blank row - wake up
+        if (row.classList.contains('blank-row')) {
+            // Wake up the blank row
+            if (this.options.onAction) {
+                this.options.onAction(taskId, 'wake-up', e);
+            }
+            return;
+        }
+
         if (this.options.onRowDoubleClick) {
             this.options.onRowDoubleClick(taskId, e);
         }
@@ -743,6 +768,24 @@ export class GridRenderer {
             return;
         }
         
+        // Handle Enter on blank row (wake up)
+        if (e.key === 'Enter') {
+            const editingManager = getEditingStateManager();
+            if (!editingManager.isEditing()) {
+                const focusedRow = this.rowContainer.querySelector(
+                    `.vsg-row[data-task-id="${this._focusedCell?.taskId}"]`
+                ) as HTMLElement;
+                
+                if (focusedRow?.classList.contains('blank-row')) {
+                    e.preventDefault();
+                    if (this.options.onAction && this._focusedCell) {
+                        this.options.onAction(this._focusedCell.taskId, 'wake-up', e);
+                    }
+                    return;
+                }
+            }
+        }
+        
         // Only handle Enter
         if (e.key !== 'Enter') return;
         
@@ -779,12 +822,29 @@ export class GridRenderer {
         }
         
         if (nextTaskId) {
-            // highlightCell updates _focusedCell automatically (see Change 3)
+            // 1. Optimistic Visual Update: Move the blue focus border immediately
+            // This makes it feel instant even if the full selection cycle takes a few ms
+            // highlightCell updates _focusedCell automatically
             this.highlightCell(nextTaskId, currentField);
             
-            if (this.options.onSelectionChange) {
-                this.options.onSelectionChange([nextTaskId]);
+            // 2. Robust State Update: Delegate to the standard click handler
+            // This ensures SchedulerService updates anchorId, selectionOrder, and panels correctly
+            if (this.options.onRowClick) {
+                // Create a lightweight synthetic event to pass modifier keys
+                // This allows the Service to handle Shift/Ctrl logic if we ever add it to Enter
+                const syntheticEvent = {
+                    shiftKey: e.shiftKey,
+                    ctrlKey: e.ctrlKey,
+                    metaKey: e.metaKey,
+                    preventDefault: () => {},
+                    stopPropagation: () => {},
+                    target: this.container,
+                    currentTarget: this.container
+                } as unknown as MouseEvent;
+
+                this.options.onRowClick(nextTaskId, syntheticEvent);
             }
+            // NOTE: Do NOT call onSelectionChange here - onRowClick will trigger it via _updateSelection()
         }
     }
 
@@ -1381,6 +1441,59 @@ export class GridRenderer {
         // Open immediately
         anchorEl.classList.add('date-picker-open');
         this.sharedDatePicker.open();
+    }
+
+    /**
+     * Render the phantom row at the bottom of the list
+     * MUST be called after all PoolSystem operations to avoid z-index conflicts
+     */
+    private _renderPhantomRow(state: ViewportState): void {
+        // Get or create phantom row element
+        let phantomEl = this.rowContainer.querySelector('.phantom-row') as HTMLElement;
+        
+        if (!phantomEl) {
+            phantomEl = document.createElement('div');
+            phantomEl.className = 'vsg-row phantom-row';
+            // CRITICAL: Set data-task-id to PHANTOM_ROW_ID constant to prevent undefined errors
+            phantomEl.dataset.taskId = PHANTOM_ROW_ID;
+            // Ensure phantom is above pooled rows if they overlap
+            phantomEl.style.zIndex = '10';
+            phantomEl.innerHTML = `
+                <div class="phantom-content">
+                    <span class="phantom-placeholder">Click or type to add task...</span>
+                </div>
+            `;
+            this.rowContainer.appendChild(phantomEl);
+            
+            // Add event listeners
+            phantomEl.addEventListener('click', () => this._activatePhantom());
+            phantomEl.addEventListener('keydown', (e) => {
+                if (e.key !== 'Tab' && e.key !== 'Escape' && !e.ctrlKey && !e.metaKey) {
+                    this._activatePhantom();
+                }
+            });
+        }
+        
+        // Position phantom row below all real tasks
+        const totalTasks = this.data.length;
+        const phantomY = totalTasks * this.rowHeight;
+        phantomEl.style.position = 'absolute';
+        phantomEl.style.top = `${phantomY}px`;
+        phantomEl.style.left = '0';
+        phantomEl.style.right = '0';
+    }
+
+    /**
+     * Activate phantom row - create real task
+     * 
+     * NOTE: This triggers SchedulerService.addTask() which already includes
+     * `focusCell: true, focusField: 'name'` in its grid.setSelection() call.
+     * This should automatically focus the name column for immediate typing.
+     */
+    private _activatePhantom(): void {
+        if (this.options.onAction) {
+            this.options.onAction(PHANTOM_ROW_ID, 'activate-phantom', new MouseEvent('click'));
+        }
     }
 
     /**

@@ -86,6 +86,7 @@ export interface PersistedTaskRow {
   id: string;
   parent_id: string | null;
   sort_key: string;
+  row_type: string;  // 'task' | 'blank'
   name: string;
   notes: string;
   duration: number;

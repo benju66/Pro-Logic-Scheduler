@@ -37,7 +37,9 @@ export class RustEngine implements ISchedulingEngine {
         this.context = context;
         
         try {
-            const tasksJson = JSON.stringify(tasks);
+            // Filter out blank rows before sending to Rust engine
+            const schedulableTasks = tasks.filter(t => !t.rowType || t.rowType === 'task');
+            const tasksJson = JSON.stringify(schedulableTasks);
             const calendarJson = JSON.stringify(calendar);
             
             const result = await invoke<string>('initialize_engine', {
@@ -121,7 +123,9 @@ export class RustEngine implements ISchedulingEngine {
         }
 
         try {
-            const tasksJson = JSON.stringify(tasks);
+            // Filter out blank rows before sending to Rust engine
+            const schedulableTasks = tasks.filter(t => !t.rowType || t.rowType === 'task');
+            const tasksJson = JSON.stringify(schedulableTasks);
             const result = await invoke<string>('sync_engine_tasks', { tasksJson });
             console.log(`[RustEngine] ${result}`);
         } catch (error) {

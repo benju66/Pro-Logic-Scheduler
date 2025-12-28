@@ -92,7 +92,8 @@ export class PersistenceService {
     // Explicit migrations
     const migrations = [
       `ALTER TABLE tasks ADD COLUMN scheduling_mode TEXT NOT NULL DEFAULT 'Auto'`,
-      `ALTER TABLE snapshots ADD COLUMN trade_partners_json TEXT DEFAULT '[]'`
+      `ALTER TABLE snapshots ADD COLUMN trade_partners_json TEXT DEFAULT '[]'`,
+      `ALTER TABLE tasks ADD COLUMN row_type TEXT NOT NULL DEFAULT 'task'`
     ];
 
     for (const migration of migrations) {
@@ -114,6 +115,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
     parent_id TEXT,
     sort_key TEXT NOT NULL,
+    row_type TEXT NOT NULL DEFAULT 'task',
     name TEXT NOT NULL DEFAULT 'New Task',
     notes TEXT DEFAULT '',
     duration INTEGER NOT NULL DEFAULT 1,
@@ -317,15 +319,16 @@ CREATE TABLE IF NOT EXISTS snapshots (
       switch (event.type) {
         case 'TASK_CREATED':
           await this.db.execute(
-            `INSERT OR REPLACE INTO tasks (id, parent_id, sort_key, name, notes, duration, 
+            `INSERT OR REPLACE INTO tasks (id, parent_id, sort_key, row_type, name, notes, duration, 
              constraint_type, constraint_date, scheduling_mode, dependencies, progress, 
              actual_start, actual_finish, remaining_duration,
              baseline_start, baseline_finish, baseline_duration, is_collapsed)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               event.payload.id,
               event.payload.parent_id ?? null,
               event.payload.sort_key,
+              event.payload.row_type ?? 'task',
               event.payload.name ?? 'New Task',
               event.payload.notes ?? '',
               event.payload.duration ?? 1,
@@ -361,6 +364,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
             'schedulingMode': 'scheduling_mode',
             'parentId': 'parent_id',
             'sortKey': 'sort_key',
+            'rowType': 'row_type',
             'actualStart': 'actual_start',
             'actualFinish': 'actual_finish',
             'remainingDuration': 'remaining_duration',

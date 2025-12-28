@@ -35,6 +35,7 @@ const CALCULATED_FIELDS = new Set([
 const FIELD_TO_DB: Record<string, string> = {
   'parentId': 'parent_id',
   'sortKey': 'sort_key',
+  'rowType': 'row_type',
   'constraintType': 'constraint_type',
   'constraintDate': 'constraint_date',
   'actualStart': 'actual_start',
@@ -53,6 +54,7 @@ const FIELD_TO_DB: Record<string, string> = {
 const DB_TO_FIELD: Record<string, string> = {
   'parent_id': 'parentId',
   'sort_key': 'sortKey',
+  'row_type': 'rowType',
   'constraint_type': 'constraintType',
   'constraint_date': 'constraintDate',
   'actual_start': 'actualStart',
@@ -131,6 +133,80 @@ export class TaskStore {
     };
     addVisibleChildren(null);
     return result;
+  }
+
+  // =========================================================================
+  // BLANK ROW OPERATIONS
+  // =========================================================================
+
+  /**
+   * Create a blank row (visual spacer)
+   * @param sortKey - Position in the list
+   * @param parentId - Parent task ID (for hierarchy)
+   */
+  createBlankRow(sortKey: string, parentId: string | null = null): Task {
+    const blankRow: Task = {
+      id: `blank_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      rowType: 'blank',
+      name: '',  // Blank rows have no name
+      parentId: parentId,
+      sortKey: sortKey,
+      duration: 0,
+      dependencies: [],
+      progress: 0,
+      constraintType: 'asap',
+      constraintDate: null,
+      notes: '',
+      start: '',
+      end: '',
+    };
+    
+    return this.add(blankRow, 'Insert Blank Row');
+  }
+
+  /**
+   * Convert a blank row to a regular task (wake up)
+   */
+  wakeUpBlankRow(taskId: string, name: string = 'New Task'): Task | undefined {
+    const task = this.getById(taskId);
+    if (!task || task.rowType !== 'blank') return undefined;
+    
+    return this.update(taskId, {
+      rowType: 'task',
+      name: name,
+      duration: 1,
+      constraintType: 'asap',
+    }, 'Convert Blank to Task');
+  }
+
+  /**
+   * Revert a task back to blank row (if empty)
+   */
+  revertToBlankRow(taskId: string): Task | undefined {
+    const task = this.getById(taskId);
+    if (!task) return undefined;
+    
+    return this.update(taskId, {
+      rowType: 'blank',
+      name: '',
+      duration: 0,
+      dependencies: [],
+    }, 'Revert to Blank Row');
+  }
+
+  /**
+   * Check if a task is a blank row
+   */
+  isBlankRow(taskId: string): boolean {
+    const task = this.getById(taskId);
+    return task?.rowType === 'blank';
+  }
+
+  /**
+   * Get all schedulable tasks (exclude blank/phantom rows)
+   */
+  getSchedulableTasks(): Task[] {
+    return this.tasks.filter(t => !t.rowType || t.rowType === 'task');
   }
 
   getLastSortKey(parentId: string | null): string | null {
@@ -453,6 +529,7 @@ export class TaskStore {
       id: payload.id as string,
       parentId: (payload.parent_id as string | null) ?? null,
       sortKey: (payload.sort_key as string) || '',
+      rowType: (payload.row_type as 'task' | 'blank' | 'phantom') || 'task',
       name: (payload.name as string) || 'New Task',
       notes: (payload.notes as string) || '',
       duration: (payload.duration as number) || 1,
@@ -573,6 +650,7 @@ export class TaskStore {
         id: task.id,
         parent_id: task.parentId ?? null,
         sort_key: task.sortKey,
+        row_type: task.rowType ?? 'task',
         name: task.name,
         notes: task.notes || '',
         duration: task.duration,

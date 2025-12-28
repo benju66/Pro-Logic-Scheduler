@@ -820,6 +820,12 @@ export class GanttRenderer {
 
         for (let i = firstRow; i <= lastRow; i++) {
             const task = this.data[i];
+            
+            // Skip blank rows
+            if (task.rowType === 'blank') {
+                continue;
+            }
+            
             if (!task.dependencies || task.dependencies.length === 0) continue;
 
             // Absolute Y coordinate (canvas scrolls with container)
@@ -830,7 +836,11 @@ export class GanttRenderer {
 
             task.dependencies.forEach(dep => {
                 const predTask = this.taskMap.get(dep.id);
-                if (!predTask) return;
+                
+                // Skip if predecessor is blank row or doesn't exist
+                if (!predTask || predTask.rowType === 'blank') {
+                    return;
+                }
 
                 const predIndex = this.data.indexOf(predTask);
                 if (predIndex === -1) return;

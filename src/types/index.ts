@@ -31,6 +31,14 @@ export type ConstraintType = 'asap' | 'snet' | 'snlt' | 'fnet' | 'fnlt' | 'mfo';
 export type SchedulingMode = 'Auto' | 'Manual';
 
 /**
+ * Row type discriminator
+ * - 'task': Normal schedulable task (default)
+ * - 'blank': Visual spacer row (no scheduling)
+ * - 'phantom': Ghost row at bottom for quick add (transient, not persisted)
+ */
+export type RowType = 'task' | 'blank' | 'phantom';
+
+/**
  * Health status for schedule analysis
  * - healthy: Task is on track with adequate float
  * - at-risk: Task has low float or minor constraint variance (1-3 days)
@@ -79,6 +87,8 @@ export interface Dependency {
 export interface Task {
   /** Unique identifier */
   id: string;
+  /** Row type - determines rendering and CPM behavior */
+  rowType?: RowType;  // undefined = 'task' for backward compatibility
   /** Task name/description */
   name: string;
   /** Work Breakdown Structure code (currently unused, kept for future) */
@@ -190,6 +200,27 @@ export function isManuallyScheduled(task: Task): boolean {
  */
 export function isAutoScheduled(task: Task): boolean {
   return task.schedulingMode !== 'Manual'; // Treat undefined as Auto
+}
+
+/**
+ * Check if a task is a blank row (visual spacer)
+ */
+export function isBlankRow(task: Task): boolean {
+  return task.rowType === 'blank';
+}
+
+/**
+ * Check if a task is the phantom row
+ */
+export function isPhantomRow(task: Task): boolean {
+  return task.rowType === 'phantom';
+}
+
+/**
+ * Check if a task should be scheduled (not blank/phantom)
+ */
+export function isSchedulableTask(task: Task): boolean {
+  return !task.rowType || task.rowType === 'task';
 }
 
 /**

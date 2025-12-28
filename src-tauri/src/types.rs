@@ -34,6 +34,14 @@ pub struct Task {
     #[serde(rename = "sortKey")]
     pub sort_key: String,
     
+    /// Row type: "task" (default), "blank" (spacer)
+    /// Blank rows are skipped by CPM calculations
+    /// CRITICAL: Use Option<String> with #[serde(default)] to ensure existing tasks
+    /// (which don't have this field) don't cause deserialization errors on app update.
+    /// None or missing maps to "task" behavior in application logic.
+    #[serde(rename = "rowType", default)]
+    pub row_type: Option<String>,
+    
     /// Hierarchy level (0 = root). Calculated field - defaults to 0 if missing.
     #[serde(default)]
     pub level: i32,

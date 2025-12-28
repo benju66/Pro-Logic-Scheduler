@@ -36,7 +36,7 @@ import { OrderingService } from './OrderingService';
 import { getEditingStateManager, type EditingStateChangeEvent } from './EditingStateManager';
 import { getTaskFieldValue } from '../types';
 import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport';
-import { GridRenderer } from '../ui/components/scheduler/GridRenderer';
+import { GridRenderer, PHANTOM_ROW_ID } from '../ui/components/scheduler/GridRenderer';
 import { GanttRenderer } from '../ui/components/scheduler/GanttRenderer';
 import { SideDrawer } from '../ui/components/SideDrawer';
 import type { 
@@ -2517,6 +2517,26 @@ export class SchedulerService {
      */
     private _handleAction(taskId: string, action: string, e?: MouseEvent): void {
         e?.stopPropagation(); // Prevent row click from firing
+        
+        // Handle phantom row activation
+        // NOTE: addTask() already includes focusCell: true, focusField: 'name'
+        // which provides the "spreadsheet feel" of immediate name column focus
+        if (taskId === '__PHANTOM_ROW__' && action === 'activate-phantom') {
+            this.addTask();  // Uses existing addTask logic with auto-focus
+            return;
+        }
+        
+        // Handle blank row actions
+        if (action === 'wake-up') {
+            this.wakeUpBlankRow(taskId);
+            return;
+        }
+        
+        if (action === 'maybe-revert') {
+            this.maybeRevertToBlank(taskId);
+            return;
+        }
+        
         switch (action) {
             case 'indent':
                 this.indent(taskId);
@@ -3544,6 +3564,7 @@ export class SchedulerService {
             
             const task: Task = {
                 id: taskId,
+                rowType: 'task',  // Explicitly set rowType
                 name: taskData.name || 'New Task',
                 start: taskData.start || today,
                 end: taskData.end || today,
@@ -4767,7 +4788,10 @@ export class SchedulerService {
         
         this._isRecalculating = true;
         const startTime = performance.now();
-        const tasks = this.taskStore.getAll();
+        const allTasks = this.taskStore.getAll();
+        
+        // Get only schedulable tasks for CPM (exclude blank rows)
+        const tasks = allTasks.filter(t => !t.rowType || t.rowType === 'task');
         const calendar = this.calendarStore.get();
 
         if (tasks.length === 0) {

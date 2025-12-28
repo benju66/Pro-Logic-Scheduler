@@ -54,6 +54,16 @@ export class BindingSystem {
      */
     bindRow(row: PooledRow, ctx: BindingContext): void {
         const { task, index, isSelected, isParent, isCollapsed, isCritical, depth } = ctx;
+        
+        // CRITICAL: Handle blank rows with explicit bidirectional state
+        if (task.rowType === 'blank') {
+            this._bindBlankRow(row, ctx);
+            return;
+        }
+        
+        // CRITICAL: Reset from blank row state if this row was previously a blank row
+        // This ensures inputs become visible again when recycling
+        this._resetFromBlankRowState(row);
 
         // Build className string (faster than classList)
         let rowClass = 'vsg-row';
@@ -80,6 +90,112 @@ export class BindingSystem {
             if (column) {
                 this._bindCell(cell, column, task, ctx);
             }
+        }
+    }
+    
+    /**
+     * Reset a row from blank row state to normal task state
+     * MUST be called when a pooled row that was a blank is reused for a task
+     */
+    private _resetFromBlankRowState(row: PooledRow): void {
+        // Remove blank row markers
+        row.element.classList.remove('blank-row');
+        row.element.removeAttribute('data-blank');
+        
+        // Restore visibility of all cell inputs
+        for (const [field, cell] of row.cells) {
+            // SHOW inputs (they may have been hidden by blank row)
+            if (cell.input) {
+                cell.input.style.display = '';  // Reset to default
+                cell.input.disabled = false;     // Re-enable (will be set readonly later if needed)
+            }
+            
+            // Show checkbox
+            if (cell.checkbox) {
+                cell.checkbox.style.display = '';
+            }
+            
+            // Show action buttons container (individual buttons controlled by column config)
+            cell.actionButtons.forEach(btn => {
+                btn.style.display = '';  // Reset to default, column config will hide if needed
+            });
+            
+            // Show collapse button (will be hidden if not a parent)
+            if (cell.collapseBtn) {
+                cell.collapseBtn.style.display = '';
+            }
+            
+            // Reset cell class
+            cell.container.classList.remove('blank-cell');
+            
+            // Reset text alignment for name cell
+            if (cell.text) {
+                cell.text.style.textAlign = '';
+                cell.text.style.color = '';
+                cell.text.style.fontWeight = '';
+            }
+        }
+    }
+    
+    /**
+     * Bind a blank row - minimal rendering, all inputs hidden
+     */
+    private _bindBlankRow(row: PooledRow, ctx: BindingContext): void {
+        const { task, index, isSelected } = ctx;
+        
+        // Set row class
+        row.element.className = 'vsg-row blank-row';
+        if (isSelected) row.element.className += ' row-selected';
+        
+        row.element.dataset.taskId = task.id;
+        row.element.dataset.index = String(index);
+        row.element.dataset.blank = 'true';
+        
+        // Accessibility
+        row.element.setAttribute('role', 'row');
+        row.element.setAttribute('aria-rowindex', String(index + 1));
+        row.element.setAttribute('aria-label', `Blank row, row ${index + 1}`);
+        
+        // HIDE all cell inputs - explicit visibility management
+        for (const [field, cell] of row.cells) {
+            // Hide inputs
+            if (cell.input) {
+                cell.input.style.display = 'none';
+                cell.input.value = '';
+                cell.input.disabled = true;
+            }
+            
+            // Clear text content
+            if (cell.text) {
+                cell.text.textContent = '';
+            }
+            
+            // Hide checkbox
+            if (cell.checkbox) {
+                cell.checkbox.style.display = 'none';
+            }
+            
+            // Hide action buttons
+            cell.actionButtons.forEach(btn => {
+                btn.style.display = 'none';
+            });
+            
+            // Hide collapse button
+            if (cell.collapseBtn) {
+                cell.collapseBtn.style.display = 'none';
+            }
+            
+            // Mark cell as blank
+            cell.container.className = 'vsg-cell blank-cell';
+        }
+        
+        // Show centered placeholder in name cell
+        const nameCell = row.cells.get('name');
+        if (nameCell?.text) {
+            nameCell.text.textContent = '───';
+            nameCell.text.style.textAlign = 'center';
+            nameCell.text.style.color = '#94a3b8';
+            nameCell.text.style.fontWeight = 'normal';
         }
     }
 
