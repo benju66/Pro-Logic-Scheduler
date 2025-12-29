@@ -630,72 +630,98 @@ export class BindingSystem {
 
     /**
      * Bind action buttons to a cell
-     * Now renders a single menu trigger button
      */
     private _bindActionsCell(cell: PooledCell, col: GridColumn, task: Task, ctx: BindingContext): void {
         const container = cell.container.querySelector('.vsg-actions') as HTMLElement | null;
         if (!container) return;
 
-        // For blank rows, show minimal or different menu
-        const isBlank = task.rowType === 'blank';
+        if (!col.actions || !Array.isArray(col.actions) || col.actions.length === 0) {
+            // Hide all action buttons
+            cell.actionButtons.forEach(btn => {
+                btn.style.display = 'none';
+            });
+            return;
+        }
 
         // Clear wrapper if exists
         let wrapper = container.querySelector('div');
         if (!wrapper) {
             wrapper = document.createElement('div');
-            wrapper.style.cssText = 'display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;';
+            wrapper.style.cssText = 'display: flex; align-items: center; gap: 4px; padding: 2px;';
             container.appendChild(wrapper);
         } else {
+            // Clear existing buttons
             while (wrapper.firstChild) {
                 wrapper.removeChild(wrapper.firstChild);
             }
         }
 
-        // Single menu button
-        const action = col.actions?.[0];
-        if (!action) return;
+        // Show/hide and update action buttons
+        let visibleCount = 0;
+        col.actions.forEach((action, index) => {
+            // Check if action should be shown
+            if (action.showIf && !action.showIf(task, {
+                isParent: ctx.isParent,
+                depth: ctx.depth,
+                isCollapsed: ctx.isCollapsed,
+                index: ctx.index,
+            })) {
+                return;
+            }
 
-        let btn: HTMLButtonElement;
-        if (cell.actionButtons.length > 0) {
-            btn = cell.actionButtons[0];
-            btn.style.display = 'flex';
-        } else {
-            btn = document.createElement('button');
-            btn.className = 'vsg-action-btn vsg-row-menu-btn';
-            cell.actionButtons.push(btn);
-        }
+            const actionName = action.name || action.id;
+            const actionContent = action.icon || action.label || actionName;
 
-        btn.setAttribute('data-action', 'row-menu');
-        btn.setAttribute('data-task-id', task.id);
-        btn.setAttribute('data-is-blank', String(isBlank));
-        btn.title = 'Row Menu';
-        btn.style.cssText = `
-            padding: 2px;
-            border: none;
-            background: transparent;
-            cursor: pointer;
-            border-radius: 4px;
-            color: #94a3b8;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-width: 20px;
-            min-height: 20px;
-            line-height: 1;
-            transition: color 0.15s ease, background 0.15s ease;
-        `;
+            // Determine color: purple for links if task has dependencies
+            let actionColor = action.color || '#64748b';
+            if (actionName === 'links' && task.dependencies && task.dependencies.length > 0) {
+                actionColor = '#9333ea';
+            }
 
-        // Ellipsis icon
-        btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-            <circle cx="12" cy="5" r="2"/>
-            <circle cx="12" cy="12" r="2"/>
-            <circle cx="12" cy="19" r="2"/>
-        </svg>`;
+            // Reuse existing button or create new one
+            let btn: HTMLButtonElement;
+            if (visibleCount < cell.actionButtons.length) {
+                btn = cell.actionButtons[visibleCount];
+                btn.style.display = 'flex';
+            } else {
+                btn = document.createElement('button');
+                btn.className = 'vsg-action-btn';
+                cell.actionButtons.push(btn);
+            }
 
-        wrapper.appendChild(btn);
+            btn.setAttribute('data-action', actionName);
+            btn.title = action.title || actionName;
+            btn.style.cssText = `
+                padding: 4px 6px;
+                border: none;
+                background: transparent;
+                cursor: pointer;
+                border-radius: 4px;
+                color: ${actionColor};
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                min-width: 24px;
+                min-height: 24px;
+                line-height: 1;
+            `;
 
-        // Hide any extra buttons from previous render
-        for (let i = 1; i < cell.actionButtons.length; i++) {
+            // Set button content
+            btn.textContent = '';
+            if (typeof actionContent === 'string' && actionContent.trim().startsWith('<')) {
+                // HTML content
+                btn.innerHTML = actionContent;
+            } else {
+                // Text content
+                btn.textContent = actionContent;
+            }
+
+            wrapper.appendChild(btn);
+            visibleCount++;
+        });
+
+        // Hide unused buttons
+        for (let i = visibleCount; i < cell.actionButtons.length; i++) {
             cell.actionButtons[i].style.display = 'none';
         }
     }

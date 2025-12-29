@@ -600,15 +600,6 @@ export class UIEventManager {
         case 'toggle-driving-path':
           this.getScheduler()?.toggleDrivingPathMode();
           break;
-        case 'bulk-indent':
-          scheduler.indentSelected();
-          break;
-        case 'bulk-outdent':
-          scheduler.outdentSelected();
-          break;
-        case 'bulk-delete':
-          await scheduler.deleteSelected();
-          break;
         default:
           // Don't warn for grid actions or modal actions
           const gridActions = ['collapse', 'indent', 'outdent', 'links', 'delete'];
