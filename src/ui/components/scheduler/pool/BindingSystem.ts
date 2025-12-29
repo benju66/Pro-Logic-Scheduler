@@ -170,9 +170,11 @@ export class BindingSystem {
                 cell.text.textContent = '';
             }
             
-            // Hide checkbox
+            // CHANGE: Show Checkbox for selection (enabled)
             if (cell.checkbox) {
-                cell.checkbox.style.display = 'none';
+                cell.checkbox.style.display = ''; // Remove 'none'
+                cell.checkbox.disabled = false;   // Enable interaction
+                cell.checkbox.checked = isSelected; // Sync state
             }
             
             // Hide action buttons

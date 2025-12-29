@@ -3969,6 +3969,42 @@ export class SchedulerService {
     }
 
     /**
+     * Wake up a blank row (convert to task and enter edit mode)
+     * Called when user double-clicks a blank row
+     */
+    wakeUpBlankRow(taskId: string): void {
+        const task = this.taskStore.getById(taskId);
+        if (!task || !this.taskStore.isBlankRow(taskId)) {
+            return;
+        }
+        
+        this.saveCheckpoint();
+        
+        const wokenTask = this.taskStore.wakeUpBlankRow(taskId);
+        if (!wokenTask) return;
+        
+        // Update selection state
+        this.selectedIds.clear();
+        this.selectedIds.add(taskId);
+        this.focusedId = taskId;
+        this.focusedColumn = 'name';
+        
+        // Update anchor for range selection
+        this.anchorId = taskId;
+        
+        this.recalculateAll();
+        this.render(); // This queues the visual update
+        
+        // FIX: Wait for the render to complete before focusing
+        // The double-RAF ensures we wait for the next paint frame
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                this.enterEditMode();
+            });
+        });
+    }
+
+    /**
      * Convert a blank row to a task
      */
     convertBlankToTask(taskId: string): void {
