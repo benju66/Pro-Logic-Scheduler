@@ -227,6 +227,16 @@ export class GridRenderer {
             }
         }
         
+        // Apply cell highlight if focused cell is in visible range
+        // This ensures the highlight appears even if the row wasn't rendered when highlightCell() was called
+        if (this._focusedCell) {
+            const focusedIndex = this.data.findIndex(t => t.id === this._focusedCell!.taskId);
+            if (focusedIndex >= start && focusedIndex <= end && focusedIndex !== -1) {
+                // Row is visible, apply highlight (this will also clear any stale highlights)
+                this.highlightCell(this._focusedCell.taskId, this._focusedCell.field);
+            }
+        }
+        
         // LAST: Render phantom row AFTER all pool operations
         // This ensures it's not occluded by recycled pooled elements
         this._renderPhantomRow(state);
@@ -347,6 +357,9 @@ export class GridRenderer {
         // ADDED: Track focused cell for navigation mode
         this._focusedCell = { taskId, field };
         
+        // Apply visual highlight BEFORE focusing (ensures user sees which cell is active)
+        this.highlightCell(taskId, field);
+        
         const editingManager = getEditingStateManager();
         
         const row = this.rowContainer.querySelector(`[data-task-id="${taskId}"]`) as HTMLElement | null;
@@ -385,11 +398,9 @@ export class GridRenderer {
         // ADDED: Track focused cell for navigation mode
         this._focusedCell = { taskId, field };
         
-        // Remove previous highlight
-        const prevHighlight = this.rowContainer.querySelector('.vsg-cell-selected');
-        if (prevHighlight) {
-            prevHighlight.classList.remove('vsg-cell-selected');
-        }
+        // Remove ALL previous highlights (fix: use querySelectorAll to clear all, not just first)
+        const prevHighlights = this.rowContainer.querySelectorAll('.vsg-cell-selected');
+        prevHighlights.forEach(el => el.classList.remove('vsg-cell-selected'));
         
         // Find the row
         const row = this.rowContainer.querySelector(`.vsg-row[data-task-id="${taskId}"]`) as HTMLElement | null;
@@ -611,6 +622,9 @@ export class GridRenderer {
                 // Only focus grid input if Properties panel is NOT open
                 // If panel is open, let it handle the focus instead
                 if (!isPropertiesPanelOpen()) {
+                    // Apply visual highlight BEFORE focusing (ensures user sees which cell is active)
+                    this.highlightCell(taskId, field);
+                    
                     // Then focus the input
                     (target as HTMLInputElement | HTMLSelectElement).focus();
                     if ((target as HTMLInputElement).type === 'text' || (target as HTMLInputElement).type === 'number') {
@@ -651,6 +665,9 @@ export class GridRenderer {
                 // Only focus grid input if Properties panel is NOT open
                 // If panel is open, let it handle the focus instead
                 if (!isPropertiesPanelOpen()) {
+                    // Apply visual highlight BEFORE focusing (ensures user sees which cell is active)
+                    this.highlightCell(taskId, field);
+                    
                     // Then focus the input
                     input.focus();
                     if ((input as HTMLInputElement).type === 'text' || (input as HTMLInputElement).type === 'number') {
@@ -909,18 +926,24 @@ export class GridRenderer {
         
         if (!currentTaskId || !currentField) return;
         
-        const taskIndex = this.data.findIndex(t => t.id === currentTaskId);
+        // Get visible tasks (filter out children of collapsed parents)
+        const visibleTasks = this._getVisibleTasks();
+        if (visibleTasks.length === 0) return;
+        
+        const currentIndex = visibleTasks.findIndex(t => t.id === currentTaskId);
+        if (currentIndex === -1) return; // Current task not visible
+        
         let nextTaskId: string | null = null;
         
         if (e.shiftKey) {
             // Shift+Enter: move UP
-            if (taskIndex > 0) {
-                nextTaskId = this.data[taskIndex - 1].id;
+            if (currentIndex > 0) {
+                nextTaskId = visibleTasks[currentIndex - 1].id;
             }
         } else {
             // Enter: move DOWN
-            if (taskIndex < this.data.length - 1) {
-                nextTaskId = this.data[taskIndex + 1].id;
+            if (currentIndex < visibleTasks.length - 1) {
+                nextTaskId = visibleTasks[currentIndex + 1].id;
             } else if (this.options.onEnterLastRow) {
                 this.options.onEnterLastRow(currentTaskId, currentField);
                 return;
@@ -1330,6 +1353,43 @@ export class GridRenderer {
             return undefined;
         }
         return (task as any)[field];
+    }
+
+    /**
+     * Get visible tasks (filter out children of collapsed parents)
+     * Used for keyboard navigation to skip hidden rows
+     */
+    private _getVisibleTasks(): Task[] {
+        const visible: Task[] = [];
+        const parentCollapsed = new Set<string>();
+        
+        for (const task of this.data) {
+            // Check if any parent is collapsed
+            let isHidden = false;
+            let parentId = task.parentId;
+            
+            while (parentId) {
+                if (parentCollapsed.has(parentId)) {
+                    isHidden = true;
+                    break;
+                }
+                const parent = this.data.find(t => t.id === parentId);
+                if (!parent) break;
+                
+                if (parent._collapsed) {
+                    parentCollapsed.add(parentId);
+                    isHidden = true;
+                    break;
+                }
+                parentId = parent.parentId;
+            }
+            
+            if (!isHidden) {
+                visible.push(task);
+            }
+        }
+        
+        return visible;
     }
 
     /**

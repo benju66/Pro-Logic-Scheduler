@@ -314,10 +314,18 @@ export class BindingSystem {
         }
 
         // Apply cell class if specified
+        // CRITICAL: Always start with base class and explicitly remove highlight
+        // This ensures recycled cells don't retain old highlights
         if (col.cellClass) {
             const classes = col.cellClass.split(' ');
             cell.container.className = `vsg-cell ${classes.join(' ')}`;
+        } else {
+            // Ensure base class is set even if no cellClass specified
+            cell.container.className = 'vsg-cell';
         }
+        
+        // Explicitly remove highlight class (will be re-applied by GridRenderer if this cell is focused)
+        cell.container.classList.remove('vsg-cell-selected');
 
         // Handle special column: name with indent and collapse
         if (col.field === 'name') {
