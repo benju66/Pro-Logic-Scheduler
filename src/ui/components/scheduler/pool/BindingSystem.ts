@@ -640,19 +640,6 @@ export class BindingSystem {
         // For blank rows, show minimal or different menu
         const isBlank = task.rowType === 'blank';
 
-        // Clear wrapper if exists
-        let wrapper = container.querySelector('div');
-        if (!wrapper) {
-            wrapper = document.createElement('div');
-            wrapper.style.cssText = 'display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;';
-            container.appendChild(wrapper);
-        } else {
-            // v3.0: Clear ALL existing content (removes old multi-button remnants)
-            while (wrapper.firstChild) {
-                wrapper.removeChild(wrapper.firstChild);
-            }
-        }
-
         // v3.0: Get ONLY the first (and only) action - the row-menu
         const action = col.actions?.[0];
         if (!action) {
@@ -660,14 +647,19 @@ export class BindingSystem {
             cell.actionButtons.forEach(btn => {
                 btn.style.display = 'none';
             });
+            // Clear container
+            container.innerHTML = '';
             return;
         }
+
+        // CRITICAL: Clear container first to remove any existing buttons
+        // This ensures only the ellipsis button is visible
+        container.innerHTML = '';
 
         // Reuse existing button from pool or create new one
         let btn: HTMLButtonElement;
         if (cell.actionButtons.length > 0) {
             btn = cell.actionButtons[0];
-            btn.style.display = 'flex';
         } else {
             btn = document.createElement('button');
             btn.className = 'vsg-action-btn vsg-row-menu-btn';
@@ -702,7 +694,8 @@ export class BindingSystem {
             <circle cx="12" cy="19" r="2"/>
         </svg>`;
 
-        wrapper.appendChild(btn);
+        // Append button to container (only one button - the ellipsis)
+        container.appendChild(btn);
 
         // v3.0: Hide ALL other buttons in pool (cleanup from old implementation)
         for (let i = 1; i < cell.actionButtons.length; i++) {

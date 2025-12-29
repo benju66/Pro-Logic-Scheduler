@@ -291,6 +291,8 @@ export class PoolSystem {
                 const actionsContainer = document.createElement('div');
                 actionsContainer.className = 'vsg-actions';
                 actionsContainer.setAttribute('data-field', col.field);
+                // Style like other column content - full width/height, centered
+                actionsContainer.style.cssText = 'display: flex; align-items: center; justify-content: center; width: 100%; height: 100%;';
                 // Pre-create action buttons (will be shown/hidden as needed)
                 for (let i = 0; i < this.maxActionButtons; i++) {
                     const btn = document.createElement('button');
