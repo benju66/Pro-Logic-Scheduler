@@ -293,7 +293,7 @@ export class BindingSystem {
                         cell.input.value = displayValue;
                         (cell.input as HTMLInputElement).dataset.isoValue = String(value);
                     } else {
-                        cell.input.value = value ? String(value) : '';
+                cell.input.value = value ? String(value) : '';
                     }
                 }
                 // If being edited, preserve DOM value (user's current input)
@@ -341,16 +341,16 @@ export class BindingSystem {
             if (!isBeingEdited) {
                 // Get the stored value (YYYY-MM-DD format) from freshTask
                 const storedValue = getTaskFieldValue(freshTask, col.field);
-                
-                // Display in MM/DD/YYYY format
-                if (storedValue) {
-                    input.value = formatDateForDisplay(String(storedValue));
-                } else {
-                    input.value = '';
-                }
-                
-                // Store the ISO value as a data attribute for retrieval
-                input.dataset.isoValue = storedValue ? String(storedValue) : '';
+            
+            // Display in MM/DD/YYYY format
+            if (storedValue) {
+                input.value = formatDateForDisplay(String(storedValue));
+            } else {
+                input.value = '';
+            }
+            
+            // Store the ISO value as a data attribute for retrieval
+            input.dataset.isoValue = storedValue ? String(storedValue) : '';
             }
             // If being edited, preserve DOM value (user's current input)
             

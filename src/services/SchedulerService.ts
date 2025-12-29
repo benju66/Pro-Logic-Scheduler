@@ -2566,7 +2566,7 @@ export class SchedulerService {
      * @param action - Action ID
      * @param e - Click event
      */
-    private _handleAction(taskId: string, action: string, e?: MouseEvent): void {
+    private _handleAction(taskId: string, action: string, e?: Event): void {
         e?.stopPropagation(); // Prevent row click from firing
         
         // Handle phantom row activation

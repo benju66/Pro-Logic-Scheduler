@@ -99,7 +99,7 @@ export interface GridRendererOptions {
     onCellChange?: (taskId: string, field: string, value: unknown) => void;
     onRowClick?: (taskId: string, event: MouseEvent) => void;
     onRowDoubleClick?: (taskId: string, event: MouseEvent) => void;
-    onAction?: (taskId: string, action: string, event: MouseEvent) => void;
+    onAction?: (taskId: string, action: string, event: Event) => void;
     /**
      * v3.0: Dedicated handler for row menu button clicks
      * Called when user clicks the ellipsis (⋮) menu trigger
@@ -152,7 +152,7 @@ export interface SchedulerViewportOptions {
     onRowClick?: (taskId: string, event: MouseEvent) => void;
     onRowDoubleClick?: (taskId: string, event: MouseEvent) => void;
     onCellChange?: (taskId: string, field: string, value: unknown) => void;
-    onAction?: (taskId: string, action: string, event: MouseEvent) => void;
+    onAction?: (taskId: string, action: string, event: Event) => void;
     onToggleCollapse?: (taskId: string) => void;
     onSelectionChange?: (selectedIds: string[]) => void;
     onRowMove?: (taskIds: string[], targetId: string, position: DropPosition) => void;
