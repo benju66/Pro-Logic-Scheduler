@@ -628,3 +628,147 @@
     }
 }
 
+/* =============================================================================
+   Context Menu
+   ============================================================================= */
+
+.context-menu {
+    background: white;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(0, 0, 0, 0.05);
+    min-width: 180px;
+    padding: 4px 0;
+    animation: contextMenuFadeIn 0.1s ease-out;
+}
+
+@keyframes contextMenuFadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    background: transparent;
+    font-size: 13px;
+    font-family: inherit;
+    color: #334155;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.1s ease;
+}
+
+.context-menu-item:hover,
+.context-menu-item.focused {
+    background: #f1f5f9;
+}
+
+.context-menu-item:focus {
+    outline: none;
+    background: #f1f5f9;
+}
+
+.context-menu-item.danger {
+    color: #dc2626;
+}
+
+.context-menu-item.danger:hover,
+.context-menu-item.danger.focused {
+    background: #fef2f2;
+}
+
+.context-menu-item.disabled {
+    color: #94a3b8;
+    cursor: not-allowed;
+}
+
+.context-menu-item.disabled:hover {
+    background: transparent;
+}
+
+.context-menu-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    color: #64748b;
+}
+
+.context-menu-item.danger .context-menu-icon {
+    color: #dc2626;
+}
+
+.context-menu-label {
+    flex: 1;
+}
+
+.context-menu-divider {
+    height: 1px;
+    background: #e2e8f0;
+    margin: 4px 0;
+}
+
+.context-menu-backdrop {
+    background: transparent;
+}
+
+/* =============================================================================
+   Row Menu Button
+   ============================================================================= */
+
+.vsg-row-menu-btn {
+    opacity: 0.5;
+    transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.vsg-row:hover .vsg-row-menu-btn {
+    opacity: 1;
+}
+
+.vsg-row-menu-btn:hover {
+    color: #475569 !important;
+    background: #f1f5f9 !important;
+}
+
+.vsg-row.row-selected .vsg-row-menu-btn {
+    opacity: 1;
+}
+
+/* =============================================================================
+   Bulk Action Toolbar Buttons
+   ============================================================================= */
+
+.toolbar-bulk-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.toolbar-bulk-actions .btn {
+    padding: 6px 10px;
+}
+
+.toolbar-bulk-actions .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.toolbar-bulk-actions .divider {
+    width: 1px;
+    height: 20px;
+    background: #e2e8f0;
+    margin: 0 4px;
+}
+

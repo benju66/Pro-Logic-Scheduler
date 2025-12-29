@@ -165,6 +165,15 @@ export class GridRenderer {
         // Listen to horizontal scroll for header sync
         this.container.addEventListener('scroll', () => {
             // Horizontal scroll is independent - header sync handled by SchedulerService
+            
+            // Close any open context menus when scrolling to prevent detachment
+            const openMenu = document.querySelector('.context-menu');
+            if (openMenu) {
+                openMenu.remove();
+                // Also remove backdrop
+                const backdrop = document.querySelector('.context-menu-backdrop');
+                if (backdrop) backdrop.remove();
+            }
         }, { passive: true });
     }
 
@@ -484,6 +493,21 @@ export class GridRenderer {
             e.stopPropagation();
             if (this.options.onToggleCollapse) {
                 this.options.onToggleCollapse(taskId);
+            }
+            return;
+        }
+
+        // Check for row menu button clicks
+        const menuBtn = target.closest('.vsg-row-menu-btn') as HTMLElement | null;
+        if (menuBtn) {
+            e.stopPropagation(); // CRITICAL: Prevent row selection change
+            e.preventDefault();
+            
+            const menuTaskId = menuBtn.getAttribute('data-task-id');
+            const isBlank = menuBtn.getAttribute('data-is-blank') === 'true';
+            
+            if (menuTaskId && this.options.onRowMenu) {
+                this.options.onRowMenu(menuTaskId, isBlank, menuBtn, e);
             }
             return;
         }
