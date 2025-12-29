@@ -4381,6 +4381,100 @@ export class SchedulerService {
     }
 
     /**
+     * Roll up parent task dates from children (safeguard)
+     * 
+     * This is a safeguard to ensure parent dates are always correct.
+     * Rust CPM should calculate parent dates correctly, but this ensures
+     * they're correct even if there are edge cases or timing issues.
+     * 
+     * Calculates parent dates as:
+     * - Start = Min(child start dates)
+     * - End = Max(child end dates)  
+     * - Duration = work days from Start to End
+     * 
+     * Processes deepest parents first to handle nested hierarchies correctly.
+     * Only updates parent tasks that are in Auto mode (Manual parents shouldn't exist).
+     * @private
+     */
+    private _rollupParentDatesSafeguard(): void {
+        const allTasks = this.taskStore.getAll();
+        const calendar = this.calendarStore.get();
+        
+        // Find all parent tasks (tasks that have children)
+        const parentIds = new Set<string>();
+        allTasks.forEach(task => {
+            if (task.parentId) {
+                parentIds.add(task.parentId);
+            }
+        });
+        
+        if (parentIds.size === 0) return;
+        
+        // Get parent tasks and sort by depth (deepest first)
+        // This ensures child-parents are processed before grandparents
+        const parents = allTasks.filter(t => parentIds.has(t.id));
+        const sortedParents = [...parents].sort((a, b) => 
+            this.taskStore.getDepth(b.id) - this.taskStore.getDepth(a.id)
+        );
+
+        sortedParents.forEach(parent => {
+            // Skip Manual mode parents (they shouldn't exist, but be safe)
+            if (parent.schedulingMode === 'Manual') {
+                return;
+            }
+
+            // Skip blank rows
+            if (parent.rowType === 'blank') {
+                return;
+            }
+
+            // Get direct children of this parent (exclude blank rows)
+            const children = this.taskStore.getChildren(parent.id).filter(
+                child => !child.rowType || child.rowType === 'task'
+            );
+            
+            if (children.length === 0) return;
+
+            // Collect valid start and end dates from children
+            const childStarts: string[] = [];
+            const childEnds: string[] = [];
+            
+            children.forEach(child => {
+                if (child.start && child.start.length > 0) {
+                    childStarts.push(child.start);
+                }
+                if (child.end && child.end.length > 0) {
+                    childEnds.push(child.end);
+                }
+            });
+
+            if (childStarts.length === 0 || childEnds.length === 0) return;
+
+            // Sort to find min start and max end
+            childStarts.sort();
+            childEnds.sort();
+            
+            const newStart = childStarts[0];
+            const newEnd = childEnds[childEnds.length - 1];
+            const newDuration = DateUtils.calcWorkDays(newStart, newEnd, calendar);
+            
+            // Only update if dates have changed (avoid unnecessary updates)
+            if (parent.start !== newStart || parent.end !== newEnd || parent.duration !== newDuration) {
+                // CRITICAL: Direct assignment instead of TaskStore.update() to avoid persistence issues
+                // Parent dates are calculated/rolled up from children, so they shouldn't trigger
+                // TASK_UPDATED events. Direct assignment ensures:
+                // 1. No foreign key constraint errors (parent might not be persisted yet)
+                // 2. No unnecessary persistence events (dates are recalculated on every CPM run)
+                // 3. Faster performance (no event queue overhead)
+                // Notifications are already disabled by _applyCalculationResult(), so this is safe.
+                parent.start = newStart;
+                parent.end = newEnd;
+                parent.duration = newDuration;
+            }
+        });
+    }
+
+    /**
      * Get column definitions for Settings Modal
      * v3.0: Used by Columns tab in Settings
      */
@@ -5484,6 +5578,11 @@ export class SchedulerService {
                 }
             }
         });
+
+        // CRITICAL: Roll up parent dates as a safeguard
+        // Rust CPM should calculate parent dates correctly, but this ensures they're always correct
+        // even if there are edge cases or timing issues
+        this._rollupParentDatesSafeguard();
 
         // Restore onChange
         restoreNotifications();
