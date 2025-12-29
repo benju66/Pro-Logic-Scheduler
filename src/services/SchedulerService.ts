@@ -810,7 +810,13 @@ export class SchedulerService {
                 align: 'center',
                 editable: false,
                 minWidth: 30,
-                renderer: (task, meta) => `<span style="color: #94a3b8; font-size: 11px;">${meta.index + 1}</span>`,
+                renderer: (task, _meta) => {
+                    // Use logical row numbering (skips blank/phantom rows)
+                    if (task._visualRowNumber == null) {
+                        return ''; // Blank and phantom rows show no number
+                    }
+                    return `<span style="color: #94a3b8; font-size: 11px;">${task._visualRowNumber}</span>`;
+                },
             },
             {
                 id: 'name',
@@ -5494,6 +5500,56 @@ export class SchedulerService {
     // =========================================================================
 
     /**
+     * Assign visual row numbers to tasks, skipping blank and phantom rows.
+     * This enables "logical numbering" in the UI where blank rows don't 
+     * consume numbers in the sequence.
+     * 
+     * CRITICAL: Uses hierarchical traversal (not flat getAll()) to ensure
+     * numbers follow visual tree order. getAll() returns insertion order,
+     * which doesn't match the display order determined by parentId + sortKey.
+     * 
+     * Note: Traverses ALL tasks including collapsed children. This ensures
+     * row numbers remain stable when collapsing/expanding (standard scheduling
+     * software behavior - row numbers don't change based on visibility).
+     * 
+     * Called before each render to ensure row numbers are always current.
+     * 
+     * @private
+     */
+    private _assignVisualRowNumbers(): void {
+        let counter = 1;
+        
+        /**
+         * Recursive traversal following visual tree order
+         * @param parentId - Parent task ID (null for root level)
+         */
+        const traverse = (parentId: string | null): void => {
+            // getChildren returns tasks SORTED by sortKey - this is critical
+            const children = this.taskStore.getChildren(parentId);
+            
+            for (const task of children) {
+                // 1. Assign number based on row type
+                if (task.rowType === 'blank' || task.rowType === 'phantom') {
+                    // Blank and phantom rows don't get a visual number
+                    task._visualRowNumber = null;
+                } else {
+                    // Regular tasks get sequential numbers
+                    task._visualRowNumber = counter++;
+                }
+                
+                // 2. Recurse into children (regardless of collapsed state)
+                // This ensures number continuity even for hidden tasks
+                if (this.taskStore.isParent(task.id)) {
+                    traverse(task.id);
+                }
+            }
+        };
+        
+        // Start traversal from root level (parentId = null)
+        traverse(null);
+    }
+
+    /**
      * Render all views
      */
     render(): void {
@@ -5503,6 +5559,9 @@ export class SchedulerService {
         this._renderScheduled = true;
         requestAnimationFrame(() => {
             this._renderScheduled = false;
+            
+            // Pre-calculate visual row numbers (skips blank/phantom rows)
+            this._assignVisualRowNumbers();
             
             // Get visible tasks for hierarchy-aware display
             const tasks = this.taskStore.getVisibleTasks((id) => {

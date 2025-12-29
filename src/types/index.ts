@@ -165,6 +165,15 @@ export interface Task {
   /** Schedule health analysis */
   _health?: HealthIndicator;
   
+  /**
+   * Visual row number for UI display (transient, calculated property).
+   * - Sequential number (1, 2, 3...) for schedulable tasks
+   * - null for blank rows and phantom rows (not displayed)
+   * This enables "logical numbering" where blank rows don't consume numbers.
+   * Recalculated on each render cycle by SchedulerService._assignVisualRowNumbers()
+   */
+  _visualRowNumber?: number | null;
+  
   // === Actuals Tracking (future implementation) ===
   
   /** Actual start date - when work actually began (null if not started) */
