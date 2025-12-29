@@ -202,7 +202,10 @@ export class SchedulerService {
                 this._pendingDateChange = null;
                 
                 // Apply the change and recalculate
-                this._applyDateChangeImmediate(taskId, field, value);
+                // Note: This is old debounced code, but we'll await it for safety
+                this._applyDateChangeImmediate(taskId, field, value).catch(error => {
+                    console.warn('[SchedulerService] Failed to apply pending date change:', error);
+                });
             }
         }, 300);
 
@@ -1846,7 +1849,7 @@ export class SchedulerService {
      * @param field - 'start', 'end', 'actualStart', or 'actualFinish'
      * @param value - New date value (ISO format: YYYY-MM-DD)
      */
-    private _applyDateChangeImmediate(taskId: string, field: string, value: string): void {
+    private async _applyDateChangeImmediate(taskId: string, field: string, value: string): Promise<void> {
         const task = this.taskStore.getById(taskId);
         if (!task) return;
         
@@ -1894,17 +1897,22 @@ export class SchedulerService {
                 };
                 this.taskStore.update(taskId, updates);
                 
+                // CRITICAL: Await engine update to ensure constraint is synced before recalculation
                 if (this.engine) {
-                    this.engine.updateTask(taskId, updates).catch(error => {
+                    try {
+                        await this.engine.updateTask(taskId, updates);
+                    } catch (error) {
                         console.warn('[SchedulerService] Failed to sync task update to engine:', error);
-                    });
+                    }
                 }
                 
                 this.toastService.info('Start constraint (SNET) applied');
             }
             
-            this.recalculateAll();
-            this.render();
+            // Update GridRenderer.data synchronously so _bindCell() has fresh data
+            this._updateGridDataSync();
+            // NOTE: Do NOT call recalculateAll() or render() here - let _handleCellChange handle it
+            // This prevents double recalculation which causes race conditions
             return;
         }
         
@@ -1934,10 +1942,13 @@ export class SchedulerService {
                 };
                 this.taskStore.update(taskId, updates);
                 
+                // CRITICAL: Await engine update to ensure constraint is synced before recalculation
                 if (this.engine) {
-                    this.engine.updateTask(taskId, updates).catch(error => {
+                    try {
+                        await this.engine.updateTask(taskId, updates);
+                    } catch (error) {
                         console.warn('[SchedulerService] Failed to sync Manual task update to engine:', error);
-                    });
+                    }
                 }
                 
                 this.toastService.info('Manual task dates updated');
@@ -1959,10 +1970,13 @@ export class SchedulerService {
                 };
                 this.taskStore.update(taskId, updates);
                 
+                // CRITICAL: Await engine update to ensure constraint is synced before recalculation
                 if (this.engine) {
-                    this.engine.updateTask(taskId, updates).catch(error => {
+                    try {
+                        await this.engine.updateTask(taskId, updates);
+                    } catch (error) {
                         console.warn('[SchedulerService] Failed to sync task update to engine:', error);
-                    });
+                    }
                 }
                 
                 // Warn if deadline is before current start
@@ -1973,8 +1987,10 @@ export class SchedulerService {
                 }
             }
             
-            this.recalculateAll();
-            this.render();
+            // Update GridRenderer.data synchronously so _bindCell() has fresh data
+            this._updateGridDataSync();
+            // NOTE: Do NOT call recalculateAll() or render() here - let _handleCellChange handle it
+            // This prevents double recalculation which causes race conditions
             return;
         }
         
@@ -2072,11 +2088,11 @@ export class SchedulerService {
      * @param value - New value
      * @returns Object indicating what follow-up actions are needed
      */
-    private _applyTaskEdit(taskId: string, field: string, value: unknown): { 
+    private async _applyTaskEdit(taskId: string, field: string, value: unknown): Promise<{ 
         needsRecalc: boolean; 
         needsRender: boolean;
         success: boolean;
-    } {
+    }> {
         const task = this.taskStore.getById(taskId);
         if (!task) {
             return { needsRecalc: false, needsRender: false, success: false };
@@ -2130,7 +2146,7 @@ export class SchedulerService {
                     // Calendar selection is a discrete action - no debounce needed
                     // The editing guard in BindingSystem protects typed input
                     // ═══════════════════════════════════════════════════════════════
-                    this._applyDateChangeImmediate(taskId, 'start', startValue);
+                    await this._applyDateChangeImmediate(taskId, 'start', startValue);
                     needsRecalc = true;
                 }
                 break;
@@ -2146,7 +2162,7 @@ export class SchedulerService {
                     }
                     
                     // FIX: Apply immediately (same as start)
-                    this._applyDateChangeImmediate(taskId, 'end', endValue);
+                    await this._applyDateChangeImmediate(taskId, 'end', endValue);
                     needsRecalc = true;
                 }
                 break;
@@ -2439,7 +2455,7 @@ export class SchedulerService {
      * @param field - Field name
      * @param value - New value
      */
-    private _handleCellChange(taskId: string, field: string, value: unknown): void {
+    private async _handleCellChange(taskId: string, field: string, value: unknown): Promise<void> {
         // Skip checkbox field - it's a visual indicator of selection, not task data
         if (field === 'checkbox') {
             return;
@@ -2447,11 +2463,16 @@ export class SchedulerService {
         
         this.saveCheckpoint();
         
-        const result = this._applyTaskEdit(taskId, field, value);
+        // CRITICAL: Await task edit to ensure engine updates complete before recalculation
+        const result = await this._applyTaskEdit(taskId, field, value);
         
         if (!result.success) {
             return;
         }
+        
+        // Update GridRenderer.data synchronously BEFORE render() so that when _bindCell()
+        // is called during the render cycle, it has the correct task structure.
+        this._updateGridDataSync();
         
         // Handle follow-up actions
         if (result.needsRecalc) {
@@ -3055,49 +3076,6 @@ export class SchedulerService {
         }
     }
 
-    /**
-     * Get all descendant task IDs (recursive)
-     * @private
-     * @param parentId - Parent task ID
-     * @returns Set of descendant task IDs
-     */
-    private _getAllDescendants(parentId: string): Set<string> {
-        const descendants = new Set<string>();
-        const addDescendants = (pid: string): void => {
-            this.taskStore.getChildren(pid).forEach(child => {
-                descendants.add(child.id);
-                addDescendants(child.id);
-            });
-        };
-        addDescendants(parentId);
-        return descendants;
-    }
-
-    /**
-     * Get flat list of tasks in display order
-     * @private
-     * @returns Flat list of tasks
-     */
-    private _getFlatList(): Task[] {
-        const result: Task[] = [];
-        const addTask = (parentId: string | null): void => {
-            this.taskStore.getChildren(parentId).forEach(task => {
-                result.push(task);
-                if (!task._collapsed && this.taskStore.isParent(task.id)) {
-                    addTask(task.id);
-                }
-            });
-        };
-        addTask(null);
-        // Add any orphaned tasks (shouldn't happen, but safety check)
-        const knownIds = new Set(result.map(t => t.id));
-        this.taskStore.getAll().forEach(task => {
-            if (!knownIds.has(task.id)) {
-                result.push(task);
-            }
-        });
-        return result;
-    }
 
 
     /**
@@ -5328,19 +5306,38 @@ export class SchedulerService {
         result.tasks.forEach(calculatedTask => {
             const task = this.taskStore.getById(calculatedTask.id);
             if (task) {
-                Object.assign(task, {
-                    start: calculatedTask.start,
-                    end: calculatedTask.end,
-                    duration: calculatedTask.duration,
-                    _isCritical: calculatedTask._isCritical || false,
-                    _totalFloat: calculatedTask._totalFloat || 0,
-                    _freeFloat: calculatedTask._freeFloat || 0,
-                    lateStart: calculatedTask.lateStart,
-                    lateFinish: calculatedTask.lateFinish,
-                    totalFloat: calculatedTask.totalFloat,
-                    freeFloat: calculatedTask.freeFloat,
-                    _health: calculatedTask._health,
-                });
+                // For Manual mode tasks, preserve manual dates and only update calculated fields
+                const isManual = task.schedulingMode === 'Manual';
+                
+                if (isManual) {
+                    // Manual mode: Preserve start/end/duration, only update calculated fields
+                    Object.assign(task, {
+                        // Don't overwrite start, end, or duration for Manual tasks
+                        _isCritical: calculatedTask._isCritical || false,
+                        _totalFloat: calculatedTask._totalFloat || 0,
+                        _freeFloat: calculatedTask._freeFloat || 0,
+                        lateStart: calculatedTask.lateStart,
+                        lateFinish: calculatedTask.lateFinish,
+                        totalFloat: calculatedTask.totalFloat,
+                        freeFloat: calculatedTask.freeFloat,
+                        _health: calculatedTask._health,
+                    });
+                } else {
+                    // Auto mode: Update all fields including dates
+                    Object.assign(task, {
+                        start: calculatedTask.start,
+                        end: calculatedTask.end,
+                        duration: calculatedTask.duration,
+                        _isCritical: calculatedTask._isCritical || false,
+                        _totalFloat: calculatedTask._totalFloat || 0,
+                        _freeFloat: calculatedTask._freeFloat || 0,
+                        lateStart: calculatedTask.lateStart,
+                        lateFinish: calculatedTask.lateFinish,
+                        totalFloat: calculatedTask.totalFloat,
+                        freeFloat: calculatedTask.freeFloat,
+                        _health: calculatedTask._health,
+                    });
+                }
             }
         });
 
@@ -5565,6 +5562,22 @@ export class SchedulerService {
         
         // Start traversal from root level (parentId = null)
         traverse(null);
+    }
+
+    /**
+     * Update GridRenderer.data synchronously before render()
+     * This ensures that when _bindCell() is called during the render cycle,
+     * it has the correct task structure. Values are queried from TaskStore directly.
+     * @private
+     */
+    private _updateGridDataSync(): void {
+        if (this.grid) {
+            const tasks = this.taskStore.getVisibleTasks((id) => {
+                const task = this.taskStore.getById(id);
+                return task?._collapsed || false;
+            });
+            this.grid.setData(tasks);
+        }
     }
 
     /**
