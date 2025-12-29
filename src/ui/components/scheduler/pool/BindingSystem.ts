@@ -11,6 +11,7 @@ import type { PooledRow, PooledCell, BindingContext } from '../types';
 import { getTaskFieldValue } from '../../../../types';
 import { ICONS } from '../icons';
 import { formatDateForDisplay, parseFlexibleDate, formatDateISO } from '../datepicker/DatePickerConfig';
+import { getEditingStateManager } from '../../../../services/EditingStateManager';
 
 /**
  * Binding System - Updates pooled DOM elements with task data
@@ -255,10 +256,28 @@ export class BindingSystem {
         } else if (cell.input) {
             // Input/select element
             if (cell.input instanceof HTMLInputElement || cell.input instanceof HTMLSelectElement) {
-                // Don't update if being edited (handled by GridRenderer)
-                cell.input.value = value ? String(value) : '';
+                
+                // ═══════════════════════════════════════════════════════════════
+                // EDITING GUARD: Query EditingStateManager directly
+                // This is the SINGLE SOURCE OF TRUTH for editing state
+                // Handles both user-initiated and programmatic edits
+                // ═══════════════════════════════════════════════════════════════
+                const editingManager = getEditingStateManager();
+                const isBeingEdited = editingManager.isEditingCell(task.id, col.field);
+                
+                if (!isBeingEdited) {
+                    // Safe to update - cell is not being edited
+                    if (col.type === 'date' && value) {
+                        const displayValue = formatDateForDisplay(String(value));
+                        cell.input.value = displayValue;
+                        (cell.input as HTMLInputElement).dataset.isoValue = String(value);
+                    } else {
+                        cell.input.value = value ? String(value) : '';
+                    }
+                }
+                // If being edited, preserve DOM value (user's current input)
 
-                // Handle readonly state
+                // Handle readonly state (always apply, even if editing)
                 const isReadonly = col.editable === false || (col.readonlyForParent && isParent);
                 if (isReadonly) {
                     cell.input.classList.add('cell-readonly');
@@ -269,7 +288,7 @@ export class BindingSystem {
                 }
             }
         } else if (cell.text) {
-            // Text/readonly display
+            // Text display cells - safe to always update
             cell.text.textContent = value ? String(value) : '';
         }
 
@@ -292,18 +311,27 @@ export class BindingSystem {
             cell.container.style.position = 'relative';
             const hasConstraintIcon = col.showConstraintIcon && (col.field === 'start' || col.field === 'end');
             
-            // Get the stored value (YYYY-MM-DD format)
-            const storedValue = getTaskFieldValue(ctx.task, col.field);
+            // ═══════════════════════════════════════════════════════════════
+            // EDITING GUARD: Query EditingStateManager directly for date inputs
+            // ═══════════════════════════════════════════════════════════════
+            const editingManager = getEditingStateManager();
+            const isBeingEdited = editingManager.isEditingCell(ctx.task.id, col.field);
             
-            // Display in MM/DD/YYYY format
-            if (storedValue) {
-                input.value = formatDateForDisplay(String(storedValue));
-            } else {
-                input.value = '';
+            if (!isBeingEdited) {
+                // Get the stored value (YYYY-MM-DD format)
+                const storedValue = getTaskFieldValue(ctx.task, col.field);
+                
+                // Display in MM/DD/YYYY format
+                if (storedValue) {
+                    input.value = formatDateForDisplay(String(storedValue));
+                } else {
+                    input.value = '';
+                }
+                
+                // Store the ISO value as a data attribute for retrieval
+                input.dataset.isoValue = storedValue ? String(storedValue) : '';
             }
-            
-            // Store the ISO value as a data attribute for retrieval
-            input.dataset.isoValue = storedValue ? String(storedValue) : '';
+            // If being edited, preserve DOM value (user's current input)
             
             // Handle readonly state
             const isReadonly = col.editable === false || (col.readonlyForParent && ctx.isParent);

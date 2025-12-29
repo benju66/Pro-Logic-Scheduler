@@ -2071,65 +2071,66 @@ export class SchedulerService {
 
         switch (field) {
             case 'duration':
-                // Duration edit: update duration, CPM will recalculate end
-                // This is standard CPM behavior - no constraint needed
-                const newDuration = Math.max(1, parseInt(String(value)) || 1);
-                this.taskStore.update(taskId, { duration: newDuration });
+                // ═══════════════════════════════════════════════════════════════
+                // CHANGE-TIME: Accept raw value, no validation
+                // Validation happens at commit-time (blur/Enter) in GridRenderer
+                // This prevents "fighting back" during typing
+                // ═══════════════════════════════════════════════════════════════
+                const rawValue = String(value).trim();
                 
-                // Sync update to engine
-                if (this.engine) {
-                    this.engine.updateTask(taskId, { duration: newDuration }).catch(error => {
-                        console.warn('[SchedulerService] Failed to sync task update to engine:', error);
-                    });
+                // Parse without coercion - empty/invalid values are valid during editing
+                const parsedDuration = parseInt(rawValue);
+                
+                // Only update store if we have a valid positive number
+                // Invalid values (empty, NaN) are ignored - DOM keeps user's input
+                if (!isNaN(parsedDuration) && parsedDuration >= 1) {
+                    this.taskStore.update(taskId, { duration: parsedDuration });
+                    
+                    if (this.engine) {
+                        this.engine.updateTask(taskId, { duration: parsedDuration }).catch(error => {
+                            console.warn('[SchedulerService] Failed to sync task update:', error);
+                        });
+                    }
+                    
+                    needsRecalc = true;
                 }
-                
-                needsRecalc = true;
+                // If invalid, no store update - editing guard preserves DOM value
                 break;
                 
             case 'start':
                 // Start edit: User is setting a start constraint
-                // Use debounced update to prevent lag during typing
                 if (value && !isParent) {
                     const startValue = String(value);
+                    
                     // Validate date format
                     if (!/^\d{4}-\d{2}-\d{2}$/.test(startValue)) {
                         console.warn('[SchedulerService] Invalid date format:', startValue);
                         return { needsRecalc: false, needsRender: false, success: false };
                     }
                     
-                    // Store pending change and debounce the recalculation
-                    this._pendingDateChange = { taskId, field: 'start', value: startValue };
-                    
-                    // Optimistic UI update: show the value immediately in the input
-                    // (The actual recalc happens after debounce)
-                    if (this._debouncedRecalc) {
-                        this._debouncedRecalc();
-                    }
-                    
-                    // Don't set needsRecalc - the debounced function will handle it
-                    return { needsRecalc: false, needsRender: false, success: true };
+                    // ═══════════════════════════════════════════════════════════════
+                    // FIX: Apply date change IMMEDIATELY
+                    // Calendar selection is a discrete action - no debounce needed
+                    // The editing guard in BindingSystem protects typed input
+                    // ═══════════════════════════════════════════════════════════════
+                    this._applyDateChangeImmediate(taskId, 'start', startValue);
+                    needsRecalc = true;
                 }
                 break;
                 
             case 'end':
-                // End edit: User is setting a finish deadline
-                // Use debounced update to prevent lag during typing
+                // End edit: User is setting a finish constraint
                 if (value && !isParent) {
                     const endValue = String(value);
-                    // Validate date format
+                    
                     if (!/^\d{4}-\d{2}-\d{2}$/.test(endValue)) {
                         console.warn('[SchedulerService] Invalid date format:', endValue);
                         return { needsRecalc: false, needsRender: false, success: false };
                     }
                     
-                    // Store pending change and debounce the recalculation
-                    this._pendingDateChange = { taskId, field: 'end', value: endValue };
-                    
-                    if (this._debouncedRecalc) {
-                        this._debouncedRecalc();
-                    }
-                    
-                    return { needsRecalc: false, needsRender: false, success: true };
+                    // FIX: Apply immediately (same as start)
+                    this._applyDateChangeImmediate(taskId, 'end', endValue);
+                    needsRecalc = true;
                 }
                 break;
                 

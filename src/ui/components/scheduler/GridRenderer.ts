@@ -773,8 +773,29 @@ export class GridRenderer {
         if (input.classList.contains('vsg-date-input')) {
             this._saveDateInput(input as HTMLInputElement, taskId, field, false);
         }
-        // For text/number inputs, fire change on blur
-        else if ((input as HTMLInputElement).type === 'text' || (input as HTMLInputElement).type === 'number') {
+        // For number inputs (duration), validate and coerce on commit
+        else if ((input as HTMLInputElement).type === 'number') {
+            // ═══════════════════════════════════════════════════════════════
+            // COMMIT-TIME VALIDATION: Validate only when saving
+            // User can type anything during editing; we fix it on blur
+            // ═══════════════════════════════════════════════════════════════
+            let value = input.value.trim();
+            const parsedValue = parseInt(value);
+            
+            if (value === '' || isNaN(parsedValue) || parsedValue < 1) {
+                // Invalid value - get current task value as fallback
+                const task = this.data.find(t => t.id === taskId);
+                const fallbackValue = task ? (task as any)[field] || 1 : 1;
+                value = String(Math.max(1, fallbackValue));
+                input.value = value; // Update DOM to show corrected value
+            }
+            
+            if (this.options.onCellChange) {
+                this.options.onCellChange(taskId, field, value);
+            }
+        }
+        // For text inputs, fire change on blur
+        else if ((input as HTMLInputElement).type === 'text') {
             if (this.options.onCellChange) {
                 this.options.onCellChange(taskId, field, input.value);
             }
@@ -971,9 +992,24 @@ export class GridRenderer {
                 }
             }
             
-            // Save current edit (handle date inputs)
+            // Save current edit (handle date inputs and number inputs with validation)
             if (target.classList.contains('vsg-date-input')) {
                 this._saveDateInput(target as HTMLInputElement, taskId, currentField, true);
+            } else if ((target as HTMLInputElement).type === 'number') {
+                // Commit-time validation for number inputs
+                let value = (target as HTMLInputElement).value.trim();
+                const parsedValue = parseInt(value);
+                
+                if (value === '' || isNaN(parsedValue) || parsedValue < 1) {
+                    const task = this.data.find(t => t.id === taskId);
+                    const fallbackValue = task ? (task as any)[currentField] || 1 : 1;
+                    value = String(Math.max(1, fallbackValue));
+                    (target as HTMLInputElement).value = value;
+                }
+                
+                if (this.options.onCellChange) {
+                    this.options.onCellChange(taskId, currentField, value);
+                }
             } else if (this.options.onCellChange) {
                 this.options.onCellChange(taskId, currentField, (target as HTMLInputElement).value);
             }
@@ -1012,9 +1048,27 @@ export class GridRenderer {
             const currentField = target.getAttribute('data-field');
             if (!currentField) return;
             
+            // ═══════════════════════════════════════════════════════════════
+            // COMMIT-TIME VALIDATION: Same logic as blur for number inputs
+            // ═══════════════════════════════════════════════════════════════
+            
             // 1. Save current edit
             if (target.classList.contains('vsg-date-input')) {
                 this._saveDateInput(target as HTMLInputElement, taskId, currentField, true);
+            } else if ((target as HTMLInputElement).type === 'number') {
+                let value = (target as HTMLInputElement).value.trim();
+                const parsedValue = parseInt(value);
+                
+                if (value === '' || isNaN(parsedValue) || parsedValue < 1) {
+                    const task = this.data.find(t => t.id === taskId);
+                    const fallbackValue = task ? (task as any)[currentField] || 1 : 1;
+                    value = String(Math.max(1, fallbackValue));
+                    (target as HTMLInputElement).value = value;
+                }
+                
+                if (this.options.onCellChange) {
+                    this.options.onCellChange(taskId, currentField, value);
+                }
             } else {
                 if (this.options.onCellChange) {
                     this.options.onCellChange(taskId, currentField, (target as HTMLInputElement).value);
