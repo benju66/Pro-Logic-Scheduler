@@ -42,6 +42,7 @@ interface Task {
     constraintType: 'asap' | 'snet' | 'snlt' | 'fnet' | 'fnlt' | 'mfo';
     constraintDate: string | null; // YYYY-MM-DD
     dependencies: Dependency[];    // Predecessors
+    schedulingMode?: 'Auto' | 'Manual'; // Scheduling mode (default: 'Auto')
     
     // Scheduling (Calculated Runtime)
     start: string;                // Early Start
@@ -128,6 +129,13 @@ The `SchedulerService` interprets user edits to maintain logical consistency:
 * **Edit End:** Apply **FNLT** (Finish No Later Than) constraint (Deadline).
 * **Edit Actuals:** Update `actualStart`/`actualFinish`. Does **not** affect CPM dates (variance tracking only).
 
+**Scheduling Modes:**
+* **Auto Mode (default):** CPM engine calculates dates based on dependencies and constraints. User edits to `start`/`end` apply constraints (SNET/FNLT) that influence the calculation.
+* **Manual Mode:** User-fixed dates that CPM will **not** change during recalculation. Manual tasks still participate in backward pass (have Late Start/Finish), have float calculated, and act as anchors for their successors. When CPM results are applied, only calculated fields (`_isCritical`, `totalFloat`, `freeFloat`, etc.) are updated; `start`, `end`, and `duration` are preserved.
+
+**Async Engine Synchronization:**
+Date changes are processed asynchronously to ensure the Rust CPM engine receives constraint updates before recalculation runs. This prevents race conditions where recalculation might execute before constraints are synced, causing date values to revert.
+
 ### 3.4. Performance Strategy (Rust Migration)
 
 To achieve 60 FPS with >10,000 tasks, the calculation engine will be migrated in **Phase 2**:
@@ -176,6 +184,15 @@ A master controller (`SchedulerViewport`) orchestrates two "dumb" renderers.
 * **Pooling:** A fixed pool of row elements (Viewport Height / Row Height + Buffer) is created at initialization.
 * **Recycling:** As the user scrolls, rows moving off-screen are "teleported" to the bottom and rebound with new data.
 * **Fast Binding:** Uses `textContent`, `className`, and `style.transform`. avoids `innerHTML` during scroll.
+
+### 4.4. Synchronous Data Updates (Flash Elimination)
+
+To eliminate visual flashing when dates or durations change, renderer data is updated synchronously before scheduling the render:
+
+* **`_updateGridDataSync()`:** Updates `GridRenderer.data` synchronously from `TaskStore` before `render()` is called. Ensures `_bindCell()` has fresh task data during the render cycle.
+* **`_updateGanttDataSync()`:** Updates `GanttRenderer.data` synchronously before `render()` to prevent canvas flash. The GanttRenderer fills the canvas with background color instead of clearing, combined with synchronous data updates to eliminate any visual artifacts.
+
+This pattern ensures both renderers have fresh data immediately, eliminating the delay between data change and visual update that causes flashing.
 
 ---
 

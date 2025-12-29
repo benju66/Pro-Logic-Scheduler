@@ -14,6 +14,8 @@ The rendering layer eschews heavy framework reconciliation (React/Vue) for the c
 ### 2. **Unified Viewport ("The Puppeteer")**
 A single master controller (`SchedulerViewport`) owns the scroll state and "drives" two dumb renderers (`GridRenderer` and `GanttRenderer`) in a single animation frame. This eliminates scroll jitter and synchronization lag.
 
+**Synchronous Data Updates:** To eliminate visual flashing, renderer data is updated synchronously before scheduling renders. `_updateGridDataSync()` and `_updateGanttDataSync()` ensure both renderers have fresh task data immediately, preventing the delay between data change and visual update.
+
 ### 3. **Fractional Indexing**
 Task ordering is managed via lexicographical string keys (e.g., `"a0"`, `"a0V"`). This allows infinite reordering between any two tasks without updating the database records of siblings, enabling robust offline-first capabilities.
 
@@ -98,3 +100,5 @@ src-tauri/                   # Rust Backend
 - **Single Engine**: RustEngine is the sole scheduling engine (no JavaScript fallback)
 - **State Management**: Engine state maintained in Rust backend via Tauri commands
 - **Delta Updates**: Efficient task updates via `updateTask()`, `addTask()`, `deleteTask()` commands
+- **Async Synchronization**: Date changes are processed asynchronously to ensure engine constraint updates complete before recalculation, preventing race conditions
+- **Scheduling Modes**: Supports both Auto (CPM-driven) and Manual (user-fixed dates) modes. Manual mode preserves user-set dates during recalculation while still calculating float and critical path metrics.

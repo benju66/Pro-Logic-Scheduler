@@ -281,13 +281,23 @@ CREATE TABLE IF NOT EXISTS snapshots (
         if (batch.length > 0) {
           console.log(`[PersistenceService] Flushed ${batch.length} events`);
           
+          // CRITICAL: Call snapshot service AFTER transaction is committed
+          // Use setTimeout to ensure we're completely outside the transaction context
+          // This prevents "cannot start a transaction within a transaction" errors
           if (this.snapshotService && this.getTasksForSnapshot && this.getCalendarForSnapshot) {
-            await this.snapshotService.onEventsPersisted(
-              batch.length,
-              this.getTasksForSnapshot(),
-              this.getCalendarForSnapshot(),
-              this.getTradePartnersForSnapshot?.() || []
-            );
+            // Defer to next tick to ensure transaction is fully committed
+            setTimeout(async () => {
+              try {
+                await this.snapshotService!.onEventsPersisted(
+                  batch.length,
+                  this.getTasksForSnapshot!(),
+                  this.getCalendarForSnapshot!(),
+                  this.getTradePartnersForSnapshot?.() || []
+                );
+              } catch (error) {
+                console.error('[PersistenceService] Snapshot notification failed:', error);
+              }
+            }, 0);
           }
         }
       } catch (error) {

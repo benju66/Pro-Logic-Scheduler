@@ -10,6 +10,7 @@
 
 import type { Task, GridColumn, Calendar } from '../../../types';
 import type { ViewportState, GridRendererOptions, BindingContext } from './types';
+import type { TaskStore } from '../../../data/TaskStore';
 import { PoolSystem } from './pool/PoolSystem';
 import { BindingSystem } from './pool/BindingSystem';
 import flatpickr from 'flatpickr';
@@ -55,6 +56,7 @@ export class GridRenderer {
     
     // Flag to prevent double-save on Tab/Enter + blur
     private _dateSaveInProgress: Set<string> = new Set(); // key: "taskId:field"
+    private _numberSaveInProgress: Set<string> = new Set(); // key: "taskId:field" - prevents double-save for number inputs
     
     // Drag UX state
     private _lastDropPosition: 'before' | 'after' | 'child' | null = null;
@@ -327,6 +329,15 @@ export class GridRenderer {
     setCalendar(calendar: Calendar): void {
         this.calendar = calendar;
         this.binder.setCalendar(calendar);
+    }
+
+    /**
+     * Set the TaskStore for the BindingSystem
+     * This allows the BindingSystem to query fresh task data directly from TaskStore
+     * @param taskStore - The TaskStore instance
+     */
+    setTaskStore(taskStore: TaskStore): void {
+        this.binder.setTaskStore(taskStore);
     }
 
     /**
@@ -768,6 +779,17 @@ export class GridRenderer {
         const taskId = row.dataset.taskId;
         if (!taskId) return;
 
+        // For number inputs, check if this blur was triggered by Enter key
+        // If so, skip blur save (already saved from Enter handler)
+        if ((input as HTMLInputElement).type === 'number') {
+            const saveKey = `${taskId}:${field}`;
+            if (this._numberSaveInProgress.has(saveKey)) {
+                // This blur was triggered by Enter handler - skip save
+                this._numberSaveInProgress.delete(saveKey);
+                return;
+            }
+        }
+
         // For date inputs, save with format conversion (fromKeyboard: false)
         if (input.classList.contains('vsg-date-input')) {
             const editingManager = getEditingStateManager();
@@ -786,6 +808,7 @@ export class GridRenderer {
             this._saveDateInput(input as HTMLInputElement, taskId, field, false);
         }
         // For number inputs (duration), validate and coerce on commit
+        // NOTE: Blur triggered by Enter is already handled above (early return)
         else if ((input as HTMLInputElement).type === 'number') {
             // ═══════════════════════════════════════════════════════════════
             // COMMIT-TIME VALIDATION: Validate only when saving
@@ -1096,6 +1119,23 @@ export class GridRenderer {
                 
                 this._saveDateInput(target as HTMLInputElement, taskId, currentField, true);
             } else if ((target as HTMLInputElement).type === 'number') {
+                const saveKey = `${taskId}:${currentField}`;
+                
+                // Mark as in progress BEFORE saving to prevent blur handler from saving again
+                this._numberSaveInProgress.add(saveKey);
+                
+                // FIX: Clear editing state immediately (same as date inputs)
+                // This prevents the blur handler from thinking we're still editing
+                this.editingCell = null;
+                this.editingRows.delete(taskId);
+                
+                // Also notify state manager immediately
+                const editingManager = getEditingStateManager();
+                const wasEditing = editingManager.isEditingCell(taskId, currentField);
+                if (wasEditing) {
+                    editingManager.exitEditMode('enter');
+                }
+                
                 let value = (target as HTMLInputElement).value.trim();
                 const parsedValue = parseInt(value);
                 
@@ -1106,21 +1146,34 @@ export class GridRenderer {
                     (target as HTMLInputElement).value = value;
                 }
                 
-                if (this.options.onCellChange) {
+                // Check if value actually changed before calling onCellChange
+                // This prevents unnecessary saves when user presses Enter without changing value
+                const task = this.data.find(t => t.id === taskId);
+                const currentStoredValue = task ? String((task as any)[currentField] || '') : '';
+                const valueChanged = value !== currentStoredValue;
+                
+                if (valueChanged && this.options.onCellChange) {
                     this.options.onCellChange(taskId, currentField, value);
                 }
+                
+                // Blur input AFTER onCellChange completes (if it was called)
+                // The flag will prevent blur handler from saving again
+                target.blur();
+                
+                // Clear the flag after a short delay (in case blur doesn't fire or is delayed)
+                setTimeout(() => this._numberSaveInProgress.delete(saveKey), 100);
             } else {
                 if (this.options.onCellChange) {
                     this.options.onCellChange(taskId, currentField, (target as HTMLInputElement).value);
                 }
+                
+                // Blur input for other input types
+                target.blur();
             }
             
-            // 2. Blur input (triggers blur handler cleanup)
-            target.blur();
-            
-            // 3. Editing state already cleared above for date inputs
-            // For non-date inputs, clear editing state here
-            if (!target.classList.contains('vsg-date-input')) {
+            // 3. Editing state already cleared above for date and number inputs
+            // For other inputs (text, select), clear editing state here
+            if (!target.classList.contains('vsg-date-input') && (target as HTMLInputElement).type !== 'number') {
                 this.editingRows.delete(taskId);
                 this.editingCell = null;
                 

@@ -100,17 +100,27 @@ export class SnapshotService {
   
   /**
    * Called by PersistenceService after events are flushed
+   * CRITICAL: This is called AFTER PersistenceService commits its transaction,
+   * so we can safely create snapshots without transaction conflicts
    */
   async onEventsPersisted(count: number, tasks: unknown, calendar: unknown, tradePartners?: unknown): Promise<void> {
     this.eventsSinceSnapshot += count;
     
     if (this.eventsSinceSnapshot >= this.eventThreshold) {
       console.log(`[SnapshotService] Event threshold reached (${this.eventsSinceSnapshot})`);
-      await this.createSnapshot(
-        tasks as Task[], 
-        calendar as Calendar, 
-        (tradePartners as TradePartner[]) || []
-      );
+      // Defer snapshot creation to avoid transaction conflicts
+      // Use setTimeout to ensure we're outside any active transaction
+      setTimeout(async () => {
+        try {
+          await this.createSnapshot(
+            tasks as Task[], 
+            calendar as Calendar, 
+            (tradePartners as TradePartner[]) || []
+          );
+        } catch (error) {
+          console.error('[SnapshotService] Deferred snapshot creation failed:', error);
+        }
+      }, 0);
     }
   }
 

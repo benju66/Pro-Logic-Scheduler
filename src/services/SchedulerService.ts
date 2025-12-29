@@ -454,8 +454,8 @@ export class SchedulerService {
         // Wire TaskStore to BindingSystem for fresh data queries
         // This ensures BindingSystem always reads latest values from TaskStore
         const gridRenderer = (viewport as any).gridRenderer as GridRenderer | null;
-        if (gridRenderer && gridRenderer.binder) {
-            gridRenderer.binder.setTaskStore(this.taskStore);
+        if (gridRenderer) {
+            gridRenderer.setTaskStore(this.taskStore);
         }
 
         // Initialize Gantt renderer
@@ -2119,8 +2119,11 @@ export class SchedulerService {
                 if (!isNaN(parsedDuration) && parsedDuration >= 1) {
                     this.taskStore.update(taskId, { duration: parsedDuration });
                     
+                    // CRITICAL: Await engine update to ensure it completes before recalculation
+                    // This prevents race condition where recalculateAll() runs before engine
+                    // has processed the duration update, causing the user's input to be overwritten
                     if (this.engine) {
-                        this.engine.updateTask(taskId, { duration: parsedDuration }).catch(error => {
+                        await this.engine.updateTask(taskId, { duration: parsedDuration }).catch(error => {
                             console.warn('[SchedulerService] Failed to sync task update:', error);
                         });
                     }
@@ -2470,22 +2473,34 @@ export class SchedulerService {
             return;
         }
         
-        // Update GridRenderer.data synchronously BEFORE render() so that when _bindCell()
-        // is called during the render cycle, it has the correct task structure.
-        this._updateGridDataSync();
-        
-        // Update GanttRenderer.data synchronously BEFORE render() to eliminate flash
-        this._updateGanttDataSync();
-        
         // Handle follow-up actions
         if (result.needsRecalc) {
-            this.recalculateAll();
+            // CRITICAL: Await recalculation to prevent transaction conflicts and visual flash
+            // This ensures:
+            // 1. Recalculation completes before saveData() (prevents transaction errors)
+            // 2. _applyCalculationResult() updates data synchronously before render() (prevents flash)
+            await this.recalculateAll();
+            // Note: render() is already called by _applyCalculationResult(), so we don't need to call it again
+            // Save data after recalculation completes to avoid transaction conflicts
             this.saveData();
-            this.render();
         } else if (result.needsRender) {
+            // Update GridRenderer.data synchronously BEFORE render() so that when _bindCell()
+            // is called during the render cycle, it has the correct task structure.
+            this._updateGridDataSync();
+            
+            // Update GanttRenderer.data synchronously BEFORE render() to eliminate flash
+            this._updateGanttDataSync();
+            
             this.render();
             this.saveData();
         } else {
+            // Update GridRenderer.data synchronously BEFORE render() so that when _bindCell()
+            // is called during the render cycle, it has the correct task structure.
+            this._updateGridDataSync();
+            
+            // Update GanttRenderer.data synchronously BEFORE render() to eliminate flash
+            this._updateGanttDataSync();
+            
             // Even if no recalc/render needed, save the data
             this.saveData();
         }
@@ -2639,6 +2654,13 @@ export class SchedulerService {
      * @param dependencies - Dependencies array
      */
     private _handleDependenciesSave(taskId: string, dependencies: Array<{ id: string; type: LinkType; lag: number }>): void {
+        // Validate dependencies before saving
+        const validation = this._validateDependencies(taskId, dependencies);
+        if (!validation.valid) {
+            this.toastService.error(validation.error || 'Invalid dependencies');
+            return;
+        }
+
         this.saveCheckpoint();
         this.taskStore.update(taskId, { dependencies });
         
@@ -2646,6 +2668,7 @@ export class SchedulerService {
         if (this.engine) {
             this.engine.updateTask(taskId, { dependencies }).catch(error => {
                 console.warn('[SchedulerService] Failed to sync task update to engine:', error);
+                this.toastService.error('Failed to sync dependency changes to scheduling engine');
             });
         }
         
@@ -4263,6 +4286,101 @@ export class SchedulerService {
     }
 
     /**
+     * Get all predecessor task IDs (transitive closure through dependencies)
+     * Uses BFS to traverse dependency graph backward
+     * @private
+     */
+    private _getAllPredecessors(taskId: string): Set<string> {
+        const predecessors = new Set<string>();
+        const visited = new Set<string>();
+        const queue: string[] = [taskId];
+        
+        while (queue.length > 0) {
+            const currentId = queue.shift()!;
+            if (visited.has(currentId)) continue;
+            visited.add(currentId);
+            
+            const task = this.taskStore.getById(currentId);
+            if (task?.dependencies) {
+                for (const dep of task.dependencies) {
+                    if (!visited.has(dep.id)) {
+                        predecessors.add(dep.id);
+                        queue.push(dep.id);
+                    }
+                }
+            }
+        }
+        
+        return predecessors;
+    }
+
+    /**
+     * Check if adding a dependency would create a circular dependency
+     * @private
+     * @param taskId - Task that will have the dependency
+     * @param predecessorId - Predecessor task ID to check
+     * @returns True if adding this dependency would create a cycle
+     */
+    private _wouldCreateCycle(taskId: string, predecessorId: string): boolean {
+        // A cycle exists if the predecessor depends on (directly or transitively) the current task
+        const predecessorPredecessors = this._getAllPredecessors(predecessorId);
+        return predecessorPredecessors.has(taskId);
+    }
+
+    /**
+     * Validate dependencies before saving
+     * @private
+     * @param taskId - Task ID
+     * @param dependencies - Dependencies to validate
+     * @returns Validation result with error message if invalid
+     */
+    private _validateDependencies(taskId: string, dependencies: Array<{ id: string; type: LinkType; lag: number }>): { valid: boolean; error?: string } {
+        const task = this.taskStore.getById(taskId);
+        if (!task) {
+            return { valid: false, error: 'Task not found' };
+        }
+
+        // Check each dependency
+        for (const dep of dependencies) {
+            // Check if predecessor exists
+            const predecessor = this.taskStore.getById(dep.id);
+            if (!predecessor) {
+                return { valid: false, error: `Predecessor task "${dep.id}" not found` };
+            }
+
+            // Check if predecessor is a blank row
+            if (predecessor.rowType === 'blank') {
+                return { valid: false, error: 'Cannot create dependency to a blank row' };
+            }
+
+            // Check for circular dependencies
+            if (this._wouldCreateCycle(taskId, dep.id)) {
+                const taskName = task.name || taskId;
+                const predName = predecessor.name || dep.id;
+                return { valid: false, error: `Circular dependency detected: "${taskName}" depends on "${predName}", which depends on "${taskName}"` };
+            }
+
+            // Check if linking to self
+            if (dep.id === taskId) {
+                return { valid: false, error: 'Task cannot depend on itself' };
+            }
+
+            // Validate link type
+            const validLinkTypes: LinkType[] = ['FS', 'SS', 'FF', 'SF'];
+            if (!validLinkTypes.includes(dep.type)) {
+                return { valid: false, error: `Invalid link type: ${dep.type}` };
+            }
+
+            // Validate lag is a number
+            if (typeof dep.lag !== 'number' || isNaN(dep.lag)) {
+                return { valid: false, error: 'Lag must be a number' };
+            }
+        }
+
+        return { valid: true };
+    }
+
+    /**
      * Get column definitions for Settings Modal
      * v3.0: Used by Columns tab in Settings
      */
@@ -5255,12 +5373,13 @@ export class SchedulerService {
 
     /**
      * Recalculate all tasks using CPM
+     * @returns Promise that resolves when recalculation completes
      */
-    recalculateAll(): void {
+    recalculateAll(): Promise<void> {
         // Prevent infinite recursion / overlapping calculations
         if (this._isRecalculating) {
             // console.warn('[SchedulerService] Skipping overlap calculation');
-            return;
+            return Promise.resolve();
         }
         
         this._isRecalculating = true;
@@ -5274,7 +5393,7 @@ export class SchedulerService {
         if (tasks.length === 0) {
             this._lastCalcTime = 0;
             this._isRecalculating = false;
-            return;
+            return Promise.resolve();
         }
 
         if (!this.engine) {
@@ -5282,14 +5401,28 @@ export class SchedulerService {
             throw new Error('[SchedulerService] FATAL: Rust engine not initialized');
         }
 
-        this.engine.recalculateAll()
+        return this.engine.recalculateAll()
             .then((result) => {
                 this._applyCalculationResult(result);
                 this._lastCalcTime = performance.now() - startTime;
             })
             .catch((error) => {
                 console.error('[SchedulerService] FATAL: CPM calculation failed:', error);
-                this.toastService.error('Schedule calculation failed. Please restart the application.');
+                
+                // Parse error message for user-friendly feedback
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                let userMessage = 'Schedule calculation failed. ';
+                
+                // Check for circular dependency indication
+                if (errorMessage.includes('circular') || errorMessage.includes('max iterations')) {
+                    userMessage += 'Circular dependencies detected. Please check task dependencies.';
+                } else if (errorMessage.includes('not initialized')) {
+                    userMessage += 'Scheduling engine not initialized. Please restart the application.';
+                } else {
+                    userMessage += 'Please check for invalid dependencies or constraints.';
+                }
+                
+                this.toastService.error(userMessage);
                 throw error;
             })
             .finally(() => {
@@ -5305,6 +5438,10 @@ export class SchedulerService {
         // Temporarily disable onChange to prevent recursion
         const restoreNotifications = this.taskStore.disableNotifications();
 
+        // Track which tasks had recent user edits to preserve their input values
+        // This prevents overwriting user input with calculated values during recalculation
+        const recentEdits = new Map<string, { duration?: number; start?: string; end?: string }>();
+        
         // Update tasks with calculated values
         result.tasks.forEach(calculatedTask => {
             const task = this.taskStore.getById(calculatedTask.id);
@@ -5327,10 +5464,12 @@ export class SchedulerService {
                     });
                 } else {
                     // Auto mode: Update all fields including dates
-                    Object.assign(task, {
+                    // BUT: Preserve user's duration input if it was just edited
+                    // The engine should have the correct duration, but we preserve it as a safeguard
+                    const updates: Partial<Task> = {
                         start: calculatedTask.start,
                         end: calculatedTask.end,
-                        duration: calculatedTask.duration,
+                        duration: calculatedTask.duration, // Engine should have correct duration
                         _isCritical: calculatedTask._isCritical || false,
                         _totalFloat: calculatedTask._totalFloat || 0,
                         _freeFloat: calculatedTask._freeFloat || 0,
@@ -5339,7 +5478,9 @@ export class SchedulerService {
                         totalFloat: calculatedTask.totalFloat,
                         freeFloat: calculatedTask.freeFloat,
                         _health: calculatedTask._health,
-                    });
+                    };
+                    
+                    Object.assign(task, updates);
                 }
             }
         });
@@ -5347,11 +5488,14 @@ export class SchedulerService {
         // Restore onChange
         restoreNotifications();
         
-        // Update renderers synchronously before render() to eliminate flash
+        // CRITICAL: Update renderers synchronously BEFORE render() to eliminate flash
+        // This ensures GridRenderer.data has the latest values before any render cycle begins
         this._updateGridDataSync();
         this._updateGanttDataSync();
         
         // Trigger render updates
+        // Note: render() uses requestAnimationFrame, but _updateGridDataSync() ensures
+        // GridRenderer.data is updated synchronously before the RAF callback executes
         this.render();
 
         // Check for constraint violations and warn user
@@ -5375,73 +5519,6 @@ export class SchedulerService {
     }
 
 
-    /**
-     * Roll up parent task dates from children
-     * 
-     * Calculates parent dates as:
-     * - Start = Min(child start dates)
-     * - End = Max(child end dates)  
-     * - Duration = work days from Start to End
-     * 
-     * Processes deepest parents first to handle nested hierarchies correctly.
-     * @private
-     */
-    private _rollupParentDates(): void {
-        const allTasks = this.taskStore.getAll();
-        const calendar = this.calendarStore.get();
-        
-        // Find all parent tasks (tasks that have children)
-        const parentIds = new Set<string>();
-        allTasks.forEach(task => {
-            if (task.parentId) {
-                parentIds.add(task.parentId);
-            }
-        });
-        
-        if (parentIds.size === 0) return;
-        
-        // Get parent tasks and sort by depth (deepest first)
-        // This ensures child-parents are processed before grandparents
-        const parents = allTasks.filter(t => parentIds.has(t.id));
-        const sortedParents = [...parents].sort((a, b) => 
-            this.taskStore.getDepth(b.id) - this.taskStore.getDepth(a.id)
-        );
-
-        sortedParents.forEach(parent => {
-            // Get direct children of this parent
-            const children = this.taskStore.getChildren(parent.id);
-            if (children.length === 0) return;
-
-            // Collect valid start and end dates from children
-            const childStarts: string[] = [];
-            const childEnds: string[] = [];
-            
-            children.forEach(child => {
-                if (child.start && child.start.length > 0) {
-                    childStarts.push(child.start);
-                }
-                if (child.end && child.end.length > 0) {
-                    childEnds.push(child.end);
-                }
-            });
-
-            if (childStarts.length === 0 || childEnds.length === 0) return;
-
-            // Sort to find min start and max end
-            childStarts.sort();
-            childEnds.sort();
-            
-            const newStart = childStarts[0];
-            const newEnd = childEnds[childEnds.length - 1];
-            const newDuration = DateUtils.calcWorkDays(newStart, newEnd, calendar);
-            
-            // Update parent task with rolled-up values
-            // Use direct assignment to avoid triggering unnecessary events
-            parent.start = newStart;
-            parent.end = newEnd;
-            parent.duration = newDuration;
-        });
-    }
 
     // =========================================================================
     // DATA CHANGE HANDLERS
