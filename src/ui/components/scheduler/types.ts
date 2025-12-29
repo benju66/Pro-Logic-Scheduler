@@ -100,6 +100,11 @@ export interface GridRendererOptions {
     onRowClick?: (taskId: string, event: MouseEvent) => void;
     onRowDoubleClick?: (taskId: string, event: MouseEvent) => void;
     onAction?: (taskId: string, action: string, event: MouseEvent) => void;
+    /**
+     * v3.0: Dedicated handler for row menu button clicks
+     * Called when user clicks the ellipsis (⋮) menu trigger
+     */
+    onRowMenu?: (taskId: string, isBlank: boolean, anchorEl: HTMLElement, event: MouseEvent) => void;
     onToggleCollapse?: (taskId: string) => void;
     onSelectionChange?: (selectedIds: string[]) => void;
     onRowMove?: (taskIds: string[], targetId: string, position: DropPosition) => void;

@@ -49,6 +49,7 @@ import type {
 import { DependenciesModal } from '../ui/components/DependenciesModal';
 import { CalendarModal } from '../ui/components/CalendarModal';
 import { ColumnSettingsModal } from '../ui/components/ColumnSettingsModal';
+import { ContextMenu, type ContextMenuItem } from '../ui/components/ContextMenu';
 import type { 
     Task, 
     Calendar, 
@@ -435,6 +436,7 @@ export class SchedulerService {
             onRowClick: (taskId, e) => this._handleRowClick(taskId, e),
             onRowDoubleClick: (taskId, e) => this._handleRowDoubleClick(taskId, e),
             onAction: (taskId, action, e) => this._handleAction(taskId, action, e),
+            onRowMenu: (taskId, isBlank, anchorEl, event) => this._showRowContextMenu(taskId, isBlank, anchorEl, event),
             onToggleCollapse: (taskId) => this.toggleCollapse(taskId),
             onSelectionChange: (selectedIds) => this._handleSelectionChange(selectedIds),
             onRowMove: (taskIds, targetId, position) => this._handleRowMove(taskIds, targetId, position),
@@ -926,40 +928,26 @@ export class SchedulerService {
             },
             {
                 id: 'actions',
-                label: 'Actions',
+                label: '', // Empty label keeps header clean
                 field: 'actions',
                 type: 'actions',
-                width: 80,
+                width: 40, // v3.0: Increased from 30px for better click target
                 editable: false,
-                minWidth: 80,
+                minWidth: 36,
+                resizable: false,
+                align: 'center',
+                // v3.0: SINGLE action only - no more inline buttons
                 actions: [
-                    { 
-                        id: 'outdent', 
-                        name: 'outdent',
-                        title: 'Outdent',
-                        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"></polyline></svg>',
-                        color: '#64748b'
-                    },
-                    { 
-                        id: 'indent', 
-                        name: 'indent',
-                        title: 'Indent',
-                        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>',
-                        color: '#64748b'
-                    },
-                    { 
-                        id: 'links', 
-                        name: 'links',
-                        title: 'Dependencies',
-                        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>',
-                        color: '#64748b'
-                    },
-                    { 
-                        id: 'delete', 
-                        name: 'delete',
-                        title: 'Delete',
-                        icon: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>',
-                        color: '#64748b'
+                    {
+                        id: 'row-menu',
+                        name: 'row-menu',
+                        title: 'Row Menu',
+                        icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                            <circle cx="12" cy="5" r="2"/>
+                            <circle cx="12" cy="12" r="2"/>
+                            <circle cx="12" cy="19" r="2"/>
+                        </svg>`,
+                        color: '#64748b',
                     },
                 ],
             },
@@ -3807,6 +3795,454 @@ export class SchedulerService {
         this.recalculateAll();
         this.saveData();
         this.render();
+    }
+
+    /**
+     * Context menu instance (singleton)
+     * @private
+     */
+    private _contextMenu: ContextMenu | null = null;
+
+    /**
+     * Get or create context menu
+     * @private
+     */
+    private _getContextMenu(): ContextMenu {
+        if (!this._contextMenu) {
+            this._contextMenu = new ContextMenu();
+        }
+        return this._contextMenu;
+    }
+
+    /**
+     * Show context menu for a row
+     * @private
+     */
+    private _showRowContextMenu(taskId: string, isBlank: boolean, anchorEl: HTMLElement, event: MouseEvent): void {
+        const menu = this._getContextMenu();
+        
+        const items: ContextMenuItem[] = [
+            {
+                id: 'insert-above',
+                label: 'Insert Blank Row Above',
+                icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"/>
+                    <line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>`,
+            },
+            {
+                id: 'insert-below',
+                label: 'Insert Blank Row Below',
+                icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"/>
+                    <line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>`,
+            },
+            { id: 'divider-1', type: 'divider' },
+        ];
+        
+        // Convert to Task option only for blank rows
+        if (isBlank) {
+            items.push({
+                id: 'convert-to-task',
+                label: 'Convert to Task',
+                icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="12" y1="18" x2="12" y2="12"/>
+                    <line x1="9" y1="15" x2="15" y2="15"/>
+                </svg>`,
+            });
+            items.push({ id: 'divider-2', type: 'divider' });
+        }
+        
+        items.push({
+            id: 'delete',
+            label: 'Delete Row',
+            icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="3 6 5 6 21 6"/>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+            </svg>`,
+            danger: true,
+        });
+        
+        items.push({ id: 'divider-3', type: 'divider' });
+        
+        items.push({
+            id: 'properties',
+            label: 'Properties...',
+            icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>`,
+        });
+        
+        menu.show(anchorEl, items, (itemId) => {
+            switch (itemId) {
+                case 'insert-above':
+                    this.insertBlankRowAbove(taskId);
+                    break;
+                case 'insert-below':
+                    this.insertBlankRowBelow(taskId);
+                    break;
+                case 'convert-to-task':
+                    this.convertBlankToTask(taskId);
+                    break;
+                case 'delete':
+                    this.deleteTask(taskId);
+                    break;
+                case 'properties':
+                    this.openProperties(taskId);
+                    break;
+            }
+        });
+    }
+
+    /**
+     * Insert blank row above a task
+     */
+    insertBlankRowAbove(taskId: string): void {
+        const task = this.taskStore.getById(taskId);
+        if (!task) return;
+        
+        this.saveCheckpoint();
+        
+        // Get siblings to find sort key position
+        const siblings = this.taskStore.getChildren(task.parentId);
+        const taskIndex = siblings.findIndex(s => s.id === taskId);
+        
+        const beforeKey = taskIndex > 0 ? siblings[taskIndex - 1].sortKey : null;
+        const afterKey = task.sortKey;
+        
+        const newSortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
+        const blankRow = this.taskStore.createBlankRow(newSortKey, task.parentId);
+        
+        // Select the new blank row
+        this.selectedIds.clear();
+        this.selectedIds.add(blankRow.id);
+        this.focusedId = blankRow.id;
+        
+        this.recalculateAll();
+        this.saveData();
+        this.render();
+        
+        // Scroll to and highlight the new row
+        if (this.grid) {
+            this.grid.scrollToTask(blankRow.id);
+            this.grid.highlightCell(blankRow.id, 'name');
+        }
+    }
+
+    /**
+     * Insert blank row below a task
+     */
+    insertBlankRowBelow(taskId: string): void {
+        const task = this.taskStore.getById(taskId);
+        if (!task) return;
+        
+        this.saveCheckpoint();
+        
+        // Get siblings to find sort key position
+        const siblings = this.taskStore.getChildren(task.parentId);
+        const taskIndex = siblings.findIndex(s => s.id === taskId);
+        
+        const beforeKey = task.sortKey;
+        const afterKey = taskIndex < siblings.length - 1 ? siblings[taskIndex + 1].sortKey : null;
+        
+        const newSortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
+        const blankRow = this.taskStore.createBlankRow(newSortKey, task.parentId);
+        
+        // Select the new blank row
+        this.selectedIds.clear();
+        this.selectedIds.add(blankRow.id);
+        this.focusedId = blankRow.id;
+        
+        this.recalculateAll();
+        this.saveData();
+        this.render();
+        
+        // Scroll to and highlight the new row
+        if (this.grid) {
+            this.grid.scrollToTask(blankRow.id);
+            this.grid.highlightCell(blankRow.id, 'name');
+        }
+    }
+
+    /**
+     * Convert a blank row to a task
+     */
+    convertBlankToTask(taskId: string): void {
+        if (!this.taskStore.isBlankRow(taskId)) {
+            this.toastService?.error('Only blank rows can be converted');
+            return;
+        }
+        
+        this.saveCheckpoint();
+        
+        const task = this.taskStore.wakeUpBlankRow(taskId, 'New Task');
+        if (!task) return;
+        
+        this.recalculateAll();
+        this.saveData();
+        this.render();
+        
+        // Focus the name field for immediate editing
+        if (this.grid) {
+            setTimeout(() => {
+                this.grid?.focusCell(taskId, 'name');
+            }, 50);
+        }
+    }
+
+    /**
+     * Open properties panel for a task
+     */
+    openProperties(taskId: string): void {
+        // Trigger right sidebar with details panel
+        this._notifyOpenPanel('details');
+        
+        // Ensure task is selected
+        this.selectedIds.clear();
+        this.selectedIds.add(taskId);
+        this.focusedId = taskId;
+        this._updateSelection();
+    }
+
+    /**
+     * Indent all selected tasks
+     * Processes top-level selections only (children move with parents)
+     */
+    indentSelected(): void {
+        if (this.selectedIds.size === 0) {
+            this.toastService?.info('No tasks selected');
+            return;
+        }
+        
+        this.saveCheckpoint();
+        
+        const list = this._getFlatList();
+        const selectedIds = new Set(this.selectedIds);
+        
+        // Get top-level selected tasks (parent not in selection)
+        const topLevelSelected = list.filter(task =>
+            selectedIds.has(task.id) &&
+            (!task.parentId || !selectedIds.has(task.parentId))
+        );
+        
+        // Process in visual order (top to bottom)
+        let indentedCount = 0;
+        for (const task of topLevelSelected) {
+            const idx = list.findIndex(t => t.id === task.id);
+            if (idx <= 0) continue;
+            
+            const prev = list[idx - 1];
+            const taskDepth = this.taskStore.getDepth(task.id);
+            const prevDepth = this.taskStore.getDepth(prev.id);
+            
+            // Can only indent if prev is at same or higher depth
+            if (prevDepth < taskDepth) continue;
+            
+            let newParentId: string | null = null;
+            if (prevDepth === taskDepth) {
+                newParentId = prev.id;
+            } else {
+                let curr: Task | undefined = prev;
+                while (curr && this.taskStore.getDepth(curr.id) > taskDepth) {
+                    curr = curr.parentId ? this.taskStore.getById(curr.parentId) : undefined;
+                }
+                if (curr) newParentId = curr.id;
+            }
+            
+            if (newParentId !== null) {
+                const newSortKey = OrderingService.generateAppendKey(
+                    this.taskStore.getLastSortKey(newParentId)
+                );
+                this.taskStore.move(task.id, newParentId, newSortKey, 'Indent Task');
+                indentedCount++;
+            }
+        }
+        
+        if (indentedCount > 0) {
+            this.recalculateAll();
+            this.saveData();
+            this.render();
+            this.toastService?.success(`Indented ${indentedCount} task${indentedCount > 1 ? 's' : ''}`);
+        }
+    }
+
+    /**
+     * Outdent all selected tasks
+     * Processes top-level selections only (children move with parents)
+     */
+    outdentSelected(): void {
+        if (this.selectedIds.size === 0) {
+            this.toastService?.info('No tasks selected');
+            return;
+        }
+        
+        this.saveCheckpoint();
+        
+        const list = this._getFlatList();
+        const selectedIds = new Set(this.selectedIds);
+        const allTasks = this.taskStore.getAll();
+        
+        // Get top-level selected tasks
+        const topLevelSelected = list.filter(task =>
+            selectedIds.has(task.id) &&
+            (!task.parentId || !selectedIds.has(task.parentId))
+        );
+        
+        let outdentedCount = 0;
+        for (const task of topLevelSelected) {
+            if (!task.parentId) continue; // Already at root
+            
+            const currentParent = allTasks.find(t => t.id === task.parentId);
+            const grandparentId = currentParent ? currentParent.parentId : null;
+            
+            // Position after former parent among its siblings
+            const auntsUncles = this.taskStore.getChildren(grandparentId);
+            const formerParentIndex = auntsUncles.findIndex(t => t.id === currentParent?.id);
+            
+            const beforeKey = currentParent?.sortKey ?? null;
+            const afterKey = formerParentIndex < auntsUncles.length - 1
+                ? auntsUncles[formerParentIndex + 1].sortKey
+                : null;
+            
+            const newSortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
+            
+            this.taskStore.update(task.id, {
+                parentId: grandparentId,
+                sortKey: newSortKey
+            });
+            outdentedCount++;
+        }
+        
+        if (outdentedCount > 0) {
+            this.recalculateAll();
+            this.saveData();
+            this.render();
+            this.toastService?.success(`Outdented ${outdentedCount} task${outdentedCount > 1 ? 's' : ''}`);
+        }
+    }
+
+    /**
+     * Delete all selected tasks
+     * Shows confirmation for multiple tasks or parent tasks
+     */
+    async deleteSelected(): Promise<void> {
+        if (this.selectedIds.size === 0) {
+            this.toastService?.info('No tasks selected');
+            return;
+        }
+        
+        const selectedCount = this.selectedIds.size;
+        const hasParents = Array.from(this.selectedIds).some(id => this.taskStore.isParent(id));
+        
+        // Confirm for multiple tasks or parent tasks
+        if (selectedCount > 1 || hasParents) {
+            const childCount = hasParents
+                ? Array.from(this.selectedIds).reduce((sum, id) => 
+                    sum + this._getAllDescendants(id).size, 0)
+                : 0;
+            
+            const message = hasParents
+                ? `Delete ${selectedCount} task${selectedCount > 1 ? 's' : ''} and ${childCount} child task${childCount !== 1 ? 's' : ''}?`
+                : `Delete ${selectedCount} tasks?`;
+            
+            const confirmed = await this._confirmAction(message, 'Delete');
+            if (!confirmed) return;
+        }
+        
+        this.saveCheckpoint();
+        
+        const editingManager = getEditingStateManager();
+        const idsToDelete = Array.from(this.selectedIds);
+        
+        for (const taskId of idsToDelete) {
+            if (editingManager.isEditingTask(taskId)) {
+                editingManager.exitEditMode('task-deleted');
+            }
+            this.taskStore.delete(taskId, true);
+            this.selectedIds.delete(taskId);
+            
+            if (this.engine) {
+                this.engine.deleteTask(taskId).catch(console.error);
+            }
+        }
+        
+        if (this.focusedId && idsToDelete.includes(this.focusedId)) {
+            this.focusedId = null;
+        }
+        
+        this.recalculateAll();
+        this.saveData();
+        this.render();
+        
+        this.toastService?.success(`Deleted ${idsToDelete.length} task${idsToDelete.length > 1 ? 's' : ''}`);
+    }
+
+    /**
+     * Simple confirmation dialog
+     * @private
+     */
+    private _confirmAction(message: string, actionLabel: string): Promise<boolean> {
+        return new Promise(resolve => {
+            // For now, use browser confirm - can be replaced with custom modal
+            const result = confirm(message);
+            resolve(result);
+        });
+    }
+
+    /**
+     * Get flat list of visible tasks
+     * @private
+     */
+    private _getFlatList(): Task[] {
+        return this.taskStore.getVisibleTasks((id) => {
+            const t = this.taskStore.getById(id);
+            return t?._collapsed || false;
+        });
+    }
+
+    /**
+     * Get all descendants of a task
+     * @private
+     */
+    private _getAllDescendants(taskId: string): Set<string> {
+        const descendants = new Set<string>();
+        const collect = (id: string) => {
+            const children = this.taskStore.getChildren(id);
+            for (const child of children) {
+                descendants.add(child.id);
+                collect(child.id);
+            }
+        };
+        collect(taskId);
+        return descendants;
+    }
+
+    /**
+     * Get column definitions for Settings Modal
+     * v3.0: Used by Columns tab in Settings
+     */
+    getColumnDefinitionsForSettings(): GridColumn[] {
+        return this._getBaseColumnDefinitions();
+    }
+
+    /**
+     * Get current column preferences
+     * v3.0: Used by Columns tab in Settings
+     */
+    getColumnPreferencesForSettings(): ColumnPreferences {
+        return this._getColumnPreferences();
+    }
+
+    /**
+     * Save column preferences from Settings Modal
+     * v3.0: Called when user saves changes in Columns tab
+     */
+    saveColumnPreferencesFromSettings(preferences: ColumnPreferences): void {
+        this.updateColumnPreferences(preferences);
     }
 
     /**

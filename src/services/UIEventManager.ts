@@ -594,9 +594,16 @@ export class UIEventManager {
         case 'toggle-gantt':
           this._toggleGantt();
           break;
-        case 'column-settings':
-          this._openColumnSettings();
+        case 'bulk-indent':
+          scheduler.indentSelected();
           break;
+        case 'bulk-outdent':
+          scheduler.outdentSelected();
+          break;
+        case 'bulk-delete':
+          scheduler.deleteSelected();
+          break;
+        // v3.0: REMOVED column-settings - moved to Settings Modal
         case 'toggle-driving-path':
           this.getScheduler()?.toggleDrivingPathMode();
           break;
@@ -635,17 +642,6 @@ export class UIEventManager {
         }, 3000);
       }
     }
-  }
-
-  /**
-   * Open column settings modal
-   * @private
-   */
-  private _openColumnSettings(): void {
-    const scheduler = this.getScheduler();
-    if (!scheduler) return;
-    
-    scheduler.openColumnSettings();
   }
 
   // =========================================================================

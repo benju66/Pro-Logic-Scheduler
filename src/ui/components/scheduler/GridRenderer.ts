@@ -165,6 +165,15 @@ export class GridRenderer {
         // Listen to horizontal scroll for header sync
         this.container.addEventListener('scroll', () => {
             // Horizontal scroll is independent - header sync handled by SchedulerService
+            
+            // v3.0: Close any open context menus when scrolling to prevent detachment
+            const openMenu = document.querySelector('.context-menu');
+            if (openMenu) {
+                openMenu.remove();
+                // Also remove backdrop
+                const backdrop = document.querySelector('.context-menu-backdrop');
+                if (backdrop) backdrop.remove();
+            }
         }, { passive: true });
     }
 
@@ -488,10 +497,48 @@ export class GridRenderer {
             return;
         }
 
-        // Check for action button clicks
+        // =========================================================================
+        // v3.0 FIX: EXPLICIT ROW-MENU ACTION HANDLING
+        // This was the "missing link" in v2 - the action was detected but fell
+        // through to the generic onAction handler instead of onRowMenu
+        // =========================================================================
+        
+        // Check for row menu button clicks FIRST
+        const menuBtn = target.closest('.vsg-row-menu-btn') as HTMLElement | null;
+        if (menuBtn) {
+            e.stopPropagation(); // CRITICAL: Prevent row selection change
+            e.preventDefault();
+            
+            const menuTaskId = menuBtn.getAttribute('data-task-id');
+            const isBlank = menuBtn.getAttribute('data-is-blank') === 'true';
+            
+            if (menuTaskId && this.options.onRowMenu) {
+                // v3.0: Route to the dedicated menu handler
+                this.options.onRowMenu(menuTaskId, isBlank, menuBtn, e);
+            }
+            return; // CRITICAL: Return early to prevent fall-through
+        }
+        
+        // Also check by data-action attribute (belt and suspenders)
         const actionBtn = target.closest('[data-action]') as HTMLElement | null;
         if (actionBtn && !actionBtn.classList.contains('vsg-collapse-btn')) {
             const action = actionBtn.getAttribute('data-action');
+            
+            // v3.0 FIX: Explicit row-menu check before generic handler
+            if (action === 'row-menu') {
+                e.stopPropagation();
+                e.preventDefault();
+                
+                const menuTaskId = actionBtn.getAttribute('data-task-id') || taskId;
+                const isBlank = actionBtn.getAttribute('data-is-blank') === 'true';
+                
+                if (this.options.onRowMenu) {
+                    this.options.onRowMenu(menuTaskId, isBlank, actionBtn, e);
+                }
+                return; // CRITICAL: Return early
+            }
+            
+            // Generic action handler for other actions (if any remain)
             if (action && this.options.onAction) {
                 this.options.onAction(taskId, action, e);
             }

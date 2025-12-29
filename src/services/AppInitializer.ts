@@ -262,7 +262,8 @@ export class AppInitializer {
                 if (setting === 'highlightDependenciesOnHover' && this.scheduler) {
                     this.scheduler.setHighlightDependenciesOnHover(value);
                 }
-            }
+            },
+            getScheduler: () => this.scheduler || null,
         });
 
         // Initialize activity bar

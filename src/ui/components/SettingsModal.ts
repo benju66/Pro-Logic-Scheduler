@@ -6,11 +6,14 @@
  * Content sections will be implemented in future updates.
  */
 
+import { ColumnSettingsModal } from './ColumnSettingsModal';
+
 export interface SettingsModalOptions {
     overlay: HTMLElement;
     modal: HTMLElement;
     onClose?: () => void;
     onSettingChange?: (setting: string, value: boolean) => void;
+    getScheduler?: () => any; // SchedulerService instance
 }
 
 export class SettingsModal {
@@ -19,6 +22,7 @@ export class SettingsModal {
     private options: SettingsModalOptions;
     private activeSection: string = 'general';
     private isOpen: boolean = false;
+    private columnSettingsModal: ColumnSettingsModal | null = null;
 
     constructor(options: SettingsModalOptions) {
         this.overlay = options.overlay;
@@ -93,6 +97,39 @@ export class SettingsModal {
         });
 
         this.activeSection = section;
+
+        // v3.0: Initialize Columns tab when activated
+        if (section === 'columns') {
+            this._initColumnsTab();
+        }
+    }
+
+    /**
+     * Initialize Columns tab content
+     * v3.0: Uses ColumnSettingsModal to render column management UI
+     * @private
+     */
+    private _initColumnsTab(): void {
+        const container = this.modal.querySelector('#settings-columns-content') as HTMLElement;
+        if (!container || !this.options.getScheduler) return;
+
+        const scheduler = this.options.getScheduler();
+        if (!scheduler) return;
+
+        // Create or reuse ColumnSettingsModal instance
+        if (!this.columnSettingsModal) {
+            this.columnSettingsModal = new ColumnSettingsModal({
+                container: document.body, // Not used when rendering into container
+                onSave: (preferences) => {
+                    scheduler.saveColumnPreferencesFromSettings(preferences);
+                },
+                getColumns: () => scheduler.getColumnDefinitionsForSettings(),
+                getPreferences: () => scheduler.getColumnPreferencesForSettings(),
+            });
+        }
+
+        // Render column settings into the container
+        this.columnSettingsModal.renderIntoContainer(container);
     }
 
     /**

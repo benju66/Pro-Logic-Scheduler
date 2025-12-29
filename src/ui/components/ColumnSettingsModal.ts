@@ -174,6 +174,190 @@ export class ColumnSettingsModal {
     }
 
     /**
+     * Render column settings into a container (for use in Settings Modal)
+     * v3.0: Allows rendering ColumnSettingsModal content inside Settings Modal
+     */
+    renderIntoContainer(container: HTMLElement): void {
+        const columns = this.options.getColumns ? this.options.getColumns() : [];
+        
+        // Create column list element
+        const list = document.createElement('ul');
+        list.className = 'column-list';
+        container.innerHTML = '';
+        container.appendChild(list);
+        
+        // Get columns in current order
+        const orderedColumns = this.tempPreferences.order
+            .map(id => columns.find(col => col.id === id))
+            .filter((col): col is GridColumn => col !== undefined)
+            .concat(columns.filter(col => !this.tempPreferences.order.includes(col.id)));
+        
+        orderedColumns.forEach(col => {
+            const li = document.createElement('li');
+            li.className = 'column-list-item';
+            li.setAttribute('data-column-id', col.id);
+            li.draggable = true;
+            
+            const isVisible = this.tempPreferences.visible[col.id] !== false;
+            const isPinned = this.tempPreferences.pinned.includes(col.id);
+            
+            li.innerHTML = `
+                <div class="column-item-content">
+                    <div class="column-item-handle">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.4">
+                            <circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/>
+                            <circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/>
+                        </svg>
+                    </div>
+                    <label class="column-item-checkbox">
+                        <input type="checkbox" ${isVisible ? 'checked' : ''} data-column-id="${col.id}">
+                        <span class="column-item-label">${this._escapeHtml(col.label || col.id)}</span>
+                    </label>
+                    <button class="btn-icon-only column-item-pin ${isPinned ? 'pinned' : ''}" data-column-id="${col.id}" title="${isPinned ? 'Unpin column' : 'Pin column'}">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            ${isPinned 
+                                ? '<path d="M12 17v5M9 10.76V6a3 3 0 013-3h0a3 3 0 013 3v4.76M9 10.76l-5 5v2.48a2 2 0 002 2h10a2 2 0 002-2v-2.48l-5-5z"/>'
+                                : '<path d="M12 17v5M9 10.76V6a3 3 0 013-3h0a3 3 0 013 3v4.76M9 10.76l-5 5v2.48a2 2 0 002 2h10a2 2 0 002-2v-2.48l-5-5z" opacity="0.4"/>'
+                            }
+                        </svg>
+                    </button>
+                </div>
+            `;
+            
+            list.appendChild(li);
+        });
+        
+        // Bind events to new elements
+        this._bindColumnEventsInContainer(list);
+        this._initDragAndDropInContainer(list);
+        
+        // Add save button
+        const saveBtn = document.createElement('button');
+        saveBtn.className = 'btn btn-primary';
+        saveBtn.textContent = 'Save Changes';
+        saveBtn.style.cssText = 'margin-top: 16px;';
+        saveBtn.addEventListener('click', () => {
+            this._save();
+        });
+        container.appendChild(saveBtn);
+    }
+
+    /**
+     * Bind column events in a container (for Settings Modal integration)
+     * @private
+     */
+    private _bindColumnEventsInContainer(container: HTMLElement): void {
+        // Checkbox changes
+        container.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+            checkbox.addEventListener('change', (e: Event) => {
+                const target = e.target as HTMLInputElement;
+                const columnId = target.dataset.columnId || '';
+                this.tempPreferences.visible[columnId] = target.checked;
+            });
+        });
+        
+        // Pin/unpin buttons
+        container.querySelectorAll('.column-item-pin').forEach(btn => {
+            btn.addEventListener('click', (e: Event) => {
+                e.stopPropagation();
+                e.preventDefault();
+                
+                const columnId = (btn as HTMLElement).getAttribute('data-column-id') || '';
+                if (!columnId) return;
+                
+                if (!this.tempPreferences.visible[columnId]) {
+                    return;
+                }
+                
+                const index = this.tempPreferences.pinned.indexOf(columnId);
+                if (index > -1) {
+                    this.tempPreferences.pinned.splice(index, 1);
+                } else {
+                    const orderIndex = this.tempPreferences.order.indexOf(columnId);
+                    if (orderIndex === -1) {
+                        this.tempPreferences.pinned.push(columnId);
+                    } else {
+                        let insertIndex = this.tempPreferences.pinned.length;
+                        for (let i = 0; i < this.tempPreferences.pinned.length; i++) {
+                            const pinnedColId = this.tempPreferences.pinned[i];
+                            const pinnedOrderIndex = this.tempPreferences.order.indexOf(pinnedColId);
+                            if (pinnedOrderIndex > orderIndex) {
+                                insertIndex = i;
+                                break;
+                            }
+                        }
+                        this.tempPreferences.pinned.splice(insertIndex, 0, columnId);
+                    }
+                }
+                
+                // Re-render to update pin icons
+                const parentContainer = container.parentElement;
+                if (parentContainer) {
+                    this.renderIntoContainer(parentContainer);
+                }
+            });
+        });
+    }
+
+    /**
+     * Initialize drag-and-drop in a container (for Settings Modal integration)
+     * @private
+     */
+    private _initDragAndDropInContainer(container: HTMLElement): void {
+        const list = container.querySelector('.column-list') || container;
+        
+        list.querySelectorAll('.column-list-item').forEach(item => {
+            const itemEl = item as HTMLElement;
+            
+            itemEl.addEventListener('dragstart', (e: DragEvent) => {
+                if (!e.dataTransfer) return;
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', itemEl.dataset.columnId || '');
+                this.draggingElement = itemEl;
+                itemEl.classList.add('dragging');
+            });
+            
+            itemEl.addEventListener('dragend', () => {
+                itemEl.classList.remove('dragging');
+                this.draggingElement = null;
+                list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+            });
+        });
+        
+        list.addEventListener('dragover', (e: DragEvent) => {
+            e.preventDefault();
+            if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+            if (!this.draggingElement) return;
+            
+            const afterElement = this._getDragAfterElement(list as HTMLElement, e.clientY);
+            list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+            
+            if (afterElement && afterElement !== this.draggingElement) {
+                afterElement.classList.add('drag-over');
+                list.insertBefore(this.draggingElement, afterElement);
+            } else if (!afterElement) {
+                list.appendChild(this.draggingElement);
+            }
+        });
+        
+        list.addEventListener('drop', (e: DragEvent) => {
+            e.preventDefault();
+            this._updateOrderFromDOMInContainer(list as HTMLElement);
+            list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+        });
+    }
+
+    /**
+     * Update order from DOM in a container
+     * @private
+     */
+    private _updateOrderFromDOMInContainer(container: HTMLElement): void {
+        const items = container.querySelectorAll('.column-list-item');
+        const newOrder = Array.from(items).map(item => item.getAttribute('data-column-id') || '');
+        this.tempPreferences.order = newOrder;
+    }
+
+    /**
      * Render the column list
      * @private
      */
