@@ -2474,6 +2474,9 @@ export class SchedulerService {
         // is called during the render cycle, it has the correct task structure.
         this._updateGridDataSync();
         
+        // Update GanttRenderer.data synchronously BEFORE render() to eliminate flash
+        this._updateGanttDataSync();
+        
         // Handle follow-up actions
         if (result.needsRecalc) {
             this.recalculateAll();
@@ -5344,6 +5347,10 @@ export class SchedulerService {
         // Restore onChange
         restoreNotifications();
         
+        // Update renderers synchronously before render() to eliminate flash
+        this._updateGridDataSync();
+        this._updateGanttDataSync();
+        
         // Trigger render updates
         this.render();
 
@@ -5577,6 +5584,22 @@ export class SchedulerService {
                 return task?._collapsed || false;
             });
             this.grid.setData(tasks);
+        }
+    }
+
+    /**
+     * Update GanttRenderer.data synchronously before render()
+     * This ensures the Gantt chart has fresh data before rendering, eliminating flash.
+     * Values are queried from TaskStore directly.
+     * @private
+     */
+    private _updateGanttDataSync(): void {
+        if (this.gantt) {
+            const tasks = this.taskStore.getVisibleTasks((id) => {
+                const task = this.taskStore.getById(id);
+                return task?._collapsed || false;
+            });
+            this.gantt.setData(tasks);
         }
     }
 

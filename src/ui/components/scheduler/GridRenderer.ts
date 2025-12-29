@@ -316,7 +316,6 @@ export class GridRenderer {
         this.binder.updateColumns(columns);
         
         if (structureChanged) {
-            console.log('[GridRenderer] Column structure changed, rebuilding pool');
             // Rebuild pool with new column structure
             this.pool.rebuildPool(columns);
         }
@@ -773,13 +772,6 @@ export class GridRenderer {
         if (input.classList.contains('vsg-date-input')) {
             const editingManager = getEditingStateManager();
             const wasEditing = editingManager.isEditingCell(taskId, field);
-            console.log('[GridRenderer] _onBlur date input:', {
-                wasEditing,
-                inputValue: (input as HTMLInputElement).value,
-                taskId,
-                field,
-                saveInProgress: this._dateSaveInProgress.has(`${taskId}:${field}`)
-            });
             
             // FIX: Clear editing state immediately so the subsequent render 
             // (triggered by onCellChange) is allowed to update the DOM.
@@ -1089,15 +1081,8 @@ export class GridRenderer {
             
             // 1. Save current edit
             if (target.classList.contains('vsg-date-input')) {
-                // DEBUG: Trace execution flow
                 const editingManager = getEditingStateManager();
                 const wasEditing = editingManager.isEditingCell(taskId, currentField);
-                console.log('[GridRenderer] Enter handler - BEFORE clear:', {
-                    wasEditing,
-                    inputValue: (target as HTMLInputElement).value,
-                    taskId,
-                    field: currentField
-                });
                 
                 // FIX: Clear editing state immediately so the subsequent render 
                 // (triggered by onCellChange) is allowed to update the DOM.
@@ -1109,19 +1094,7 @@ export class GridRenderer {
                     editingManager.exitEditMode('enter');
                 }
                 
-                const isEditingAfterClear = editingManager.isEditingCell(taskId, currentField);
-                console.log('[GridRenderer] Enter handler - AFTER clear:', {
-                    isEditingAfterClear,
-                    editingCell: this.editingCell,
-                    inEditingRows: this.editingRows.has(taskId)
-                });
-                
                 this._saveDateInput(target as HTMLInputElement, taskId, currentField, true);
-                
-                console.log('[GridRenderer] Enter handler - AFTER save:', {
-                    inputValue: (target as HTMLInputElement).value,
-                    isoValue: (target as HTMLInputElement).dataset.isoValue
-                });
             } else if ((target as HTMLInputElement).type === 'number') {
                 let value = (target as HTMLInputElement).value.trim();
                 const parsedValue = parseInt(value);
@@ -1143,9 +1116,7 @@ export class GridRenderer {
             }
             
             // 2. Blur input (triggers blur handler cleanup)
-            console.log('[GridRenderer] Enter handler - calling blur()');
             target.blur();
-            console.log('[GridRenderer] Enter handler - blur() completed');
             
             // 3. Editing state already cleared above for date inputs
             // For non-date inputs, clear editing state here
@@ -1236,17 +1207,8 @@ export class GridRenderer {
     private _saveDateInput(input: HTMLInputElement, taskId: string, field: string, fromKeyboard: boolean = false): void {
         const saveKey = `${taskId}:${field}`;
         
-        console.log('[GridRenderer] _saveDateInput called:', {
-            fromKeyboard,
-            saveKey,
-            inputValue: input.value,
-            storedIso: input.dataset.isoValue,
-            saveInProgress: this._dateSaveInProgress.has(saveKey)
-        });
-        
         // If this is from blur and we already saved from keyboard, skip
         if (!fromKeyboard && this._dateSaveInProgress.has(saveKey)) {
-            console.log('[GridRenderer] _saveDateInput - skipping (already saved from keyboard)');
             this._dateSaveInProgress.delete(saveKey);
             return;
         }
@@ -1295,19 +1257,10 @@ export class GridRenderer {
             input.value = formatDateForDisplay(isoValue);
             input.dataset.isoValue = isoValue;
             
-            console.log('[GridRenderer] _saveDateInput - calling onCellChange:', {
-                taskId,
-                field,
-                isoValue,
-                displayValue: input.value
-            });
-            
             // Save ISO value
             if (this.options.onCellChange) {
                 this.options.onCellChange(taskId, field, isoValue);
             }
-            
-            console.log('[GridRenderer] _saveDateInput - onCellChange completed');
         } else {
             // Invalid date - revert to previous value
             const previousIso = input.dataset.isoValue || '';

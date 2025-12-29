@@ -338,19 +338,6 @@ export class BindingSystem {
             const editingManager = getEditingStateManager();
             const isBeingEdited = editingManager.isEditingCell(ctx.task.id, col.field);
             
-            // DEBUG: Trace editing guard behavior
-            if (col.field === 'start' || col.field === 'end') {
-                const storedValue = getTaskFieldValue(freshTask, col.field);
-                console.log('[BindingSystem] _bindCell date input:', {
-                    taskId: ctx.task.id,
-                    field: col.field,
-                    isBeingEdited,
-                    storedValue,
-                    currentInputValue: input.value,
-                    currentIsoValue: input.dataset.isoValue
-                });
-            }
-            
             if (!isBeingEdited) {
                 // Get the stored value (YYYY-MM-DD format) from freshTask
                 const storedValue = getTaskFieldValue(freshTask, col.field);
@@ -364,17 +351,6 @@ export class BindingSystem {
                 
                 // Store the ISO value as a data attribute for retrieval
                 input.dataset.isoValue = storedValue ? String(storedValue) : '';
-                
-                if (col.field === 'start' || col.field === 'end') {
-                    console.log('[BindingSystem] _bindCell - UPDATED DOM:', {
-                        newInputValue: input.value,
-                        newIsoValue: input.dataset.isoValue
-                    });
-                }
-            } else {
-                if (col.field === 'start' || col.field === 'end') {
-                    console.log('[BindingSystem] _bindCell - SKIPPED update (being edited)');
-                }
             }
             // If being edited, preserve DOM value (user's current input)
             
