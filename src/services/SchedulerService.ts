@@ -448,6 +448,13 @@ export class SchedulerService {
         };
         viewport.initGrid(gridOptions);
 
+        // Wire TaskStore to BindingSystem for fresh data queries
+        // This ensures BindingSystem always reads latest values from TaskStore
+        const gridRenderer = (viewport as any).gridRenderer as GridRenderer | null;
+        if (gridRenderer && gridRenderer.binder) {
+            gridRenderer.binder.setTaskStore(this.taskStore);
+        }
+
         // Initialize Gantt renderer
         // Note: viewport will create its own gantt pane, but we need to pass a container
         // The viewport's initGantt will use its internal gantt pane
@@ -1936,7 +1943,17 @@ export class SchedulerService {
                 this.toastService.info('Manual task dates updated');
             } else {
                 // AUTO MODE: Apply FNLT constraint (deadline)
+                // FIX: Recalculate duration based on start and new end date
+                const effectiveStart = task.actualStart || task.start;
+                let newDuration = task.duration; // Default to current duration
+                
+                if (effectiveStart) {
+                    newDuration = DateUtils.calcWorkDays(effectiveStart, value, calendar);
+                }
+                
                 const updates: Partial<Task> = { 
+                    end: value,
+                    duration: Math.max(1, newDuration), // Ensure duration is calculated and set
                     constraintType: 'fnlt' as ConstraintType,
                     constraintDate: value 
                 };

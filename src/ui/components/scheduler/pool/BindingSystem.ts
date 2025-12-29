@@ -12,6 +12,7 @@ import { getTaskFieldValue } from '../../../../types';
 import { ICONS } from '../icons';
 import { formatDateForDisplay, parseFlexibleDate, formatDateISO } from '../datepicker/DatePickerConfig';
 import { getEditingStateManager } from '../../../../services/EditingStateManager';
+import type { TaskStore } from '../../../../data/TaskStore';
 
 /**
  * Binding System - Updates pooled DOM elements with task data
@@ -19,6 +20,7 @@ import { getEditingStateManager } from '../../../../services/EditingStateManager
 export class BindingSystem {
     private columnMap: Map<string, GridColumn>;
     private calendar: Calendar | null = null;
+    private taskStore: TaskStore | null = null; // O(1) lookup for fresh task data
     private onDateChange: ((taskId: string, field: string, value: string) => void) | null = null;
     private onOpenDatePicker: ((taskId: string, field: string, anchorEl: HTMLElement, currentValue: string) => void) | null = null;
 
@@ -27,6 +29,14 @@ export class BindingSystem {
         columns.forEach(col => {
             this.columnMap.set(col.field, col);
         });
+    }
+    
+    /**
+     * Set the TaskStore for querying fresh task data
+     * This ensures we always read the latest values from the source of truth
+     */
+    setTaskStore(store: TaskStore): void {
+        this.taskStore = store;
     }
     
     /**
@@ -83,7 +93,9 @@ export class BindingSystem {
         row.element.setAttribute('role', 'row');
         row.element.setAttribute('aria-rowindex', String(index + 1));
         row.element.setAttribute('aria-selected', String(isSelected));
-        row.element.setAttribute('aria-label', `${task.name}, row ${index + 1}`);
+        // Use freshTask for field values (name), task for structure (id)
+        const freshTask = this.taskStore?.getById(task.id) ?? task;
+        row.element.setAttribute('aria-label', `${freshTask.name}, row ${index + 1}`);
 
         // Bind cells
         for (const [field, cell] of row.cells) {
@@ -208,6 +220,13 @@ export class BindingSystem {
     private _bindCell(cell: PooledCell, col: GridColumn, task: Task, ctx: BindingContext): void {
         const { isParent, isCollapsed, depth } = ctx;
 
+        // ═══════════════════════════════════════════════════════════════
+        // QUERY TASKSTORE FOR FRESH DATA
+        // Always read field values from TaskStore (source of truth)
+        // Use task parameter only for structural fields (id, rowType, etc.)
+        // ═══════════════════════════════════════════════════════════════
+        const freshTask = this.taskStore?.getById(task.id) ?? task;
+
         // Handle special column: actions FIRST
         if (col.type === 'actions' && col.actions) {
             this._bindActionsCell(cell, col, task, ctx);
@@ -216,13 +235,14 @@ export class BindingSystem {
 
         // Special handling for schedulingMode (skip renderer, handle icon + select separately)
         if (col.field === 'schedulingMode') {
-            this._bindSchedulingModeCell(cell, col, task, ctx);
+            this._bindSchedulingModeCell(cell, col, freshTask, ctx);
             return;
         }
 
         // Handle custom renderer (check before standard binding)
+        // Pass freshTask to ensure renderers get latest data
         if (col.renderer) {
-            const rendered = col.renderer(task, {
+            const rendered = col.renderer(freshTask, {
                 isParent,
                 depth,
                 isCollapsed,
@@ -247,7 +267,8 @@ export class BindingSystem {
             return;
         }
 
-        const value = getTaskFieldValue(task, col.field);
+        // Use freshTask for field value reads (always up-to-date)
+        const value = getTaskFieldValue(freshTask, col.field);
 
         // Handle different cell types
         if (cell.checkbox) {
@@ -317,9 +338,22 @@ export class BindingSystem {
             const editingManager = getEditingStateManager();
             const isBeingEdited = editingManager.isEditingCell(ctx.task.id, col.field);
             
+            // DEBUG: Trace editing guard behavior
+            if (col.field === 'start' || col.field === 'end') {
+                const storedValue = getTaskFieldValue(freshTask, col.field);
+                console.log('[BindingSystem] _bindCell date input:', {
+                    taskId: ctx.task.id,
+                    field: col.field,
+                    isBeingEdited,
+                    storedValue,
+                    currentInputValue: input.value,
+                    currentIsoValue: input.dataset.isoValue
+                });
+            }
+            
             if (!isBeingEdited) {
-                // Get the stored value (YYYY-MM-DD format)
-                const storedValue = getTaskFieldValue(ctx.task, col.field);
+                // Get the stored value (YYYY-MM-DD format) from freshTask
+                const storedValue = getTaskFieldValue(freshTask, col.field);
                 
                 // Display in MM/DD/YYYY format
                 if (storedValue) {
@@ -330,6 +364,17 @@ export class BindingSystem {
                 
                 // Store the ISO value as a data attribute for retrieval
                 input.dataset.isoValue = storedValue ? String(storedValue) : '';
+                
+                if (col.field === 'start' || col.field === 'end') {
+                    console.log('[BindingSystem] _bindCell - UPDATED DOM:', {
+                        newInputValue: input.value,
+                        newIsoValue: input.dataset.isoValue
+                    });
+                }
+            } else {
+                if (col.field === 'start' || col.field === 'end') {
+                    console.log('[BindingSystem] _bindCell - SKIPPED update (being edited)');
+                }
             }
             // If being edited, preserve DOM value (user's current input)
             
@@ -344,7 +389,7 @@ export class BindingSystem {
             
             // Add constraint icon if needed
             if (hasConstraintIcon) {
-                this._bindConstraintIcon(cell, col, ctx.task, ctx);
+                this._bindConstraintIcon(cell, col, freshTask, ctx);
             }
             
             // Add calendar icon that opens shared popup
@@ -391,7 +436,7 @@ export class BindingSystem {
         // Handle constraint icons on non-date cells
         if (col.showConstraintIcon && (col.field === 'start' || col.field === 'end') && col.type !== 'date') {
             cell.container.style.position = 'relative';
-            this._bindConstraintIcon(cell, col, task, ctx);
+            this._bindConstraintIcon(cell, col, freshTask, ctx);
         }
 
     }
@@ -586,8 +631,10 @@ export class BindingSystem {
         // Don't show icons for parent tasks
         if (ctx.isParent) return;
 
-        const constraintType = task.constraintType || 'asap';
-        const constraintDate = task.constraintDate || '';
+        // Query TaskStore for fresh constraint data
+        const freshTask = this.taskStore?.getById(task.id) ?? task;
+        const constraintType = freshTask.constraintType || 'asap';
+        const constraintDate = freshTask.constraintDate || '';
 
         // Determine which icon to show
         let iconName: keyof typeof ICONS | null = null;

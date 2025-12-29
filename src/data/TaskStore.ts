@@ -72,6 +72,7 @@ const DB_TO_FIELD: Record<string, string> = {
  */
 export class TaskStore {
   private tasks: Task[] = [];
+  private taskMap: Map<string, Task> = new Map(); // O(1) lookup optimization
   private options: TaskStoreOptions;
   private persistenceService: PersistenceService | null = null;
   private historyManager: HistoryManager | null = null;
@@ -102,7 +103,7 @@ export class TaskStore {
   }
 
   getById(id: string): Task | undefined {
-    return this.tasks.find(t => t.id === id);
+    return this.taskMap.get(id); // O(1) lookup instead of O(n)
   }
 
   getChildren(parentId: string | null): Task[] {
@@ -231,6 +232,7 @@ export class TaskStore {
    */
   setAll(tasks: Task[]): void {
     this.tasks = tasks || [];
+    this._updateMap();
     this._notifyChange();
   }
 
@@ -239,6 +241,7 @@ export class TaskStore {
    */
   add(task: Task, label?: string): Task {
     this.tasks.push(task);
+    this.taskMap.set(task.id, task); // Update Map
     
     const forwardEvent = this._createTaskCreatedEvent(task);
     const backwardEvent: QueuedEvent = {
@@ -287,6 +290,7 @@ export class TaskStore {
     }
 
     Object.assign(task, updates);
+    this.taskMap.set(id, task); // Update Map (task object reference unchanged, but ensure Map is current)
     this._notifyChange();
     return task;
   }
@@ -376,10 +380,11 @@ export class TaskStore {
       
       this._queueAndRecord(forwardEvent, backwardEvent);
       
-      // Remove from array
+      // Remove from array and Map
       const idx = this.tasks.findIndex(t => t.id === taskToDelete.id);
       if (idx !== -1) {
         this.tasks.splice(idx, 1);
+        this.taskMap.delete(taskToDelete.id); // Update Map
       }
     }
 
@@ -553,8 +558,10 @@ export class TaskStore {
     const existingIdx = this.tasks.findIndex(t => t.id === task.id);
     if (existingIdx >= 0) {
       this.tasks[existingIdx] = task;
+      this.taskMap.set(task.id, task); // Update Map
     } else {
       this.tasks.push(task);
+      this.taskMap.set(task.id, task); // Update Map
     }
     
     // Queue for persistence
@@ -578,6 +585,8 @@ export class TaskStore {
       (task as any)[camelField] = newValue;
     }
     
+    this.taskMap.set(task.id, task); // Update Map (task object reference unchanged, but ensure Map is current)
+    
     // Queue for persistence
     if (this.persistenceService) {
       this.persistenceService.queueEvent(event.type, event.targetId, event.payload);
@@ -588,6 +597,7 @@ export class TaskStore {
     const idx = this.tasks.findIndex(t => t.id === event.targetId);
     if (idx !== -1) {
       this.tasks.splice(idx, 1);
+      this.taskMap.delete(event.targetId!); // Update Map
     }
     
     // Queue for persistence
@@ -622,6 +632,18 @@ export class TaskStore {
     return () => {
       this.options.onChange = originalOnChange;
     };
+  }
+
+  /**
+   * Update the Map index to keep it in sync with tasks array
+   * Called after bulk operations or when Map might be out of sync
+   * @private
+   */
+  private _updateMap(): void {
+    this.taskMap.clear();
+    this.tasks.forEach(task => {
+      this.taskMap.set(task.id, task);
+    });
   }
 
   private _notifyChange(): void {

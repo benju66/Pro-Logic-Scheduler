@@ -784,3 +784,23 @@
     margin: 0 4px;
 }
 
+/* =============================================================================
+   Fix Unwanted Grid Border
+   ============================================================================= */
+
+.vsg-container,
+.vsg-row-container,
+.scheduler-pane, 
+.scheduler-grid-pane,
+.scheduler-gantt-pane {
+    border: none !important;
+    outline: none !important;
+    box-shadow: none !important;
+}
+
+/* Ensure only the split-pane divider is visible */
+.split-pane-divider {
+    background-color: #e2e8f0; 
+    width: 1px;
+}
+
