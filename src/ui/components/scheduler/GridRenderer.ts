@@ -84,6 +84,7 @@ export class GridRenderer {
             onRowClick: options.onRowClick ?? (() => {}),
             onRowDoubleClick: options.onRowDoubleClick ?? (() => {}),
             onAction: options.onAction ?? (() => {}),
+            onRowMenu: options.onRowMenu,
             onToggleCollapse: options.onToggleCollapse ?? (() => {}),
             onSelectionChange: options.onSelectionChange ?? (() => {}),
             onRowMove: options.onRowMove ?? (() => {}),
@@ -509,10 +510,11 @@ export class GridRenderer {
             e.stopPropagation(); // CRITICAL: Prevent row selection change
             e.preventDefault();
             
-            const menuTaskId = menuBtn.getAttribute('data-task-id');
-            const isBlank = menuBtn.getAttribute('data-is-blank') === 'true';
+            // Logic to find task and isBlank
+            const menuTaskId = menuBtn.getAttribute('data-task-id') || taskId;
+            const isBlank = menuBtn.getAttribute('data-is-blank') === 'true' || row.classList.contains('blank-row');
             
-            if (menuTaskId && this.options.onRowMenu) {
+            if (this.options.onRowMenu) {
                 // v3.0: Route to the dedicated menu handler
                 this.options.onRowMenu(menuTaskId, isBlank, menuBtn, e);
             }
@@ -529,8 +531,9 @@ export class GridRenderer {
                 e.stopPropagation();
                 e.preventDefault();
                 
+                // Logic to find task and isBlank
                 const menuTaskId = actionBtn.getAttribute('data-task-id') || taskId;
-                const isBlank = actionBtn.getAttribute('data-is-blank') === 'true';
+                const isBlank = actionBtn.getAttribute('data-is-blank') === 'true' || row.classList.contains('blank-row');
                 
                 if (this.options.onRowMenu) {
                     this.options.onRowMenu(menuTaskId, isBlank, actionBtn, e);

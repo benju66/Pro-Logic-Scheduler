@@ -465,7 +465,7 @@ export class UIEventManager {
       const action = button.dataset.action;
       const isInHeader = button.closest('.header');
       const isInGridRows = button.closest('.vsg-row-container');
-      const gridActions = ['collapse', 'indent', 'outdent', 'links', 'delete'];
+      const gridActions = ['collapse', 'indent', 'outdent', 'links', 'delete', 'row-menu'];
       
       // Skip grid-specific actions ONLY if they're in grid rows (not header buttons)
       if (action && gridActions.includes(action) && isInGridRows && !isInHeader) {

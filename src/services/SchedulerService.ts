@@ -928,13 +928,13 @@ export class SchedulerService {
             },
             {
                 id: 'actions',
-                label: '', // Empty label keeps header clean
+                label: 'Actions',
                 field: 'actions',
                 type: 'actions',
                 width: 40, // v3.0: Increased from 30px for better click target
                 editable: false,
                 minWidth: 36,
-                resizable: false,
+                resizable: true,
                 align: 'center',
                 // v3.0: SINGLE action only - no more inline buttons
                 actions: [

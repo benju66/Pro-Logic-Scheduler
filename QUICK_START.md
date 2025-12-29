@@ -44,7 +44,7 @@ Then just type `scheduler` in any terminal!
 ## 📝 Original Commands (Still Work)
 
 ```bash
-# Tauri desktop app
+# Tauri desktop app (with hot reload)
 npm run tauri dev
 
 # Build for production
@@ -53,6 +53,20 @@ npm run tauri build
 
 ## 🎯 Recommended Workflow
 
-1. **For development:** Use `npm start` or double-click `start-app.sh`
+1. **For development:** Use `npm start` or `npm run tauri:dev`
+   - ✅ **Hot reload enabled** - Frontend changes (TypeScript, CSS) update automatically
+   - ✅ No need to rebuild or restart for code changes
+   - ✅ Only restart needed for Rust backend changes (`src-tauri/src/*.rs`)
+
 2. **If port is busy:** Use `npm run clean && npm start`
+
 3. **For production:** Use `npm run tauri build`
+
+## 🔥 Hot Reload Details
+
+When running `npm run tauri:dev` or `npm start`:
+- **Frontend changes** (TypeScript, CSS, HTML) → **Auto-reloads instantly** ✨
+- **Rust changes** (`src-tauri/src/*.rs`) → Requires app restart
+- **Config changes** (`tauri.conf.json`) → Requires app restart
+
+**You do NOT need to run `npm run build` during development!** The dev server handles everything automatically.

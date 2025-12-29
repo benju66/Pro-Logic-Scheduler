@@ -89,8 +89,10 @@ We are executing a 4-Phase Strategy to disrupt the market:
 # Install dependencies
 npm install
 
-# Run Native App (Tauri Desktop)
+# Run Native App (Tauri Desktop) - Hot Reload Enabled!
 npm run tauri dev
+# or use the convenience script:
+npm start
 
 # Build for Production
 npm run tauri build
