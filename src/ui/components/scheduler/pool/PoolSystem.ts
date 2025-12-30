@@ -240,18 +240,13 @@ export class PoolSystem {
                     input.style.flex = '1';
                     input.style.minWidth = '0'; // Allow shrinking
                     
-                    // Add options
+                    // Add options (type is string[])
                     if (col.options) {
                         col.options.forEach(opt => {
                             const option = document.createElement('option');
-                            if (typeof opt === 'string') {
-                                option.value = opt;
-                                option.textContent = opt;
-                            } else {
-                                option.value = opt.value;
-                                option.textContent = opt.label;
-                            }
-                            input.appendChild(option);
+                            option.value = opt;
+                            option.textContent = opt;
+                            input!.appendChild(option);
                         });
                     }
                     wrapper.appendChild(input);
@@ -261,18 +256,13 @@ export class PoolSystem {
                     input = document.createElement('select');
                     input.className = 'vsg-select';
                     input.setAttribute('data-field', col.field);
-                    // Add options
+                    // Add options (type is string[])
                     if (col.options) {
                         col.options.forEach(opt => {
                             const option = document.createElement('option');
-                            if (typeof opt === 'string') {
-                                option.value = opt;
-                                option.textContent = opt;
-                            } else {
-                                option.value = opt.value;
-                                option.textContent = opt.label;
-                            }
-                            input.appendChild(option);
+                            option.value = opt;
+                            option.textContent = opt;
+                            input!.appendChild(option);
                         });
                     }
                     container.appendChild(input);
@@ -405,6 +395,64 @@ export class PoolSystem {
         }
         
         console.log(`[PoolSystem] ✅ Pool rebuilt: ${poolSize} rows with ${columns.length} columns`);
+    }
+
+    /**
+     * Smartly update row structure without destroying existing cells.
+     * Preserves focus, event listeners, and DOM state for unchanged columns.
+     * Uses document.createDocumentFragment for batch DOM updates (anti-stutter).
+     * 
+     * @param newColumns - New column definitions
+     */
+    updateStructure(newColumns: GridColumn[]): void {
+        console.log(`[PoolSystem] Updating structure: ${this.columns.length} -> ${newColumns.length} columns`);
+        this.columns = newColumns;
+        
+        // Update all rows in the pool (both active and available)
+        for (const row of this.pool) {
+            const currentCells = row.cells;
+            
+            // Create a fragment to minimize reflows during reordering
+            const fragment = document.createDocumentFragment();
+            const newCellMap = new Map<string, PooledCell>();
+
+            for (const col of newColumns) {
+                let cell = currentCells.get(col.field);
+
+                if (!cell) {
+                    // Create new cell if it doesn't exist
+                    cell = this._createCell(col);
+                } else {
+                    // Update width/styles for existing cell (preserves input state)
+                    const isPinned = col.cellClass?.includes('pinned');
+                    cell.container.style.width = `var(--w-${col.field}, ${col.width || 100}px)`;
+                    cell.container.style.position = isPinned ? 'sticky' : 'relative';
+                    if (isPinned) {
+                        cell.container.style.background = 'white';
+                        cell.container.style.zIndex = '100';
+                    } else {
+                        cell.container.style.zIndex = '';
+                        cell.container.style.background = '';
+                    }
+                }
+
+                newCellMap.set(col.field, cell);
+                // Appending to fragment automatically detaches from current parent
+                fragment.appendChild(cell.container);
+            }
+
+            // Update the row's cell map
+            row.cells = newCellMap;
+            
+            // Clear row content and append the reordered fragment
+            // The while loop cleans up any orphaned cells not in new columns
+            while (row.element.firstChild) {
+                row.element.removeChild(row.element.firstChild);
+            }
+            row.element.appendChild(fragment);
+        }
+        
+        console.log(`[PoolSystem] ✅ Structure updated: ${this.pool.length} rows, ${newColumns.length} columns`);
     }
 
     /**

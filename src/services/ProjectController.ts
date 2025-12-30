@@ -122,9 +122,9 @@ export class ProjectController {
                 this.isCalculating$.next(false);
                 
                 console.log(
-                    `[ProjectController] CPM complete: ${response.payload.stats.task_count} tasks, ` +
-                    `${response.payload.stats.critical_count} critical, ` +
-                    `${response.payload.stats.calc_time.toFixed(2)}ms`
+                    `[ProjectController] CPM complete: ${response.payload.stats.taskCount} tasks, ` +
+                    `${response.payload.stats.criticalCount} critical, ` +
+                    `${response.payload.stats.calcTime.toFixed(2)}ms`
                 );
                 break;
 

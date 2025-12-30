@@ -12,6 +12,9 @@ import type { Task, GridColumn, Calendar } from '../../../types';
 import type { ViewportState, SchedulerViewportOptions, GridRendererOptions, GanttRendererOptions, PerformanceMetrics } from './types';
 import { GridRenderer } from './GridRenderer';
 import { GanttRenderer } from './GanttRenderer';
+import { ProjectController } from '../../../services/ProjectController';
+import { SelectionModel } from '../../../services/SelectionModel';
+import { Subscription } from 'rxjs';
 import { ROW_HEIGHT, HEADER_HEIGHT, DEFAULT_BUFFER_ROWS, ERROR_CONFIG } from './constants';
 
 /**
@@ -87,12 +90,23 @@ export class SchedulerViewport {
         avgRenderTime: 0,
     };
 
+    // Services (singletons)
+    private controller: ProjectController;
+    private selectionModel: SelectionModel;
+
+    // Subscriptions (for cleanup)
+    private subscriptions: Subscription[] = [];
+
     /**
      * Constructor (NO SINGLETON)
      */
     constructor(container: HTMLElement, options: SchedulerViewportOptions = {}) {
         this.container = container;
         this.options = options;
+
+        // Initialize services (singletons ensure shared state across app)
+        this.controller = ProjectController.getInstance();
+        this.selectionModel = SelectionModel.getInstance();
 
         this.rowHeight = options.rowHeight ?? ROW_HEIGHT;
         this.headerHeight = options.headerHeight ?? HEADER_HEIGHT;
@@ -192,7 +206,7 @@ export class SchedulerViewport {
             
             if (ganttScrollTarget) {
                 ganttScrollTarget.addEventListener('scroll', () => {
-                    if (isSyncing) return;
+                    if (isSyncing || !this.scrollElement) return;
                     isSyncing = true;
                     this.scrollElement.scrollTop = (ganttScrollTarget as HTMLElement).scrollTop;
                     // Trigger render since scroll changed
@@ -219,13 +233,17 @@ export class SchedulerViewport {
             throw new Error('Grid pane not initialized. Call constructor first.');
         }
 
-        // Override container with viewport's grid pane
-        this.gridRenderer = new GridRenderer({
-            ...options,
-            container: this.gridPane,
-            rowHeight: this.rowHeight,
-            bufferRows: this.bufferRows,
-        });
+        // Pass services to renderer for direct communication
+        this.gridRenderer = new GridRenderer(
+            {
+                ...options,
+                container: this.gridPane,
+                rowHeight: this.rowHeight,
+                bufferRows: this.bufferRows,
+            },
+            this.controller,
+            this.selectionModel
+        );
 
         // Propagate existing data to the newly created renderer
         // This ensures data is available even if setData() was called before initGrid()
@@ -245,14 +263,18 @@ export class SchedulerViewport {
             throw new Error('Gantt pane not initialized. Call constructor first.');
         }
 
-        // Use the existing gantt container (preserved from HTML)
-        this.ganttRenderer = new GanttRenderer({
-            ...options,
-            container: this.ganttPane, // This is the #gantt-container element
-            rowHeight: this.rowHeight,
-            headerHeight: this.headerHeight,
-            onNeedsRender: () => this._scheduleRender(), // FIX: Notify viewport when gantt needs render
-        });
+        // Pass services to renderer for direct communication
+        this.ganttRenderer = new GanttRenderer(
+            {
+                ...options,
+                container: this.ganttPane, // This is the #gantt-container element
+                rowHeight: this.rowHeight,
+                headerHeight: this.headerHeight,
+                onNeedsRender: () => this._scheduleRender(), // FIX: Notify viewport when gantt needs render
+            },
+            this.controller,
+            this.selectionModel
+        );
 
         // Propagate existing data to the newly created renderer
         // This ensures data is available even if setData() was called before initGantt()
@@ -280,6 +302,22 @@ export class SchedulerViewport {
         if (!this.gridReady || !this.ganttReady) {
             throw new Error('Both Grid and Gantt must be initialized before start()');
         }
+
+        // Subscribe to ProjectController for task data updates (Worker -> UI)
+        this.subscriptions.push(
+            this.controller.tasks$.subscribe(tasks => {
+                this.setData(tasks);
+            })
+        );
+
+        // Subscribe to SelectionModel for selection state updates (UI -> UI, synchronous)
+        this.subscriptions.push(
+            this.selectionModel.state$.subscribe(state => {
+                // Convert Set to Array for setSelection signature
+                const selectedArray = Array.from(state.selectedIds);
+                this.setSelection(selectedArray, state.focusedId);
+            })
+        );
 
         this._setupResizeObserver();
         this._measure();
@@ -716,6 +754,10 @@ export class SchedulerViewport {
     destroy(): void {
         // Set flag FIRST (prevents all new operations and queued callbacks)
         this.isDestroyed = true;
+
+        // Unsubscribe from all observables (prevents memory leaks)
+        this.subscriptions.forEach(sub => sub.unsubscribe());
+        this.subscriptions = [];
 
         // Clear error recovery timeout (prevents post-destroy render scheduling)
         if (this.errorRecoveryTimeoutId !== null) {

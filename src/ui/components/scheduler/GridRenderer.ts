@@ -10,9 +10,10 @@
 
 import type { Task, GridColumn, Calendar } from '../../../types';
 import type { ViewportState, GridRendererOptions, BindingContext } from './types';
-import type { TaskStore } from '../../../data/TaskStore';
 import { PoolSystem } from './pool/PoolSystem';
 import { BindingSystem } from './pool/BindingSystem';
+import { ProjectController } from '../../../services/ProjectController';
+import { SelectionModel } from '../../../services/SelectionModel';
 import flatpickr from 'flatpickr';
 import type { Instance } from 'flatpickr/dist/types/instance';
 import { createSharedPickerOptions, destroyDatePicker, parseFlexibleDate, formatDateISO, formatDateForDisplay } from './datepicker/DatePickerConfig';
@@ -72,9 +73,21 @@ export class GridRenderer {
     // This tracks the last focused/highlighted cell for navigation mode
     private _focusedCell: { taskId: string; field: string } | null = null;
 
-    constructor(options: GridRendererOptions) {
+    // Services (injected or singleton fallback for migration)
+    private controller: ProjectController;
+    private selectionModel: SelectionModel;
+
+    constructor(
+        options: GridRendererOptions,
+        controller?: ProjectController,
+        selectionModel?: SelectionModel
+    ) {
         this.container = options.container;
         this.rowHeight = options.rowHeight;
+        
+        // Inject services or fallback to singletons (migration-friendly)
+        this.controller = controller || ProjectController.getInstance();
+        this.selectionModel = selectionModel || SelectionModel.getInstance();
 
         // Merge with defaults
         this.options = {
@@ -115,11 +128,9 @@ export class GridRenderer {
 
         this.binder = new BindingSystem(options.columns);
         
-        // Wire up date change callback
+        // Wire up date change callback to use new handler
         this.binder.setOnDateChange((taskId, field, value) => {
-            if (this.options.onCellChange) {
-                this.options.onCellChange(taskId, field, value);
-            }
+            this._handleCellChange(taskId, field, value);
         });
 
         // Set up shared date picker callback
@@ -328,8 +339,8 @@ export class GridRenderer {
         this.binder.updateColumns(columns);
         
         if (structureChanged) {
-            // Rebuild pool with new column structure
-            this.pool.rebuildPool(columns);
+            // Use smart structure update (anti-stutter) instead of full rebuild
+            this.pool.updateStructure(columns);
         }
     }
     
@@ -343,11 +354,30 @@ export class GridRenderer {
 
     /**
      * Set the TaskStore for the BindingSystem
-     * This allows the BindingSystem to query fresh task data directly from TaskStore
-     * @param taskStore - The TaskStore instance
+     * @deprecated Data now flows from ProjectController via setData(). This is a no-op.
+     * @param _taskStore - Unused
      */
-    setTaskStore(taskStore: TaskStore): void {
-        this.binder.setTaskStore(taskStore);
+    setTaskStore(_taskStore: unknown): void {
+        // No-op - data now flows from ProjectController via setData()
+        // Keeping method signature for backward compatibility during migration
+    }
+
+    /**
+     * Handle cell change - routes to ProjectController
+     * Central handler for all cell value changes (text, number, date, select)
+     * @param taskId - Task ID
+     * @param field - Field name
+     * @param value - New value
+     * @private
+     */
+    private _handleCellChange(taskId: string, field: string, value: unknown): void {
+        // Send to worker via controller
+        this.controller.updateTask(taskId, { [field]: value });
+        
+        // Legacy callback support (for SchedulerService during migration)
+        if (this.options.onCellChange) {
+            this.options.onCellChange(taskId, field, value);
+        }
     }
 
     /**
@@ -689,7 +719,15 @@ export class GridRenderer {
             }
         }
 
-        // Row click for selection
+        // Row click for selection - use SelectionModel for synchronous updates
+        const multi = e.ctrlKey || e.metaKey;
+        const range = e.shiftKey;
+        
+        // Provide task order for range selection to work correctly
+        const taskOrder = this.data.map(t => t.id);
+        this.selectionModel.select(taskId, multi, range, taskOrder);
+        
+        // Legacy callback support (for SchedulerService during migration)
         if (this.options.onRowClick) {
             this.options.onRowClick(taskId, e);
         }
@@ -776,9 +814,8 @@ export class GridRenderer {
 
         const value = input.value;
 
-        if (this.options.onCellChange) {
-            this.options.onCellChange(taskId, field, value);
-        }
+        // Route through central handler (sends to ProjectController)
+        this._handleCellChange(taskId, field, value);
     }
 
     /**
@@ -842,15 +879,13 @@ export class GridRenderer {
                 input.value = value; // Update DOM to show corrected value
             }
             
-            if (this.options.onCellChange) {
-                this.options.onCellChange(taskId, field, value);
-            }
+            // Route through central handler (sends to ProjectController)
+            this._handleCellChange(taskId, field, value);
         }
         // For text inputs, fire change on blur
         else if ((input as HTMLInputElement).type === 'text') {
-            if (this.options.onCellChange) {
-                this.options.onCellChange(taskId, field, input.value);
-            }
+            // Route through central handler (sends to ProjectController)
+            this._handleCellChange(taskId, field, input.value);
         }
 
         // Clear editing state after delay
@@ -1076,11 +1111,11 @@ export class GridRenderer {
                     (target as HTMLInputElement).value = value;
                 }
                 
-                if (this.options.onCellChange) {
-                    this.options.onCellChange(taskId, currentField, value);
-                }
-            } else if (this.options.onCellChange) {
-                this.options.onCellChange(taskId, currentField, (target as HTMLInputElement).value);
+                // Route through central handler (sends to ProjectController)
+                this._handleCellChange(taskId, currentField, value);
+            } else {
+                // Route through central handler (sends to ProjectController)
+                this._handleCellChange(taskId, currentField, (target as HTMLInputElement).value);
             }
             
             target.blur();
@@ -1169,26 +1204,26 @@ export class GridRenderer {
                     (target as HTMLInputElement).value = value;
                 }
                 
-                // Check if value actually changed before calling onCellChange
+                // Check if value actually changed before calling handler
                 // This prevents unnecessary saves when user presses Enter without changing value
                 const task = this.data.find(t => t.id === taskId);
                 const currentStoredValue = task ? String((task as any)[currentField] || '') : '';
                 const valueChanged = value !== currentStoredValue;
                 
-                if (valueChanged && this.options.onCellChange) {
-                    this.options.onCellChange(taskId, currentField, value);
+                if (valueChanged) {
+                    // Route through central handler (sends to ProjectController)
+                    this._handleCellChange(taskId, currentField, value);
                 }
                 
-                // Blur input AFTER onCellChange completes (if it was called)
+                // Blur input AFTER handler completes (if it was called)
                 // The flag will prevent blur handler from saving again
                 target.blur();
                 
                 // Clear the flag after a short delay (in case blur doesn't fire or is delayed)
                 setTimeout(() => this._numberSaveInProgress.delete(saveKey), 100);
             } else {
-                if (this.options.onCellChange) {
-                    this.options.onCellChange(taskId, currentField, (target as HTMLInputElement).value);
-                }
+                // Route through central handler (sends to ProjectController)
+                this._handleCellChange(taskId, currentField, (target as HTMLInputElement).value);
                 
                 // Blur input for other input types
                 target.blur();
@@ -1301,9 +1336,8 @@ export class GridRenderer {
         if (!displayValue) {
             // Empty value - clear the date
             input.dataset.isoValue = '';
-            if (this.options.onCellChange) {
-                this.options.onCellChange(taskId, field, '');
-            }
+            // Route through central handler (sends to ProjectController)
+            this._handleCellChange(taskId, field, '');
             return;
         }
         
@@ -1333,10 +1367,8 @@ export class GridRenderer {
             input.value = formatDateForDisplay(isoValue);
             input.dataset.isoValue = isoValue;
             
-            // Save ISO value
-            if (this.options.onCellChange) {
-                this.options.onCellChange(taskId, field, isoValue);
-            }
+            // Route through central handler (sends to ProjectController)
+            this._handleCellChange(taskId, field, isoValue);
         } else {
             // Invalid date - revert to previous value
             const previousIso = input.dataset.isoValue || '';
@@ -1682,10 +1714,8 @@ export class GridRenderer {
                         input.dataset.isoValue = dateStr;
                     }
                     
-                    // Trigger change callback with ISO format for storage
-                    if (this.options.onCellChange) {
-                        this.options.onCellChange(ctxTaskId, ctxField, dateStr);
-                    }
+                    // Route through central handler (sends to ProjectController)
+                    this._handleCellChange(ctxTaskId, ctxField, dateStr);
                 }
             },
             onClose: () => {

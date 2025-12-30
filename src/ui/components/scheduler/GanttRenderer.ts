@@ -10,6 +10,8 @@
 
 import type { Task, LinkType } from '../../../types';
 import type { ViewportState, GanttRendererOptions } from './types';
+import { ProjectController } from '../../../services/ProjectController';
+import { SelectionModel } from '../../../services/SelectionModel';
 
 /**
  * View mode configuration
@@ -113,6 +115,10 @@ export class GanttRenderer {
     // Cached calculations
     private barPositions: BarPosition[] = [];
 
+    // Services (injected or singleton fallback for migration)
+    private controller: ProjectController;
+    private selectionModel: SelectionModel;
+
     // View mode configurations
     private static readonly VIEW_MODES: Readonly<Record<string, ViewModeConfig>> = {
         Day: {
@@ -172,10 +178,18 @@ export class GanttRenderer {
         successorStroke: '#f97316',                         // Orange
     } as const;
 
-    constructor(options: GanttRendererOptions) {
+    constructor(
+        options: GanttRendererOptions,
+        controller?: ProjectController,
+        selectionModel?: SelectionModel
+    ) {
         this.container = options.container;
         this.rowHeight = options.rowHeight;
         this.headerHeight = options.headerHeight;
+        
+        // Inject services or fallback to singletons (migration-friendly)
+        this.controller = controller || ProjectController.getInstance();
+        this.selectionModel = selectionModel || SelectionModel.getInstance();
 
         // Merge with defaults
         this.options = {
@@ -1217,6 +1231,10 @@ export class GanttRenderer {
 
         const hitBar = this._hitTestBar(x, y);
         if (hitBar) {
+            // Use SelectionModel for synchronous selection (single-click selects bar)
+            const multi = e.ctrlKey || e.metaKey;
+            this.selectionModel.select(hitBar.taskId, multi, false); // range = false for bar click
+            
             const task = this.taskMap.get(hitBar.taskId);
             if (!task) return;
 
@@ -1236,8 +1254,17 @@ export class GanttRenderer {
     private _onMouseUp(_e: MouseEvent): void {
         if (this.dragState) {
             const task = this.taskMap.get(this.dragState.taskId);
-            if (task && this.options.onBarDrag) {
-                this.options.onBarDrag(task, task.start, task.end);
+            if (task) {
+                // Send final position to worker via controller
+                this.controller.updateTask(task.id, {
+                    start: task.start,
+                    end: task.end
+                });
+                
+                // Legacy callback support (for SchedulerService during migration)
+                if (this.options.onBarDrag) {
+                    this.options.onBarDrag(task, task.start, task.end);
+                }
             }
             this.dragState = null;
         }
