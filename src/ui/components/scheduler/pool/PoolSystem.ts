@@ -244,8 +244,8 @@ export class PoolSystem {
                     if (col.options) {
                         col.options.forEach(opt => {
                             const option = document.createElement('option');
-                            option.value = opt;
-                            option.textContent = opt;
+                                option.value = opt;
+                                option.textContent = opt;
                             input!.appendChild(option);
                         });
                     }
@@ -260,8 +260,8 @@ export class PoolSystem {
                     if (col.options) {
                         col.options.forEach(opt => {
                             const option = document.createElement('option');
-                            option.value = opt;
-                            option.textContent = opt;
+                                option.value = opt;
+                                option.textContent = opt;
                             input!.appendChild(option);
                         });
                     }

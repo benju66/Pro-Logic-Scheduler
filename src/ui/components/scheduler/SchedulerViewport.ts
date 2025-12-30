@@ -259,11 +259,13 @@ export class SchedulerViewport {
      * Initialize Gantt renderer
      */
     initGantt(options: GanttRendererOptions): void {
+        console.log('[SchedulerViewport] initGantt() called');
         if (!this.ganttPane) {
             throw new Error('Gantt pane not initialized. Call constructor first.');
         }
 
         // Pass services to renderer for direct communication
+        console.log('[SchedulerViewport] Creating GanttRenderer...');
         this.ganttRenderer = new GanttRenderer(
             {
                 ...options,
@@ -283,6 +285,7 @@ export class SchedulerViewport {
         }
 
         this.ganttReady = true;
+        console.log('[SchedulerViewport] GanttRenderer created, ganttReady=true');
         this._tryStart();
     }
 
@@ -290,6 +293,7 @@ export class SchedulerViewport {
      * Try to start render loop (if both ready)
      */
     private _tryStart(): void {
+        console.log(`[SchedulerViewport] _tryStart() - gridReady=${this.gridReady}, ganttReady=${this.ganttReady}, rafId=${this.rafId}`);
         if (this.gridReady && this.ganttReady && !this.rafId) {
             this.start();
         }
@@ -299,13 +303,16 @@ export class SchedulerViewport {
      * Start the render loop
      */
     start(): void {
+        console.log('[SchedulerViewport] start() called');
         if (!this.gridReady || !this.ganttReady) {
             throw new Error('Both Grid and Gantt must be initialized before start()');
         }
 
         // Subscribe to ProjectController for task data updates (Worker -> UI)
+        console.log('[SchedulerViewport] Subscribing to ProjectController.tasks$...');
         this.subscriptions.push(
             this.controller.tasks$.subscribe(tasks => {
+                console.log(`[SchedulerViewport] Received ${tasks.length} tasks from ProjectController`);
                 this.setData(tasks);
             })
         );
@@ -419,6 +426,7 @@ export class SchedulerViewport {
      */
     private _renderLoop(): void {
         this.rafId = null;
+        console.log(`[SchedulerViewport] _renderLoop() called, isDestroyed=${this.isDestroyed}, dirty=${this.dirty}`);
 
         // Guard 1: Early exit if destroyed (prevents post-destroy execution)
         if (this.isDestroyed) return;
@@ -556,6 +564,7 @@ export class SchedulerViewport {
      * Set task data
      */
     setData(tasks: Task[]): void {
+        console.log(`[SchedulerViewport] setData() called with ${tasks.length} tasks, isDestroyed=${this.isDestroyed}`);
         // Guard: Don't process data if destroyed
         if (this.isDestroyed) return;
 
