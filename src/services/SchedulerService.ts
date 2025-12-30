@@ -797,6 +797,14 @@ export class SchedulerService {
     }
 
     /**
+     * Set whether dependency highlighting on hover is enabled
+     * @param enabled - True to enable highlighting
+     */
+    setHighlightDependenciesOnHover(enabled: boolean): void {
+        this.displaySettings.highlightDependenciesOnHover = enabled;
+    }
+
+    /**
      * Toggle driving path mode
      */
     toggleDrivingPathMode(): void {

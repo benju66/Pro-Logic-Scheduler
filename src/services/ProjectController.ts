@@ -7,6 +7,7 @@
  * 1. Worker instantiation and lifecycle management
  * 2. Sending commands to the worker
  * 3. Exposing state changes via RxJS Observables
+ * 4. Triggering persistence events for SQLite storage
  * 
  * This decouples the UI completely from the calculation engine.
  * The UI subscribes to observables and reacts to state changes.
@@ -15,6 +16,7 @@
 import { BehaviorSubject, Subject, filter, firstValueFrom, timeout } from 'rxjs';
 import type { Task, Calendar, CPMResult } from '../types';
 import type { WorkerCommand, WorkerResponse } from '../workers/types';
+import type { PersistenceService } from '../data/PersistenceService';
 
 /**
  * ProjectController - Singleton
@@ -33,6 +35,12 @@ export class ProjectController {
     /** Current task list - updated after every calculation */
     public readonly tasks$ = new BehaviorSubject<Task[]>([]);
     
+    /** Current calendar configuration - updated on init and calendar changes */
+    public readonly calendar$ = new BehaviorSubject<Calendar>({
+        workingDays: [1, 2, 3, 4, 5],
+        exceptions: {}
+    });
+    
     /** CPM statistics from last calculation */
     public readonly stats$ = new BehaviorSubject<CPMResult['stats'] | null>(null);
     
@@ -47,6 +55,13 @@ export class ProjectController {
 
     // Event stream for specific worker responses (for awaiting async operations)
     private readonly workerResponses$ = new Subject<WorkerResponse>();
+
+    // ========================================================================
+    // Persistence Integration
+    // ========================================================================
+    
+    /** PersistenceService for event sourcing to SQLite */
+    private persistenceService: PersistenceService | null = null;
 
     // ========================================================================
     // Constructor & Singleton
@@ -64,6 +79,15 @@ export class ProjectController {
             ProjectController.instance = new ProjectController();
         }
         return ProjectController.instance;
+    }
+
+    /**
+     * Set the persistence service for event sourcing
+     * Called during app initialization to enable SQLite persistence
+     */
+    public setPersistenceService(service: PersistenceService): void {
+        this.persistenceService = service;
+        console.log('[ProjectController] PersistenceService attached');
     }
 
     /**
@@ -170,6 +194,9 @@ export class ProjectController {
     public async initialize(tasks: Task[], calendar: Calendar): Promise<void> {
         console.log(`[ProjectController] Initializing with ${tasks.length} tasks`);
         
+        // Store calendar locally for snapshot access
+        this.calendar$.next(calendar);
+        
         this.send({ type: 'INITIALIZE', payload: { tasks, calendar } });
         
         // Wait for initialization to complete (with timeout)
@@ -197,6 +224,31 @@ export class ProjectController {
     public addTask(task: Task): void {
         this.isCalculating$.next(true);
         this.send({ type: 'ADD_TASK', payload: task });
+
+        // Queue TASK_CREATED event for persistence
+        if (this.persistenceService) {
+            this.persistenceService.queueEvent('TASK_CREATED', task.id, {
+                id: task.id,
+                parent_id: task.parentId,
+                sort_key: task.sortKey,
+                row_type: task.rowType || 'task',
+                name: task.name,
+                notes: task.notes || '',
+                duration: task.duration,
+                constraint_type: task.constraintType,
+                constraint_date: task.constraintDate,
+                scheduling_mode: task.schedulingMode || 'Auto',
+                dependencies: task.dependencies || [],
+                progress: task.progress || 0,
+                actual_start: task.actualStart,
+                actual_finish: task.actualFinish,
+                remaining_duration: task.remainingDuration,
+                baseline_start: task.baselineStart,
+                baseline_finish: task.baselineFinish,
+                baseline_duration: task.baselineDuration,
+                is_collapsed: task._collapsed || false,
+            });
+        }
     }
 
     /**
@@ -205,6 +257,21 @@ export class ProjectController {
     public updateTask(id: string, updates: Partial<Task>): void {
         this.isCalculating$.next(true);
         this.send({ type: 'UPDATE_TASK', payload: { id, updates } });
+
+        // Queue TASK_UPDATED events for persistence (one per field for granular undo/redo)
+        if (this.persistenceService) {
+            for (const [field, value] of Object.entries(updates)) {
+                // Skip calculated fields - they're not persisted
+                const calculatedFields = ['start', 'end', 'level', 'lateStart', 'lateFinish', 
+                                         'totalFloat', 'freeFloat', '_isCritical', '_health'];
+                if (calculatedFields.includes(field)) continue;
+
+                this.persistenceService.queueEvent('TASK_UPDATED', id, {
+                    field,
+                    new_value: value,
+                });
+            }
+        }
     }
 
     /**
@@ -213,10 +280,16 @@ export class ProjectController {
     public deleteTask(id: string): void {
         this.isCalculating$.next(true);
         this.send({ type: 'DELETE_TASK', payload: { id } });
+
+        // Queue TASK_DELETED event for persistence
+        if (this.persistenceService) {
+            this.persistenceService.queueEvent('TASK_DELETED', id, {});
+        }
     }
 
     /**
      * Bulk sync all tasks (replaces entire task list)
+     * Note: This does NOT queue individual events - use for initial load or import only
      */
     public syncTasks(tasks: Task[]): void {
         this.isCalculating$.next(true);
@@ -231,8 +304,19 @@ export class ProjectController {
      * Update calendar configuration
      */
     public updateCalendar(calendar: Calendar): void {
+        // Store calendar locally for snapshot access
+        this.calendar$.next(calendar);
+        
         this.isCalculating$.next(true);
         this.send({ type: 'UPDATE_CALENDAR', payload: calendar });
+
+        // Queue CALENDAR_UPDATED event for persistence
+        if (this.persistenceService) {
+            this.persistenceService.queueEvent('CALENDAR_UPDATED', null, {
+                new_working_days: calendar.workingDays,
+                new_exceptions: calendar.exceptions,
+            });
+        }
     }
 
     // ========================================================================
@@ -256,6 +340,13 @@ export class ProjectController {
      */
     public getTasks(): Task[] {
         return this.tasks$.value;
+    }
+
+    /**
+     * Get current calendar (snapshot)
+     */
+    public getCalendar(): Calendar {
+        return this.calendar$.value;
     }
 
     /**
@@ -290,11 +381,15 @@ export class ProjectController {
 
         // Complete subjects
         this.tasks$.complete();
+        this.calendar$.complete();
         this.stats$.complete();
         this.isInitialized$.complete();
         this.isCalculating$.complete();
         this.errors$.complete();
         this.workerResponses$.complete();
+
+        // Clear persistence reference
+        this.persistenceService = null;
 
         // Clear singleton for potential re-initialization
         ProjectController.instance = null as any;

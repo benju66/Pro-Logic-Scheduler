@@ -1,6 +1,22 @@
 //! Tauri Commands for Scheduling Engine
 //! 
 //! These commands are invoked from TypeScript via `invoke()`
+//!
+//! PHASE 6 UPDATE: Most in-memory state management commands are now DEPRECATED.
+//! State is managed by ProjectController (TypeScript) -> WASM Worker.
+//! Persistence is handled by PersistenceService -> SQLite (via tauri-plugin-sql).
+//! 
+//! The following commands are kept for backwards compatibility or future use:
+//! - calculate_cpm: May be used for native CPM fallback/validation
+//! - get_engine_status: Useful for debugging
+//! - clear_engine: May be needed for testing
+//!
+//! DEPRECATED commands (no longer called from frontend):
+//! - initialize_engine
+//! - update_engine_task
+//! - add_engine_task
+//! - delete_engine_task
+//! - sync_engine_tasks
 
 use tauri::State;
 use crate::engine_state::AppState;
@@ -8,13 +24,18 @@ use crate::types::{Task, Calendar};
 
 /// Initialize the engine state with tasks and calendar
 /// 
-/// Called from RustEngine.initialize()
+/// DEPRECATED: State is now managed by ProjectController in TypeScript.
+/// This command is kept for backwards compatibility but is no longer called.
+/// 
+/// Previously called from RustEngine.initialize()
 #[tauri::command]
 pub fn initialize_engine(
     tasks_json: String,
     calendar_json: String,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    eprintln!("[Rust Engine] ⚠️ DEPRECATED: initialize_engine called - state now lives in TypeScript");
+    
     // Parse tasks
     let tasks: Vec<Task> = serde_json::from_str(&tasks_json)
         .map_err(|e| format!("Failed to parse tasks: {}", e))?;
@@ -32,21 +53,25 @@ pub fn initialize_engine(
     project.initialized = true;
 
     let count = project.task_count();
-    println!("[Rust Engine] Initialized with {} tasks", count);
+    println!("[Rust Engine] Initialized with {} tasks (DEPRECATED)", count);
     
     Ok(format!("Initialized with {} tasks", count))
 }
 
 /// Update a single task in the engine state
 /// 
-/// Called from RustEngine.updateTask()
-/// Assumes the task already exists
+/// DEPRECATED: Updates now flow through ProjectController -> PersistenceService -> SQLite.
+/// This command is kept for backwards compatibility but is no longer called.
+/// 
+/// Previously called from RustEngine.updateTask()
 #[tauri::command]
 pub fn update_engine_task(
     id: String,
     updates_json: String,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    eprintln!("[Rust Engine] ⚠️ DEPRECATED: update_engine_task called for task {}", id);
+    
     // Parse updates as generic JSON value
     let updates: serde_json::Value = serde_json::from_str(&updates_json)
         .map_err(|e| format!("Failed to parse updates: {}", e))?;
@@ -66,12 +91,17 @@ pub fn update_engine_task(
 
 /// Add a new task to the engine state
 /// 
-/// Called from RustEngine.addTask()
+/// DEPRECATED: Tasks are now added through ProjectController -> PersistenceService -> SQLite.
+/// This command is kept for backwards compatibility but is no longer called.
+/// 
+/// Previously called from RustEngine.addTask()
 #[tauri::command]
 pub fn add_engine_task(
     task_json: String,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    eprintln!("[Rust Engine] ⚠️ DEPRECATED: add_engine_task called");
+    
     // Parse task
     let task: Task = serde_json::from_str(&task_json)
         .map_err(|e| format!("Failed to parse task: {}", e))?;
@@ -86,18 +116,23 @@ pub fn add_engine_task(
 
     project.add_task(task);
     
-    println!("[Rust Engine] Added task");
+    println!("[Rust Engine] Added task (DEPRECATED)");
     Ok("Added".to_string())
 }
 
 /// Delete a task from the engine state
 /// 
-/// Called from RustEngine.deleteTask()
+/// DEPRECATED: Deletions now flow through ProjectController -> PersistenceService -> SQLite.
+/// This command is kept for backwards compatibility but is no longer called.
+/// 
+/// Previously called from RustEngine.deleteTask()
 #[tauri::command]
 pub fn delete_engine_task(
     id: String,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    eprintln!("[Rust Engine] ⚠️ DEPRECATED: delete_engine_task called for task {}", id);
+    
     // Lock state and delete
     let mut project = state.project.lock()
         .map_err(|e| format!("Failed to lock state: {}", e))?;
@@ -108,18 +143,24 @@ pub fn delete_engine_task(
 
     project.delete_task(&id)?;
     
-    println!("[Rust Engine] Deleted task {}", id);
+    println!("[Rust Engine] Deleted task {} (DEPRECATED)", id);
     Ok("Deleted".to_string())
 }
 
 /// Sync all tasks (bulk update)
 /// 
-/// Called from RustEngine.syncTasks()
+/// DEPRECATED: Bulk sync now uses ProjectController.syncTasks() which goes to WASM Worker.
+/// Persistence happens via event sourcing through PersistenceService.
+/// This command is kept for backwards compatibility but is no longer called.
+/// 
+/// Previously called from RustEngine.syncTasks()
 #[tauri::command]
 pub fn sync_engine_tasks(
     tasks_json: String,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
+    eprintln!("[Rust Engine] ⚠️ DEPRECATED: sync_engine_tasks called");
+    
     let tasks: Vec<Task> = serde_json::from_str(&tasks_json)
         .map_err(|e| format!("Failed to parse tasks: {}", e))?;
 
@@ -133,11 +174,14 @@ pub fn sync_engine_tasks(
     let count = tasks.len();
     project.load_tasks(tasks);
     
-    println!("[Rust Engine] Synced {} tasks", count);
+    println!("[Rust Engine] Synced {} tasks (DEPRECATED)", count);
     Ok(format!("Synced {} tasks", count))
 }
 
 /// Run CPM calculation
+/// 
+/// ACTIVE: This command may still be used for native CPM fallback or validation.
+/// Primary CPM calculations now run in the WASM Worker.
 /// 
 /// Called from RustEngine.recalculateAll()
 /// Uses actual Rust CPM implementation
@@ -171,6 +215,8 @@ pub fn calculate_cpm(
 }
 
 /// Get engine status (for debugging)
+/// 
+/// ACTIVE: Useful for debugging and monitoring.
 #[tauri::command]
 pub fn get_engine_status(
     state: State<'_, AppState>,
@@ -187,6 +233,8 @@ pub fn get_engine_status(
 }
 
 /// Clear engine state
+/// 
+/// ACTIVE: May be needed for testing or reset functionality.
 #[tauri::command]
 pub fn clear_engine(
     state: State<'_, AppState>,

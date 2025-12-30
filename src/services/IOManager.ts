@@ -1,39 +1,33 @@
 /**
  * IOManager
  * 
- * Orchestrates persistence between the Worker (source of truth for calculations)
- * and the Rust Backend (file system / SQLite database).
+ * Monitors the ProjectController state and provides file export/import capabilities.
+ * 
+ * PHASE 6 UPDATE: Persistence is now handled by PersistenceService via event sourcing.
+ * This class no longer syncs to Rust backend - it just monitors state and handles
+ * file import/export operations.
  * 
  * Responsibilities:
- * 1. Auto-save task changes to backend with debouncing
- * 2. Load data from backend on startup
- * 3. Export/import project files
- * 4. Handle save conflicts and errors
- * 
- * This bridges the gap between the WASM Worker (which holds the live state)
- * and the Tauri Rust backend (which handles persistence).
+ * 1. Monitor task state changes (logging/debugging)
+ * 2. Export project to JSON file
+ * 3. Import project from JSON file
  */
 
 import { ProjectController } from './ProjectController';
-import { debounceTime, distinctUntilChanged, skip } from 'rxjs/operators';
+import { debounceTime, skip } from 'rxjs/operators';
 import { Subscription } from 'rxjs';
-import type { Task, Calendar, TradePartner } from '../types';
-
-// Conditional import for Tauri - allows running in browser for testing
-let invoke: ((cmd: string, args?: Record<string, unknown>) => Promise<unknown>) | null = null;
+import type { Task } from '../types';
 
 /**
  * IOManager
  * 
- * Handles all persistence operations between the WASM Worker and Tauri backend.
+ * Provides file I/O and state monitoring capabilities.
+ * Actual persistence to SQLite is handled by PersistenceService.
  */
 export class IOManager {
     private controller: ProjectController;
     private subscriptions: Subscription[] = [];
     private isAutoSaveEnabled = true;
-    private isSaving = false;
-    private pendingSave = false;
-    private lastSavedHash = '';
 
     // ========================================================================
     // Constructor
@@ -41,184 +35,61 @@ export class IOManager {
 
     constructor(controller?: ProjectController) {
         this.controller = controller || ProjectController.getInstance();
-        this.initializeTauriApi();
-    }
-
-    /**
-     * Initialize Tauri API (conditional for test mode)
-     */
-    private async initializeTauriApi(): Promise<void> {
-        try {
-            if (typeof window !== 'undefined' && (window as any).__TAURI__) {
-                const tauri = await import('@tauri-apps/api/core');
-                invoke = tauri.invoke;
-                console.log('[IOManager] Tauri API available');
-                this.setupAutoSave();
-            } else {
-                console.log('[IOManager] Running without Tauri (test mode)');
-            }
-        } catch (err) {
-            console.warn('[IOManager] Tauri API not available:', err);
-        }
+        this.setupMonitoring();
     }
 
     // ========================================================================
-    // Auto-Save
+    // Monitoring
     // ========================================================================
 
     /**
-     * Set up auto-save subscription
-     * Debounces task changes and saves to backend
+     * Set up state monitoring
+     * Note: Actual persistence is handled by PersistenceService.
+     * This just logs state changes for debugging.
      */
-    private setupAutoSave(): void {
-        // Subscribe to task changes with debouncing
+    private setupMonitoring(): void {
+        // Subscribe to task changes for monitoring/debugging
         const taskSub = this.controller.tasks$
             .pipe(
                 skip(1), // Skip initial empty state
-                debounceTime(2000), // Wait 2s after last change
-                distinctUntilChanged((prev, curr) => {
-                    // Simple hash comparison to avoid unnecessary saves
-                    const hash = this.hashTasks(curr);
-                    if (hash === this.lastSavedHash) return true;
-                    this.lastSavedHash = hash;
-                    return false;
-                })
+                debounceTime(5000) // Log every 5 seconds of inactivity
             )
-            .subscribe(async (tasks) => {
+            .subscribe((tasks) => {
                 if (this.isAutoSaveEnabled && tasks.length > 0) {
-                    await this.saveToBackend(tasks);
+                    console.log(`[IOManager] State checkpoint: ${tasks.length} tasks (events persisted via PersistenceService)`);
                 }
             });
 
         this.subscriptions.push(taskSub);
-        console.log('[IOManager] Auto-save enabled');
-    }
-
-    /**
-     * Generate a simple hash of tasks for change detection
-     */
-    private hashTasks(tasks: Task[]): string {
-        // Simple hash based on task count and modification indicators
-        return `${tasks.length}-${tasks.map(t => `${t.id}:${t.start}:${t.end}`).join(',')}`;
-    }
-
-    /**
-     * Save tasks to backend
-     */
-    private async saveToBackend(tasks: Task[]): Promise<void> {
-        if (!invoke) {
-            console.log('[IOManager] Skipping save (no Tauri)');
-            return;
-        }
-
-        if (this.isSaving) {
-            this.pendingSave = true;
-            return;
-        }
-
-        this.isSaving = true;
-
-        try {
-            console.log(`[IOManager] Saving ${tasks.length} tasks...`);
-            
-            // Serialize tasks for Rust backend
-            const tasksJson = JSON.stringify(tasks);
-            
-            // Call Tauri command
-            await invoke('sync_engine_tasks', { tasksJson });
-            
-            console.log('[IOManager] ✅ Save complete');
-        } catch (err) {
-            console.error('[IOManager] ❌ Save failed:', err);
-        } finally {
-            this.isSaving = false;
-            
-            // Process any pending save
-            if (this.pendingSave) {
-                this.pendingSave = false;
-                const currentTasks = this.controller.getTasks();
-                if (currentTasks.length > 0) {
-                    await this.saveToBackend(currentTasks);
-                }
-            }
-        }
+        console.log('[IOManager] Monitoring initialized');
     }
 
     // ========================================================================
-    // Load Operations
+    // Export Operations
     // ========================================================================
 
     /**
-     * Load project data from backend
-     */
-    public async loadFromBackend(): Promise<{
-        tasks: Task[];
-        calendar: Calendar;
-        tradePartners: TradePartner[];
-    } | null> {
-        if (!invoke) {
-            console.log('[IOManager] Cannot load (no Tauri)');
-            return null;
-        }
-
-        try {
-            console.log('[IOManager] Loading from backend...');
-            
-            const result = await invoke('load_project_data') as {
-                tasks: Task[];
-                calendar: Calendar;
-                trade_partners: TradePartner[];
-            };
-
-            console.log(`[IOManager] ✅ Loaded ${result.tasks?.length || 0} tasks`);
-            
-            return {
-                tasks: result.tasks || [],
-                calendar: result.calendar || { workingDays: [1, 2, 3, 4, 5], exceptions: {} },
-                tradePartners: result.trade_partners || []
-            };
-        } catch (err) {
-            console.error('[IOManager] ❌ Load failed:', err);
-            return null;
-        }
-    }
-
-    // ========================================================================
-    // Manual Save/Export Operations
-    // ========================================================================
-
-    /**
-     * Force save immediately (bypasses debounce)
-     */
-    public async forceSave(): Promise<boolean> {
-        const tasks = this.controller.getTasks();
-        if (tasks.length === 0) return true;
-
-        try {
-            await this.saveToBackend(tasks);
-            return true;
-        } catch {
-            return false;
-        }
-    }
-
-    /**
-     * Export project to JSON
+     * Export project to JSON string
+     * Includes tasks, calendar, and stats for full project export
      */
     public exportToJson(): string {
         const tasks = this.controller.getTasks();
+        const calendar = this.controller.getCalendar();
         const stats = this.controller.getStats();
         
         return JSON.stringify({
             version: '2.0.0',
             exportDate: new Date().toISOString(),
             tasks,
+            calendar,
             stats
         }, null, 2);
     }
 
     /**
-     * Import tasks from JSON
+     * Import tasks from JSON string
+     * Note: This uses syncTasks which does NOT queue individual persistence events.
+     * For proper persistence, the imported data should go through PersistenceService.
      */
     public async importFromJson(json: string): Promise<boolean> {
         try {
@@ -230,6 +101,11 @@ export class IOManager {
 
             // Sync imported tasks to the worker
             this.controller.syncTasks(data.tasks);
+            
+            // If calendar is present, update it
+            if (data.calendar) {
+                this.controller.updateCalendar(data.calendar);
+            }
             
             console.log(`[IOManager] Imported ${data.tasks.length} tasks`);
             return true;
@@ -244,18 +120,44 @@ export class IOManager {
     // ========================================================================
 
     /**
-     * Enable/disable auto-save
+     * Enable/disable monitoring logs
      */
     public setAutoSave(enabled: boolean): void {
         this.isAutoSaveEnabled = enabled;
-        console.log(`[IOManager] Auto-save ${enabled ? 'enabled' : 'disabled'}`);
+        console.log(`[IOManager] Monitoring ${enabled ? 'enabled' : 'disabled'}`);
     }
 
     /**
-     * Check if auto-save is enabled
+     * Check if monitoring is enabled
      */
     public isAutoSave(): boolean {
         return this.isAutoSaveEnabled;
+    }
+
+    // ========================================================================
+    // Deprecated Methods (kept for backwards compatibility)
+    // ========================================================================
+
+    /**
+     * @deprecated Persistence is now handled by PersistenceService.
+     * This method is kept for backwards compatibility but does nothing.
+     */
+    public async forceSave(): Promise<boolean> {
+        console.log('[IOManager] forceSave() is deprecated - persistence handled by PersistenceService');
+        return true;
+    }
+
+    /**
+     * @deprecated Loading is now handled by DataLoader in AppInitializer.
+     * This method is kept for backwards compatibility but returns null.
+     */
+    public async loadFromBackend(): Promise<{
+        tasks: Task[];
+        calendar: { workingDays: number[]; exceptions: Record<string, unknown> };
+        tradePartners: unknown[];
+    } | null> {
+        console.log('[IOManager] loadFromBackend() is deprecated - use DataLoader instead');
+        return null;
     }
 
     // ========================================================================

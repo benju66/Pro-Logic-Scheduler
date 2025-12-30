@@ -3,17 +3,23 @@
  * @module services/AppInitializer
  * 
  * Manages the initialization sequence for the application.
+ * 
+ * PHASE 6: Now wires together ProjectController, PersistenceService, and SnapshotService
+ * for proper event sourcing and SQLite persistence.
  */
 
 /// <reference path="../types/globals.d.ts" />
 
 import { SchedulerService } from './SchedulerService';
 import { StatsService } from './StatsService';
+import { ProjectController } from './ProjectController';
 import { PersistenceService } from '../data/PersistenceService';
+import { SnapshotService } from '../data/SnapshotService';
+import { DataLoader } from '../data/DataLoader';
 import { ActivityBar } from '../ui/components/ActivityBar';
 import { SettingsModal } from '../ui/components/SettingsModal';
 import { RightSidebarManager } from '../ui/components/RightSidebarManager';
-import type { SchedulerServiceOptions } from '../types';
+import type { SchedulerServiceOptions, Calendar, TradePartner } from '../types';
 
 /**
  * App initializer options
@@ -31,11 +37,17 @@ export class AppInitializer {
   private scheduler: SchedulerService | null = null;
   private statsService: StatsService | null = null;
   private persistenceService: PersistenceService | null = null;
+  private snapshotService: SnapshotService | null = null;
+  private projectController: ProjectController | null = null;
   private activityBar: ActivityBar | null = null;
   private settingsModal: SettingsModal | null = null;
   private rightSidebarManager: RightSidebarManager | null = null;
   private isInitializing: boolean = false;
   public isInitialized: boolean = false;  // Public for access from main.ts
+  
+  // Store loaded data for SnapshotService accessors
+  private loadedCalendar: Calendar = { workingDays: [1, 2, 3, 4, 5], exceptions: {} };
+  private loadedTradePartners: TradePartner[] = [];
 
   /**
    * Create a new AppInitializer instance
@@ -78,10 +90,14 @@ export class AppInitializer {
         await new Promise(resolve => setTimeout(resolve, 200));
       }
       
-      // Initialize persistence service (for SQLite)
-      await this._initializePersistence();
+      // PHASE 6: Initialize services in correct order
+      // 1. PersistenceService (for event queue)
+      // 2. SnapshotService (for periodic snapshots)
+      // 3. DataLoader (load from SQLite)
+      // 4. ProjectController (seed with loaded data, wire persistence)
+      await this._initializePersistenceLayer();
       
-      // Initialize scheduler
+      // Initialize scheduler (now uses ProjectController internally)
       await this._initializeScheduler();
       
       // Initialize UI handlers
@@ -123,24 +139,81 @@ export class AppInitializer {
   }
 
   /**
-   * Initialize persistence service
+   * PHASE 6: Initialize the entire persistence layer
+   * This sets up PersistenceService, SnapshotService, DataLoader, and ProjectController
    * @private
    */
-  private async _initializePersistence(): Promise<void> {
-    // PersistenceService requires Tauri environment (or test mode will skip it)
+  private async _initializePersistenceLayer(): Promise<void> {
+    console.log('[AppInitializer] 🗄️ Initializing persistence layer...');
+    
+    // Get ProjectController singleton (will be used throughout)
+    this.projectController = ProjectController.getInstance();
+    
+    // Skip database operations if not in Tauri
     if (!this.isTauri) {
-      console.log('[AppInitializer] Skipping PersistenceService (not in Tauri environment)');
+      console.log('[AppInitializer] Skipping SQLite persistence (not in Tauri environment)');
+      // Initialize controller with empty state for development/testing
+      await this.projectController.initialize([], { workingDays: [1, 2, 3, 4, 5], exceptions: {} });
       return;
     }
     
     try {
+      // 1. Initialize PersistenceService (event queue for writes)
       console.log('[AppInitializer] Initializing PersistenceService...');
       this.persistenceService = new PersistenceService();
       await this.persistenceService.init();
       console.log('[AppInitializer] ✅ PersistenceService initialized');
+      
+      // 2. Initialize SnapshotService (periodic full saves)
+      console.log('[AppInitializer] Initializing SnapshotService...');
+      this.snapshotService = new SnapshotService();
+      await this.snapshotService.init();
+      console.log('[AppInitializer] ✅ SnapshotService initialized');
+      
+      // 3. Load data from SQLite via DataLoader
+      console.log('[AppInitializer] Loading data from SQLite...');
+      const dataLoader = new DataLoader();
+      await dataLoader.init();
+      const { tasks, calendar, tradePartners } = await dataLoader.loadData();
+      
+      // Store for SnapshotService accessors
+      this.loadedCalendar = calendar;
+      this.loadedTradePartners = tradePartners;
+      
+      console.log(`[AppInitializer] ✅ Loaded ${tasks.length} tasks, ${tradePartners.length} trade partners`);
+      
+      // 4. Wire ProjectController to PersistenceService
+      this.projectController.setPersistenceService(this.persistenceService);
+      
+      // 5. Initialize ProjectController with loaded data
+      // This sends data to the WASM Worker for CPM calculation
+      await this.projectController.initialize(tasks, calendar);
+      console.log('[AppInitializer] ✅ ProjectController initialized with loaded data');
+      
+      // 6. Wire SnapshotService to get live state from ProjectController
+      this.snapshotService.setStateAccessors(
+        () => this.projectController!.tasks$.value,
+        () => this.projectController!.calendar$.value,
+        () => this.loadedTradePartners // TODO: Wire trade partners through controller when supported
+      );
+      
+      // 7. Connect PersistenceService to SnapshotService for event-threshold snapshots
+      this.persistenceService.setSnapshotService(
+        this.snapshotService,
+        () => this.projectController!.tasks$.value,
+        () => this.projectController!.calendar$.value
+      );
+      this.persistenceService.setTradePartnersAccessor(() => this.loadedTradePartners);
+      
+      // 8. Start periodic snapshots
+      this.snapshotService.startPeriodicSnapshots();
+      console.log('[AppInitializer] ✅ SnapshotService started periodic snapshots');
+      
     } catch (error) {
-      console.error('[AppInitializer] Failed to initialize PersistenceService:', error);
-      // Continue without persistence - app can still work (especially in test mode)
+      console.error('[AppInitializer] ❌ Failed to initialize persistence layer:', error);
+      // Continue without persistence - app can still work but won't save
+      // Initialize controller with empty state
+      await this.projectController.initialize([], { workingDays: [1, 2, 3, 4, 5], exceptions: {} });
     }
   }
 
@@ -342,6 +415,9 @@ export class AppInitializer {
    * Clean up resources
    */
   destroy(): void {
+    // Stop snapshot service
+    this.snapshotService?.stopPeriodicSnapshots();
+    
     this.rightSidebarManager?.destroy();
     if (this.statsService) {
       this.statsService.destroy();
