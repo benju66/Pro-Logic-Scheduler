@@ -19,10 +19,12 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:perf": "vitest run tests/perf",
+    "test:e2e": "playwright test",
     "test:watch": "vitest watch",
     "test:ui": "vitest --ui"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/cli": "^2.0.0",
     "@types/node": "^25.0.2",

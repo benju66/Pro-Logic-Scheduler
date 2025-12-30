@@ -1,0 +1,67 @@
+[
+  {
+    "id": "1",
+    "name": "Project Start",
+    "duration": 0,
+    "start": "2024-01-01",
+    "end": "2024-01-01",
+    "dependencies": [],
+    "constraintType": "asap",
+    "constraintDate": null,
+    "sortKey": "a0",
+    "level": 0,
+    "rowType": "task"
+  },
+  {
+    "id": "2",
+    "name": "Foundation",
+    "duration": 5,
+    "start": "",
+    "end": "",
+    "dependencies": [{"id": "1", "type": "FS", "lag": 0}],
+    "constraintType": "asap",
+    "constraintDate": null,
+    "sortKey": "a1",
+    "level": 0,
+    "rowType": "task"
+  },
+  {
+    "id": "3",
+    "name": "Framing",
+    "duration": 10,
+    "start": "",
+    "end": "",
+    "dependencies": [{"id": "2", "type": "FS", "lag": 0}],
+    "constraintType": "asap",
+    "constraintDate": null,
+    "sortKey": "a2",
+    "level": 0,
+    "rowType": "task"
+  },
+  {
+    "id": "4",
+    "name": "Roofing (Parallel)",
+    "duration": 3,
+    "start": "",
+    "end": "",
+    "dependencies": [{"id": "3", "type": "SS", "lag": 2}],
+    "constraintType": "asap",
+    "constraintDate": null,
+    "sortKey": "a3",
+    "level": 0,
+    "rowType": "task"
+  },
+  {
+    "id": "5",
+    "name": "Project Finish",
+    "duration": 0,
+    "start": "",
+    "end": "",
+    "dependencies": [{"id": "3", "type": "FS", "lag": 0}, {"id": "4", "type": "FS", "lag": 0}],
+    "constraintType": "asap",
+    "constraintDate": null,
+    "sortKey": "a4",
+    "level": 0,
+    "rowType": "task"
+  }
+]

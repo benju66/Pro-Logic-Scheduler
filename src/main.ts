@@ -35,30 +35,13 @@ let uiEventManager: UIEventManager | null = null;
 
 // Initialize app
 async function initApp(): Promise<void> {
-    // Fatal error boundary - desktop-only requirement
-    // Check for Tauri environment (works for both v1 and v2)
-    // In Tauri v2, window.__TAURI__ might not exist, so we check by trying to use the API
-    let tauriAvailable = false;
+    // Check for test mode (allows running without Tauri for E2E tests)
+    const { isTestMode, isTauriAvailable } = await import('./utils/testMode');
+    const testMode = isTestMode();
+    const tauriAvailable = await isTauriAvailable();
     
-    // Quick check: window.__TAURI__ (Tauri v1, or v2 if available)
-    if ((window as Window & { __TAURI__?: unknown }).__TAURI__) {
-        tauriAvailable = true;
-    } else {
-        // Try to detect Tauri v2 by attempting to use the API
-        // This is async, so we need to wait
-        try {
-            const { invoke } = await import('@tauri-apps/api/core');
-            // If we can import and invoke exists, we're in Tauri
-            if (invoke && typeof invoke === 'function') {
-                tauriAvailable = true;
-            }
-        } catch (e) {
-            // Can't import Tauri API - not in Tauri environment
-            tauriAvailable = false;
-        }
-    }
-    
-    if (!tauriAvailable) {
+    // Allow test mode to bypass Tauri requirement
+    if (!tauriAvailable && !testMode) {
         document.body.innerHTML = `
             <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;font-family:system-ui;background:#1a1a2e;color:#eee;">
                 <h1 style="color:#ff6b6b;">⚠️ Desktop Application Required</h1>
@@ -76,10 +59,19 @@ async function initApp(): Promise<void> {
             return;
         }
         
-        appInitializer = new AppInitializer({ isTauri });
+        appInitializer = new AppInitializer({ isTauri: tauriAvailable });
+        
+        // Expose AppInitializer for E2E testing
+        (window as any).appInitializer = appInitializer;
+        
         appInitializer.initialize().then(sched => {
             scheduler = sched;
             
+            // --- ADD THIS BLOCK ---
+            // Expose for E2E testing and debugging
+            (window as any).scheduler = scheduler; 
+            // ----------------------
+
             // Initialize keyboard shortcuts (after scheduler is fully initialized)
             scheduler.initKeyboard();
             
@@ -87,7 +79,7 @@ async function initApp(): Promise<void> {
             uiEventManager = new UIEventManager({
                 getScheduler: () => scheduler,
                 toastService: scheduler?.toastService || null,
-                isTauri: isTauri
+                isTauri: tauriAvailable
             });
             uiEventManager.initialize();
             
@@ -153,8 +145,16 @@ window.addEventListener('load', () => {
  * Setup Tauri shutdown handler
  */
 async function setupShutdownHandler(): Promise<void> {
+    // Import test mode check
+    const { isTestMode } = await import('./utils/testMode');
+    
     if (!window.__TAURI__) {
-        console.error('[main] FATAL: Tauri environment required');
+        // Only log error if not in test mode
+        if (!isTestMode()) {
+            console.error('[main] FATAL: Tauri environment required');
+        } else {
+            console.log('[main] Skipping shutdown handler in test mode');
+        }
         return;
     }
     

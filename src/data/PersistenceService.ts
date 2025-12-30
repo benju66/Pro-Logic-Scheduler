@@ -35,6 +35,17 @@ export class PersistenceService {
   async init(): Promise<void> {
     if (this.isInitialized) return;
 
+    // Check for test mode - allow skipping if Tauri APIs aren't available
+    try {
+      const { isTestMode } = await import('../utils/testMode');
+      if (isTestMode() && (typeof window === 'undefined' || !(window as any).__TAURI__)) {
+        console.log('[PersistenceService] Skipping initialization in test mode (Tauri APIs not available)');
+        return; // Skip initialization in test mode
+      }
+    } catch (e) {
+      // testMode utility not available, continue with normal check
+    }
+
     if (typeof window === 'undefined' || !(window as any).__TAURI__) {
       throw new Error('[PersistenceService] FATAL: Tauri environment required');
     }

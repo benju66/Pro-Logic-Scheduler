@@ -127,6 +127,12 @@ export class AppInitializer {
    * @private
    */
   private async _initializePersistence(): Promise<void> {
+    // PersistenceService requires Tauri environment (or test mode will skip it)
+    if (!this.isTauri) {
+      console.log('[AppInitializer] Skipping PersistenceService (not in Tauri environment)');
+      return;
+    }
+    
     try {
       console.log('[AppInitializer] Initializing PersistenceService...');
       this.persistenceService = new PersistenceService();
@@ -134,7 +140,7 @@ export class AppInitializer {
       console.log('[AppInitializer] ✅ PersistenceService initialized');
     } catch (error) {
       console.error('[AppInitializer] Failed to initialize PersistenceService:', error);
-      // Continue without persistence - app can still work
+      // Continue without persistence - app can still work (especially in test mode)
     }
   }
 
