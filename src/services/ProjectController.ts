@@ -14,7 +14,7 @@
  */
 
 import { BehaviorSubject, Subject, filter, firstValueFrom, timeout } from 'rxjs';
-import type { Task, Calendar, CPMResult } from '../types';
+import type { Task, Calendar, CPMResult, ConstraintType, SchedulingMode } from '../types';
 import type { WorkerCommand, WorkerResponse } from '../workers/types';
 import type { PersistenceService } from '../data/PersistenceService';
 
@@ -220,8 +220,14 @@ export class ProjectController {
 
     /**
      * Add a new task
+     * Uses optimistic update: local state updated immediately, then worker calculates
      */
     public addTask(task: Task): void {
+        // OPTIMISTIC UPDATE: Add to local state immediately for instant UI response
+        const currentTasks = [...this.tasks$.value, task];
+        this.tasks$.next(currentTasks);
+        
+        // Send to worker for CPM calculation
         this.isCalculating$.next(true);
         this.send({ type: 'ADD_TASK', payload: task });
 
@@ -253,8 +259,20 @@ export class ProjectController {
 
     /**
      * Update an existing task
+     * Uses optimistic update: local state updated immediately, then worker calculates
      */
     public updateTask(id: string, updates: Partial<Task>): void {
+        // OPTIMISTIC UPDATE: Apply updates to local state immediately
+        const currentTasks = this.tasks$.value;
+        const taskIndex = currentTasks.findIndex(t => t.id === id);
+        
+        if (taskIndex >= 0) {
+            const updatedTasks = [...currentTasks];
+            updatedTasks[taskIndex] = { ...updatedTasks[taskIndex], ...updates };
+            this.tasks$.next(updatedTasks);
+        }
+        
+        // Send to worker for CPM calculation
         this.isCalculating$.next(true);
         this.send({ type: 'UPDATE_TASK', payload: { id, updates } });
 
@@ -276,8 +294,17 @@ export class ProjectController {
 
     /**
      * Delete a task
+     * Uses optimistic update: local state updated immediately, then worker calculates
      */
     public deleteTask(id: string): void {
+        // OPTIMISTIC UPDATE: Remove from local state immediately
+        // Also remove all descendants to maintain hierarchy integrity
+        const descendants = this.getDescendants(id);
+        const idsToRemove = new Set([id, ...descendants.map(d => d.id)]);
+        const currentTasks = this.tasks$.value.filter(t => !idsToRemove.has(t.id));
+        this.tasks$.next(currentTasks);
+        
+        // Send to worker for CPM calculation
         this.isCalculating$.next(true);
         this.send({ type: 'DELETE_TASK', payload: { id } });
 
@@ -294,6 +321,217 @@ export class ProjectController {
     public syncTasks(tasks: Task[]): void {
         this.isCalculating$.next(true);
         this.send({ type: 'SYNC_TASKS', payload: { tasks } });
+    }
+
+    // ========================================================================
+    // Public API - Event Application (for Undo/Redo)
+    // ========================================================================
+
+    /**
+     * Apply an array of events from undo/redo
+     * Does NOT record to history (avoids infinite loop)
+     * @param events - Array of events to apply
+     * @param skipPersistence - If true, don't queue persistence events (for undo/redo)
+     */
+    public applyEvents(events: Array<{ type: string; targetId: string | null; payload: Record<string, unknown> }>): void {
+        for (const event of events) {
+            this.applyEvent(event, true); // Skip persistence for undo/redo events
+        }
+    }
+
+    /**
+     * Apply a single event from undo/redo
+     * @param event - Event to apply
+     * @param skipPersistence - If true, don't queue persistence events
+     */
+    public applyEvent(
+        event: { type: string; targetId: string | null; payload: Record<string, unknown> },
+        skipPersistence: boolean = false
+    ): void {
+        switch (event.type) {
+            case 'TASK_CREATED':
+                this._applyTaskCreated(event.payload, skipPersistence);
+                break;
+            case 'TASK_UPDATED':
+                this._applyTaskUpdated(event.targetId!, event.payload, skipPersistence);
+                break;
+            case 'TASK_DELETED':
+                this._applyTaskDeleted(event.targetId!, skipPersistence);
+                break;
+            case 'TASK_MOVED':
+                this._applyTaskMoved(event.targetId!, event.payload, skipPersistence);
+                break;
+            case 'CALENDAR_UPDATED':
+                this._applyCalendarUpdated(event.payload, skipPersistence);
+                break;
+            default:
+                console.warn(`[ProjectController] Unknown event type: ${event.type}`);
+        }
+    }
+
+    private _applyTaskCreated(payload: Record<string, unknown>, skipPersistence: boolean): void {
+        const task: Task = {
+            id: payload.id as string,
+            parentId: (payload.parent_id as string | null) ?? null,
+            sortKey: (payload.sort_key as string) || '',
+            rowType: (payload.row_type as 'task' | 'blank' | 'phantom') || 'task',
+            name: (payload.name as string) || 'New Task',
+            notes: (payload.notes as string) || '',
+            duration: (payload.duration as number) || 1,
+            constraintType: ((payload.constraint_type as string) || 'asap') as ConstraintType,
+            constraintDate: (payload.constraint_date as string | null) ?? null,
+            dependencies: this._parseDependencies(payload.dependencies),
+            progress: (payload.progress as number) || 0,
+            actualStart: (payload.actual_start as string | null) ?? null,
+            actualFinish: (payload.actual_finish as string | null) ?? null,
+            remainingDuration: (payload.remaining_duration as number | null) ?? undefined,
+            baselineStart: (payload.baseline_start as string | null) ?? null,
+            baselineFinish: (payload.baseline_finish as string | null) ?? null,
+            baselineDuration: (payload.baseline_duration as number | null) ?? undefined,
+            _collapsed: Boolean(payload.is_collapsed),
+            schedulingMode: ((payload.scheduling_mode as string) || 'Auto') as SchedulingMode,
+            level: 0,
+            start: '',
+            end: '',
+        };
+
+        // Optimistic update
+        const currentTasks = [...this.tasks$.value];
+        const existingIndex = currentTasks.findIndex(t => t.id === task.id);
+        if (existingIndex < 0) {
+            currentTasks.push(task);
+            this.tasks$.next(currentTasks);
+        }
+
+        // Send to worker
+        this.isCalculating$.next(true);
+        this.send({ type: 'ADD_TASK', payload: task });
+
+        // Queue persistence if not from undo/redo
+        if (!skipPersistence && this.persistenceService) {
+            this.persistenceService.queueEvent('TASK_CREATED', task.id, payload);
+        }
+    }
+
+    private _applyTaskUpdated(taskId: string, payload: Record<string, unknown>, skipPersistence: boolean): void {
+        const field = payload.field as string;
+        const newValue = payload.new_value;
+
+        // Map DB field names to Task property names
+        const fieldMap: Record<string, string> = {
+            parent_id: 'parentId',
+            sort_key: 'sortKey',
+            row_type: 'rowType',
+            constraint_type: 'constraintType',
+            constraint_date: 'constraintDate',
+            actual_start: 'actualStart',
+            actual_finish: 'actualFinish',
+            remaining_duration: 'remainingDuration',
+            baseline_start: 'baselineStart',
+            baseline_finish: 'baselineFinish',
+            baseline_duration: 'baselineDuration',
+            is_collapsed: '_collapsed',
+            scheduling_mode: 'schedulingMode',
+        };
+
+        const propName = fieldMap[field] || field;
+        const updates = { [propName]: newValue } as Partial<Task>;
+
+        // Optimistic update
+        const currentTasks = [...this.tasks$.value];
+        const taskIndex = currentTasks.findIndex(t => t.id === taskId);
+        if (taskIndex >= 0) {
+            currentTasks[taskIndex] = { ...currentTasks[taskIndex], ...updates };
+            this.tasks$.next(currentTasks);
+        }
+
+        // Send to worker
+        this.isCalculating$.next(true);
+        this.send({ type: 'UPDATE_TASK', payload: { id: taskId, updates } });
+
+        // Queue persistence if not from undo/redo
+        if (!skipPersistence && this.persistenceService) {
+            this.persistenceService.queueEvent('TASK_UPDATED', taskId, payload);
+        }
+    }
+
+    private _applyTaskDeleted(taskId: string, skipPersistence: boolean): void {
+        // Optimistic update - remove task and descendants
+        const descendants = this.getDescendants(taskId);
+        const idsToRemove = new Set([taskId, ...descendants.map(d => d.id)]);
+        const currentTasks = this.tasks$.value.filter(t => !idsToRemove.has(t.id));
+        this.tasks$.next(currentTasks);
+
+        // Send to worker
+        this.isCalculating$.next(true);
+        this.send({ type: 'DELETE_TASK', payload: { id: taskId } });
+
+        // Queue persistence if not from undo/redo
+        if (!skipPersistence && this.persistenceService) {
+            this.persistenceService.queueEvent('TASK_DELETED', taskId, {});
+        }
+    }
+
+    private _applyTaskMoved(taskId: string, payload: Record<string, unknown>, skipPersistence: boolean): void {
+        // TASK_MOVED events update parentId and sortKey
+        const updates: Partial<Task> = {};
+        if ('new_parent_id' in payload) {
+            updates.parentId = payload.new_parent_id as string | null;
+        }
+        if ('new_sort_key' in payload) {
+            updates.sortKey = payload.new_sort_key as string;
+        }
+
+        // Optimistic update
+        const currentTasks = [...this.tasks$.value];
+        const taskIndex = currentTasks.findIndex(t => t.id === taskId);
+        if (taskIndex >= 0) {
+            currentTasks[taskIndex] = { ...currentTasks[taskIndex], ...updates };
+            this.tasks$.next(currentTasks);
+        }
+
+        // Send to worker
+        this.isCalculating$.next(true);
+        this.send({ type: 'UPDATE_TASK', payload: { id: taskId, updates } });
+
+        // Queue persistence if not from undo/redo
+        if (!skipPersistence && this.persistenceService) {
+            this.persistenceService.queueEvent('TASK_MOVED', taskId, payload);
+        }
+    }
+
+    private _applyCalendarUpdated(payload: Record<string, unknown>, skipPersistence: boolean): void {
+        const calendar: Calendar = {
+            workingDays: (payload.new_working_days as number[]) || this.calendar$.value.workingDays,
+            exceptions: (payload.new_exceptions as Calendar['exceptions']) || this.calendar$.value.exceptions,
+        };
+
+        // Update local calendar
+        this.calendar$.next(calendar);
+
+        // Send to worker
+        this.isCalculating$.next(true);
+        this.send({ type: 'UPDATE_CALENDAR', payload: calendar });
+
+        // Queue persistence if not from undo/redo
+        if (!skipPersistence && this.persistenceService) {
+            this.persistenceService.queueEvent('CALENDAR_UPDATED', null, payload);
+        }
+    }
+
+    private _parseDependencies(deps: unknown): Task['dependencies'] {
+        if (!deps || !Array.isArray(deps)) return [];
+        return deps.map((d: unknown) => {
+            if (typeof d === 'object' && d !== null) {
+                const dep = d as Record<string, unknown>;
+                return {
+                    id: String(dep.id || ''),
+                    type: (String(dep.type || 'FS')) as 'FS' | 'SS' | 'FF' | 'SF',
+                    lag: Number(dep.lag || 0),
+                };
+            }
+            return { id: String(d), type: 'FS' as const, lag: 0 };
+        });
     }
 
     // ========================================================================
@@ -361,6 +599,110 @@ export class ProjectController {
      */
     public isInitialized(): boolean {
         return this.isInitialized$.value;
+    }
+
+    // ========================================================================
+    // Helper Methods (replaces TaskStore methods for migration)
+    // ========================================================================
+
+    /**
+     * Get task by ID
+     */
+    public getTaskById(id: string): Task | undefined {
+        return this.tasks$.value.find(t => t.id === id);
+    }
+
+    /**
+     * Check if a task has children (is a parent/summary task)
+     */
+    public isParent(id: string): boolean {
+        return this.tasks$.value.some(t => t.parentId === id);
+    }
+
+    /**
+     * Get depth of task in hierarchy (0 = root level)
+     */
+    public getDepth(id: string, depth: number = 0): number {
+        const task = this.tasks$.value.find(t => t.id === id);
+        if (!task || !task.parentId) return depth;
+        return this.getDepth(task.parentId, depth + 1);
+    }
+
+    /**
+     * Get children of a parent, sorted by sortKey
+     */
+    public getChildren(parentId: string | null): Task[] {
+        return this.tasks$.value
+            .filter(t => (t.parentId ?? null) === parentId)
+            .sort((a, b) => (a.sortKey ?? '').localeCompare(b.sortKey ?? ''));
+    }
+
+    /**
+     * Get visible tasks (respecting collapse state)
+     * @param isCollapsed - Function to check if a task is collapsed
+     */
+    public getVisibleTasks(isCollapsed: (id: string) => boolean): Task[] {
+        const result: Task[] = [];
+        const addVisibleChildren = (parentId: string | null) => {
+            const children = this.getChildren(parentId);
+            for (const child of children) {
+                result.push(child);
+                if (!isCollapsed(child.id)) {
+                    addVisibleChildren(child.id);
+                }
+            }
+        };
+        addVisibleChildren(null);
+        return result;
+    }
+
+    /**
+     * Get last sort key for siblings of a parent
+     */
+    public getLastSortKey(parentId: string | null): string | null {
+        const siblings = this.getChildren(parentId);
+        if (siblings.length === 0) return null;
+        return siblings[siblings.length - 1].sortKey ?? null;
+    }
+
+    /**
+     * Get first sort key for siblings of a parent
+     */
+    public getFirstSortKey(parentId: string | null): string | null {
+        const siblings = this.getChildren(parentId);
+        if (siblings.length === 0) return null;
+        return siblings[0].sortKey ?? null;
+    }
+
+    /**
+     * Check if a task is a blank row
+     */
+    public isBlankRow(id: string): boolean {
+        const task = this.getTaskById(id);
+        return task?.rowType === 'blank';
+    }
+
+    /**
+     * Get all schedulable tasks (exclude blank/phantom rows)
+     */
+    public getSchedulableTasks(): Task[] {
+        return this.tasks$.value.filter(t => !t.rowType || t.rowType === 'task');
+    }
+
+    /**
+     * Get all descendants of a task (recursive children)
+     */
+    public getDescendants(id: string): Task[] {
+        const descendants: Task[] = [];
+        const collectDescendants = (parentId: string) => {
+            const children = this.tasks$.value.filter(t => t.parentId === parentId);
+            for (const child of children) {
+                descendants.push(child);
+                collectDescendants(child.id);
+            }
+        };
+        collectDescendants(id);
+        return descendants;
     }
 
     // ========================================================================

@@ -8,10 +8,11 @@
  * - Proper field mapping between camelCase and snake_case
  */
 
-import type { Task, Callback, Dependency } from '../types';
-import { OrderingService } from '../services/OrderingService';
+import type { Task, Callback, Dependency, ConstraintType } from '../types';
+// OrderingService removed - sortKey generation handled elsewhere
 import type { PersistenceService } from './PersistenceService';
 import type { HistoryManager, QueuedEvent } from './HistoryManager';
+import type { ProjectController } from '../services/ProjectController';
 
 /**
  * Task store options
@@ -76,7 +77,9 @@ export class TaskStore {
   private options: TaskStoreOptions;
   private persistenceService: PersistenceService | null = null;
   private historyManager: HistoryManager | null = null;
+  private projectController: ProjectController | null = null;
   private isApplyingEvent: boolean = false; // Flag to prevent recording history during applyEvent
+  private isSyncingToController: boolean = false; // Prevent loops when syncing
 
   constructor(options: TaskStoreOptions = {}) {
     this.options = options;
@@ -92,6 +95,16 @@ export class TaskStore {
 
   setHistoryManager(manager: HistoryManager): void {
     this.historyManager = manager;
+  }
+
+  /**
+   * Set ProjectController for syncing mutations to WASM worker
+   * This ensures both legacy (TaskStore) and new (ProjectController) systems stay in sync
+   * during the migration period
+   */
+  setProjectController(controller: ProjectController): void {
+    this.projectController = controller;
+    console.log('[TaskStore] ProjectController attached for mutation sync');
   }
 
   // =========================================================================
@@ -160,6 +173,7 @@ export class TaskStore {
       notes: '',
       start: '',
       end: '',
+      level: 0,  // Blank rows start at root level (recalculated by CPM)
     };
     
     return this.add(blankRow, 'Insert Blank Row');
@@ -234,6 +248,16 @@ export class TaskStore {
     this.tasks = tasks || [];
     this._updateMap();
     this._notifyChange();
+
+    // Sync to ProjectController (for WASM worker and UI via SchedulerViewport)
+    if (this.projectController && !this.isSyncingToController) {
+      this.isSyncingToController = true;
+      try {
+        this.projectController.syncTasks(this.tasks);
+      } finally {
+        this.isSyncingToController = false;
+      }
+    }
   }
 
   /**
@@ -253,6 +277,17 @@ export class TaskStore {
     
     this._queueAndRecord(forwardEvent, backwardEvent, label || 'Add Task');
     this._notifyChange();
+
+    // Sync to ProjectController (for WASM worker)
+    if (this.projectController && !this.isSyncingToController && !this.isApplyingEvent) {
+      this.isSyncingToController = true;
+      try {
+        this.projectController.addTask(task);
+      } finally {
+        this.isSyncingToController = false;
+      }
+    }
+
     return task;
   }
 
@@ -292,6 +327,27 @@ export class TaskStore {
     Object.assign(task, updates);
     this.taskMap.set(id, task); // Update Map (task object reference unchanged, but ensure Map is current)
     this._notifyChange();
+
+    // Sync mutation to ProjectController (for WASM worker)
+    // This ensures the worker has the latest state
+    if (this.projectController && !this.isSyncingToController && !this.isApplyingEvent) {
+      this.isSyncingToController = true;
+      try {
+        // Filter out calculated fields for worker
+        const workerUpdates: Partial<Task> = {};
+        for (const [field, value] of Object.entries(updates)) {
+          if (!CALCULATED_FIELDS.has(field)) {
+            workerUpdates[field as keyof Task] = value as any;
+          }
+        }
+        if (Object.keys(workerUpdates).length > 0) {
+          this.projectController.updateTask(id, workerUpdates);
+        }
+      } finally {
+        this.isSyncingToController = false;
+      }
+    }
+
     return task;
   }
 
@@ -362,7 +418,8 @@ export class TaskStore {
     }
 
     // Step 1: Clean up ghost links (dependencies pointing to deleted tasks)
-    const ghostLinkCleanups = this._cleanupGhostLinks(idsToDelete);
+    // Note: Side effects are important, result is recorded in composite action
+    this._cleanupGhostLinks(idsToDelete);
 
     // Step 2: Delete each task
     for (let i = tasksToDelete.length - 1; i >= 0; i--) {
@@ -394,6 +451,18 @@ export class TaskStore {
     }
 
     this._notifyChange();
+
+    // Sync deletions to ProjectController (for WASM worker)
+    // We only need to delete the root task - WASM worker handles descendants
+    if (this.projectController && !this.isSyncingToController && !this.isApplyingEvent) {
+      this.isSyncingToController = true;
+      try {
+        this.projectController.deleteTask(id);
+      } finally {
+        this.isSyncingToController = false;
+      }
+    }
+
     return true;
   }
 
@@ -440,6 +509,20 @@ export class TaskStore {
 
     this._queueAndRecord(forwardEvent, backwardEvent, label || 'Move Task');
     this._notifyChange();
+
+    // Sync move to ProjectController (for WASM worker)
+    if (this.projectController && !this.isSyncingToController && !this.isApplyingEvent) {
+      this.isSyncingToController = true;
+      try {
+        this.projectController.updateTask(taskId, { 
+          parentId: newParentId, 
+          sortKey: newSortKey 
+        });
+      } finally {
+        this.isSyncingToController = false;
+      }
+    }
+
     return true;
   }
 
@@ -538,16 +621,16 @@ export class TaskStore {
       name: (payload.name as string) || 'New Task',
       notes: (payload.notes as string) || '',
       duration: (payload.duration as number) || 1,
-      constraintType: (payload.constraint_type as string) || 'asap',
+      constraintType: ((payload.constraint_type as string) || 'asap') as ConstraintType,
       constraintDate: (payload.constraint_date as string | null) ?? null,
       dependencies: this._parseDependencies(payload.dependencies),
       progress: (payload.progress as number) || 0,
       actualStart: (payload.actual_start as string | null) ?? null,
       actualFinish: (payload.actual_finish as string | null) ?? null,
-      remainingDuration: (payload.remaining_duration as number | null) ?? null,
+      remainingDuration: (payload.remaining_duration as number | null) ?? undefined,
       baselineStart: (payload.baseline_start as string | null) ?? null,
       baselineFinish: (payload.baseline_finish as string | null) ?? null,
-      baselineDuration: (payload.baseline_duration as number | null) ?? null,
+      baselineDuration: (payload.baseline_duration as number | null) ?? undefined,
       _collapsed: Boolean(payload.is_collapsed),
       level: 0,
       start: '',
@@ -653,10 +736,9 @@ export class TaskStore {
   }
 
   private _queueAndRecord(forward: QueuedEvent, backward: QueuedEvent, label?: string): void {
-    // Queue for persistence
-    if (this.persistenceService) {
-      this.persistenceService.queueEvent(forward.type, forward.targetId, forward.payload);
-    }
+    // NOTE: Persistence is now handled by ProjectController (via the sync hooks in add/update/delete/move)
+    // We only record to history here for undo/redo support
+    // REMOVED: if (this.persistenceService) { this.persistenceService.queueEvent(...) }
     
     // Record in history (unless applying events from undo/redo)
     if (this.historyManager && !this.isApplyingEvent) {

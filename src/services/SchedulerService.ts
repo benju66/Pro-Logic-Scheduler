@@ -33,6 +33,8 @@ import { ToastService } from '../ui/services/ToastService';
 import { FileService } from '../ui/services/FileService';
 import { KeyboardService } from '../ui/services/KeyboardService';
 import { OrderingService } from './OrderingService';
+import { ProjectController } from './ProjectController';
+import { SelectionModel } from './SelectionModel';
 import { getEditingStateManager, type EditingStateChangeEvent } from './EditingStateManager';
 import { getTaskFieldValue } from '../types';
 import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport';
@@ -282,6 +284,11 @@ export class SchedulerService {
             this.taskStore.setHistoryManager(this.historyManager);
             this.calendarStore.setHistoryManager(this.historyManager);
         }
+
+        // 6.5. Inject ProjectController into TaskStore for mutation sync
+        // This ensures WASM worker stays in sync with TaskStore mutations
+        const controller = ProjectController.getInstance();
+        this.taskStore.setProjectController(controller);
         
         // 7. Wire up snapshot service (if available)
         if (this.snapshotService && this.persistenceService) {
@@ -625,6 +632,7 @@ export class SchedulerService {
 
     /**
      * Handle selection change
+     * Now syncs with SelectionModel for unified state
      */
     private _handleSelectionChange(selectedIds: string[]): void {
         const selectedSet = new Set(selectedIds);
@@ -639,11 +647,15 @@ export class SchedulerService {
         
         this.selectedIds = selectedSet;
         
+        // Sync with SelectionModel (the single source of truth for selection)
+        const selectionModel = SelectionModel.getInstance();
+        const primaryId = selectedIds.length > 0 ? selectedIds[selectedIds.length - 1] : null;
+        selectionModel.setSelection(selectedSet, primaryId);
+        
         // === Notify registered callbacks ===
         // IMPORTANT: This is the ONLY place callbacks are triggered.
         // Do NOT add callbacks to _handleRowClick - it would cause double-firing
         // since row clicks internally trigger _handleSelectionChange via _updateSelection().
-        const primaryId = selectedIds.length > 0 ? selectedIds[selectedIds.length - 1] : null;
         const primaryTask = primaryId ? this.taskStore.getById(primaryId) || null : null;
         
         // Pass the clicked field (if any) to callbacks
@@ -6125,6 +6137,7 @@ export class SchedulerService {
 
     /**
      * Undo last action (supports composite actions)
+     * Now routes through ProjectController for unified state management
      */
     undo(): void {
         if (!this.historyManager) {
@@ -6138,17 +6151,13 @@ export class SchedulerService {
             return;
         }
 
-        // Apply all backward events
-        for (const event of backwardEvents) {
-            if (event.type === 'CALENDAR_UPDATED') {
-                this.calendarStore.applyEvent(event);
-            } else {
-                this.taskStore.applyEvents([event]);
-            }
-        }
-
-        this.recalculateAll();
-        this.render();
+        // Apply all backward events through ProjectController
+        // ProjectController handles optimistic updates and worker sync
+        const controller = ProjectController.getInstance();
+        controller.applyEvents(backwardEvents);
+        
+        // No need to call recalculateAll() or render() - ProjectController does this via worker
+        // and SchedulerViewport subscribes to tasks$ for UI updates
         
         const label = this.historyManager.getRedoLabel();
         this.toastService.info(label ? `Undone: ${label}` : 'Undone');
@@ -6156,6 +6165,7 @@ export class SchedulerService {
 
     /**
      * Redo last undone action (supports composite actions)
+     * Now routes through ProjectController for unified state management
      */
     redo(): void {
         if (!this.historyManager) {
@@ -6169,17 +6179,13 @@ export class SchedulerService {
             return;
         }
 
-        // Apply all forward events
-        for (const event of forwardEvents) {
-            if (event.type === 'CALENDAR_UPDATED') {
-                this.calendarStore.applyEvent(event);
-            } else {
-                this.taskStore.applyEvents([event]);
-            }
-        }
-
-        this.recalculateAll();
-        this.render();
+        // Apply all forward events through ProjectController
+        // ProjectController handles optimistic updates and worker sync
+        const controller = ProjectController.getInstance();
+        controller.applyEvents(forwardEvents);
+        
+        // No need to call recalculateAll() or render() - ProjectController does this via worker
+        // and SchedulerViewport subscribes to tasks$ for UI updates
         
         const label = this.historyManager.getUndoLabel();
         this.toastService.info(label ? `Redone: ${label}` : 'Redone');

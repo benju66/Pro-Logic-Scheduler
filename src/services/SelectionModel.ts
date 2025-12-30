@@ -160,6 +160,21 @@ export class SelectionModel {
     }
 
     /**
+     * Set selection directly (for sync with legacy SchedulerService)
+     * @param selectedIds - Set of selected task IDs
+     * @param focusedId - Optional focused task ID
+     */
+    public setSelection(selectedIds: Set<string>, focusedId: string | null = null): void {
+        const current = this.state$.value;
+        this.state$.next({
+            ...current,
+            selectedIds: new Set(selectedIds), // Defensive copy
+            focusedId: focusedId ?? current.focusedId,
+            anchorId: focusedId ?? current.anchorId
+        });
+    }
+
+    /**
      * Set focus without changing selection
      */
     public setFocus(id: string | null, field?: string): void {

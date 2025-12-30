@@ -21,7 +21,7 @@ mod cpm;
 mod date_utils;
 
 use wasm_bindgen::prelude::*;
-use crate::types::{Task, Calendar};
+use crate::types::{Task, Calendar, Dependency};
 
 // Import console.log for debugging
 #[wasm_bindgen]
@@ -157,6 +157,58 @@ impl SchedulerEngine {
             }
             if let Some(sort_key) = updates.get("sortKey").and_then(|v| v.as_str()) {
                 task.sort_key = sort_key.to_string();
+            }
+            
+            // Handle dependencies update (CRITICAL - was missing!)
+            if let Some(deps_val) = updates.get("dependencies") {
+                match serde_json::from_value::<Vec<Dependency>>(deps_val.clone()) {
+                    Ok(new_deps) => {
+                        task.dependencies = new_deps;
+                    }
+                    Err(e) => {
+                        warn(&format!("[WASM] Failed to parse dependencies: {}", e));
+                    }
+                }
+            }
+            
+            // Handle _collapsed state
+            if let Some(collapsed) = updates.get("_collapsed").and_then(|v| v.as_bool()) {
+                task.collapsed = Some(collapsed);
+            }
+            
+            // Handle rowType
+            if let Some(row_type) = updates.get("rowType").and_then(|v| v.as_str()) {
+                task.row_type = Some(row_type.to_string());
+            }
+            
+            // Handle actualStart
+            if let Some(actual_start) = updates.get("actualStart") {
+                task.actual_start = actual_start.as_str().map(|s| s.to_string());
+            }
+            
+            // Handle actualFinish
+            if let Some(actual_finish) = updates.get("actualFinish") {
+                task.actual_finish = actual_finish.as_str().map(|s| s.to_string());
+            }
+            
+            // Handle remainingDuration
+            if let Some(remaining) = updates.get("remainingDuration").and_then(|v| v.as_i64()) {
+                task.remaining_duration = Some(remaining as i32);
+            }
+            
+            // Handle tradePartnerIds
+            if let Some(partner_ids) = updates.get("tradePartnerIds") {
+                match serde_json::from_value::<Vec<String>>(partner_ids.clone()) {
+                    Ok(ids) => {
+                        task.trade_partner_ids = Some(ids);
+                    }
+                    Err(_) => {
+                        // If parsing fails, try to handle null
+                        if partner_ids.is_null() {
+                            task.trade_partner_ids = None;
+                        }
+                    }
+                }
             }
             
             Ok(())

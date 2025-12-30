@@ -166,19 +166,30 @@ async function setupShutdownHandler(): Promise<void> {
     await listen('shutdown-requested', async () => {
         console.log('[main] Shutdown requested - flushing data...');
         
+        // Create a promise that rejects after timeout
+        const timeoutPromise = new Promise<void>((_, reject) => {
+            setTimeout(() => reject(new Error('Shutdown timeout')), 3000);
+        });
+        
         try {
             if (window.scheduler) {
-                await window.scheduler.onShutdown();
+                // Race between shutdown and timeout
+                await Promise.race([
+                    window.scheduler.onShutdown(),
+                    timeoutPromise
+                ]);
             }
             console.log('[main] Shutdown complete');
         } catch (error) {
-            console.error('[main] Shutdown error:', error);
+            console.error('[main] Shutdown error (proceeding to close):', error);
         }
         
+        // Always try to close the window
         try {
             await invoke('close_window');
         } catch (error) {
             console.error('[main] Failed to close window:', error);
+            // Force close as last resort
             window.close();
         }
     });

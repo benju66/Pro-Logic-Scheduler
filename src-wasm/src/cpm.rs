@@ -6,6 +6,7 @@ use crate::types::{Task, Calendar, CPMResult, CPMStats};
 use crate::date_utils::{add_work_days, calc_work_days, calc_work_days_difference, today};
 use std::collections::HashMap;
 use std::collections::HashSet;
+use js_sys::Date;
 
 const MAX_CPM_ITERATIONS: usize = 50;
 
@@ -633,7 +634,8 @@ use crate::log;
 
 /// Main CPM calculation function
 pub fn calculate(tasks: &mut [Task], calendar: &Calendar) -> CPMResult {
-    let start_time = std::time::Instant::now();
+    // Use js_sys::Date for WASM-compatible timing (std::time::Instant not supported in WASM)
+    let start_time = Date::now();
     
     if tasks.is_empty() {
         return CPMResult {
@@ -679,7 +681,8 @@ pub fn calculate(tasks: &mut [Task], calendar: &Calendar) -> CPMResult {
     // Step 6: Mark critical path based on float
     mark_critical_path(tasks, &parent_ids, &blank_row_ids);
     
-    let calc_time = start_time.elapsed().as_secs_f64() * 1000.0; // Convert to milliseconds
+    // Calculate elapsed time in milliseconds (Date::now() returns ms since epoch)
+    let calc_time = Date::now() - start_time;
     
     // Find project end date (exclude blank rows)
     let valid_ends: Vec<String> = tasks.iter()
