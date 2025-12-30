@@ -1,0 +1,14 @@
+C:\Dev\Pro-Logic-Scheduler\src-wasm\target\wasm32-unknown-unknown\debug\deps\serde-d1616182e897e514.d: C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs C:\Dev\Pro-Logic-Scheduler\src-wasm\target\wasm32-unknown-unknown\debug\build\serde-3fe4e8d36dcdb6e9\out/private.rs
+
+C:\Dev\Pro-Logic-Scheduler\src-wasm\target\wasm32-unknown-unknown\debug\deps\libserde-d1616182e897e514.rlib: C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs C:\Dev\Pro-Logic-Scheduler\src-wasm\target\wasm32-unknown-unknown\debug\build\serde-3fe4e8d36dcdb6e9\out/private.rs
+
+C:\Dev\Pro-Logic-Scheduler\src-wasm\target\wasm32-unknown-unknown\debug\deps\libserde-d1616182e897e514.rmeta: C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs C:\Dev\Pro-Logic-Scheduler\src-wasm\target\wasm32-unknown-unknown\debug\build\serde-3fe4e8d36dcdb6e9\out/private.rs
+
+C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\lib.rs:
+C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\integer128.rs:
+C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\mod.rs:
+C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\de.rs:
+C:\Users\Burness\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.228\src\private\ser.rs:
+C:\Dev\Pro-Logic-Scheduler\src-wasm\target\wasm32-unknown-unknown\debug\build\serde-3fe4e8d36dcdb6e9\out/private.rs:
+
+# env-dep:OUT_DIR=C:\\Dev\\Pro-Logic-Scheduler\\src-wasm\\target\\wasm32-unknown-unknown\\debug\\build\\serde-3fe4e8d36dcdb6e9\\out
