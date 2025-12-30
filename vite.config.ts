@@ -1,7 +1,15 @@
 import { defineConfig } from 'vite';
 import path from 'path';
+import wasm from 'vite-plugin-wasm';
+import topLevelAwait from 'vite-plugin-top-level-await';
 
 export default defineConfig({
+  // WASM plugins for Web Worker support
+  plugins: [
+    wasm(),
+    topLevelAwait()
+  ],
+  
   // Prevent Vite from obscuring Rust errors
   clearScreen: false,
   

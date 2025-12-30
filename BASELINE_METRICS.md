@@ -1,3 +1,7 @@
+# Pro Logic Scheduler - Phase Metrics
+
+---
+
 # Phase 1: Baseline Test Metrics
 
 ## Test Run Summary
@@ -75,3 +79,140 @@ Verifies task hierarchy relationships are maintained after indentation operation
 - `src/utils/testMode.ts` - Test mode detection utilities
 - `src/main.ts` - Added test mode bypass for Tauri check
 - `src/services/SchedulerService.ts` - Engine selection based on test mode
+
+---
+
+# Phase 2: WASM Core Crate
+
+## Build Summary
+
+**Date:** December 30, 2024  
+**Crate:** `scheduler_wasm`  
+**Target:** `wasm32-unknown-unknown`
+
+### Build Output
+
+```
+wasm-pack build --target web
+[INFO]: :-) Done in 8.79s
+[INFO]: :-) Your wasm pkg is ready to publish at C:\Dev\Pro-Logic-Scheduler\src-wasm\pkg.
+```
+
+### Package Size
+
+| File | Size |
+|------|------|
+| `scheduler_wasm_bg.wasm` | 134.91 KB |
+
+### SchedulerEngine API
+
+| Method | Description |
+|--------|-------------|
+| `new()` | Create new engine instance |
+| `initialize(tasks, calendar)` | Load tasks and calendar |
+| `add_task(task)` | Add a single task |
+| `update_task(id, updates)` | Update task fields |
+| `delete_task(id)` | Remove a task |
+| `sync_tasks(tasks)` | Bulk replace all tasks |
+| `update_calendar(calendar)` | Update calendar config |
+| `calculate()` | Run CPM and return results |
+| `get_tasks()` | Get current task array |
+| `dispose()` | Clean up resources |
+
+### Files Created
+
+```
+src-wasm/
+├── Cargo.toml
+└── src/
+    ├── lib.rs          # WASM entry point with SchedulerEngine
+    ├── types.rs        # Task, Calendar, Dependency types
+    ├── cpm.rs          # Full CPM calculation engine
+    ├── date_utils.rs   # Working day calculations
+    └── utils.rs        # Panic hook
+```
+
+### Generated Package
+
+```
+src-wasm/pkg/
+├── package.json
+├── scheduler_wasm_bg.wasm
+├── scheduler_wasm_bg.wasm.d.ts
+├── scheduler_wasm.d.ts
+└── scheduler_wasm.js
+```
+
+---
+
+# Phase 3: Web Worker Integration
+
+## Setup Summary
+
+**Date:** December 30, 2024  
+**Vite Plugins:** `vite-plugin-wasm`, `vite-plugin-top-level-await`
+
+### Worker Architecture
+
+```
+Main Thread                     Worker Thread (Background)
+     │                                    │
+     │  ───── WorkerCommand ─────>        │
+     │       { type, payload }            │
+     │                                    ▼
+     │                          ┌─────────────────┐
+     │                          │  WASM Module    │
+     │                          │  (134 KB)       │
+     │                          │                 │
+     │                          │ SchedulerEngine │
+     │                          │  - tasks[]      │
+     │                          │  - calendar     │
+     │                          │  - calculate()  │
+     │                          └─────────────────┘
+     │                                    │
+     │  <───── WorkerResponse ─────       │
+     │       { type, payload }            │
+     ▼                                    ▼
+```
+
+### Worker Commands
+
+| Command | Payload | Description |
+|---------|---------|-------------|
+| `INITIALIZE` | `{ tasks, calendar }` | Initialize engine with data |
+| `ADD_TASK` | `Task` | Add single task |
+| `UPDATE_TASK` | `{ id, updates }` | Update task fields |
+| `DELETE_TASK` | `{ id }` | Remove task |
+| `SYNC_TASKS` | `{ tasks }` | Bulk replace tasks |
+| `UPDATE_CALENDAR` | `Calendar` | Update calendar |
+| `CALCULATE` | - | Trigger CPM recalculation |
+| `DISPOSE` | - | Clean up resources |
+
+### Worker Responses
+
+| Response | Payload | Description |
+|----------|---------|-------------|
+| `READY` | - | WASM loaded, engine ready |
+| `INITIALIZED` | `{ success }` | Engine initialized |
+| `CALCULATION_RESULT` | `CPMResult` | CPM calculation complete |
+| `TASKS_SYNCED` | `{ success }` | Tasks bulk synced |
+| `ERROR` | `{ message }` | Error occurred |
+
+### Files Created/Modified
+
+- `vite.config.ts` - Added WASM plugins
+- `src/workers/types.ts` - Worker message types
+- `src/workers/scheduler.worker.ts` - WASM worker implementation
+
+### Test Verification
+
+```
+Running 2 tests using 2 workers
+
+  ✓ CPM Calculation: Should calculate correct dates for chain
+  ✓ CRUD: Hierarchy remains intact after indentation
+
+  2 passed (14.7s)
+```
+
+✅ **Phase 3 Complete** - Worker infrastructure ready for integration
