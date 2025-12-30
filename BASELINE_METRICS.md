@@ -216,3 +216,90 @@ Running 2 tests using 2 workers
 ```
 
 ✅ **Phase 3 Complete** - Worker infrastructure ready for integration
+
+---
+
+# Phase 4: Service Decomposition
+
+## Architecture Summary
+
+**Date:** December 30, 2024  
+**Pattern:** Reactive State Management (RxJS)
+
+### New Service Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         UI Components                           │
+│              (GridRenderer, GanttRenderer, etc.)                │
+└─────────────────────┬───────────────────────────┬───────────────┘
+                      │                           │
+                      ▼                           ▼
+┌─────────────────────────────┐   ┌─────────────────────────────┐
+│     ProjectController       │   │      SelectionModel         │
+│   (Worker Interface)        │   │   (Sync UI State)           │
+│                             │   │                             │
+│  • tasks$ (Observable)      │   │  • state$ (Observable)      │
+│  • stats$ (Observable)      │   │  • selectedIds              │
+│  • isInitialized$           │   │  • focusedId                │
+│  • isCalculating$           │   │  • anchorId                 │
+│                             │   │                             │
+│  Commands:                  │   │  Operations:                │
+│  • addTask()                │   │  • select()                 │
+│  • updateTask()             │   │  • clear()                  │
+│  • deleteTask()             │   │  • selectAll()              │
+│  • syncTasks()              │   │  • setFocus()               │
+│  • updateCalendar()         │   │                             │
+│  • forceRecalculate()       │   │                             │
+└─────────────┬───────────────┘   └─────────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────┐   ┌─────────────────────────────┐
+│       WASM Worker           │   │        IOManager            │
+│   (Background Thread)       │   │   (Persistence Bridge)      │
+│                             │   │                             │
+│  • SchedulerEngine          │   │  • Auto-save (debounced)    │
+│  • CPM Calculation          │   │  • Load from backend        │
+│  • 134 KB WASM module       │   │  • Export/Import JSON       │
+└─────────────────────────────┘   └─────────────────────────────┘
+```
+
+### Service Responsibilities
+
+| Service | Responsibility | Thread |
+|---------|---------------|--------|
+| **ProjectController** | Worker communication, state observables | Main |
+| **SelectionModel** | Instant UI selection/focus state | Main |
+| **IOManager** | Persistence, auto-save, import/export | Main |
+| **WASM Worker** | CPM calculations, task state | Background |
+
+### RxJS Observables
+
+| Observable | Type | Description |
+|------------|------|-------------|
+| `tasks$` | `BehaviorSubject<Task[]>` | Current calculated tasks |
+| `stats$` | `BehaviorSubject<CPMStats>` | Calculation statistics |
+| `isInitialized$` | `BehaviorSubject<boolean>` | Engine ready state |
+| `isCalculating$` | `BehaviorSubject<boolean>` | Calculation in progress |
+| `errors$` | `Subject<string>` | Error stream |
+| `state$` (Selection) | `BehaviorSubject<SelectionState>` | Selection/focus state |
+
+### Files Created
+
+- `src/services/ProjectController.ts` - Worker interface
+- `src/services/SelectionModel.ts` - UI selection state
+- `src/services/IOManager.ts` - Persistence bridge
+- `src/services/index.ts` - Service exports
+
+### Test Verification
+
+```
+Running 2 tests using 2 workers
+
+  ✓ CPM Calculation: Should calculate correct dates for chain
+  ✓ CRUD: Hierarchy remains intact after indentation
+
+  2 passed (13.1s)
+```
+
+✅ **Phase 4 Complete** - Service decomposition ready for UI integration
