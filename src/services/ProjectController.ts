@@ -706,6 +706,174 @@ export class ProjectController {
     }
 
     // ========================================================================
+    // Additional Helper Methods (for SchedulerService migration)
+    // ========================================================================
+
+    /**
+     * Create a blank row (visual spacer/placeholder)
+     * @param sortKey - Position in the list
+     * @param parentId - Parent task ID (for hierarchy)
+     * @returns The created blank row task
+     */
+    public createBlankRow(sortKey: string, parentId: string | null = null): Task {
+        const blankRow: Task = {
+            id: `blank_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            rowType: 'blank',
+            name: '',
+            parentId: parentId,
+            sortKey: sortKey,
+            duration: 0,
+            constraintType: 'asap',
+            constraintDate: null,
+            dependencies: [],
+            progress: 0,
+            level: parentId ? this.getDepth(parentId) + 1 : 0,
+            start: '',
+            end: '',
+        };
+
+        // Add to local state (optimistic update)
+        const currentTasks = [...this.tasks$.value, blankRow];
+        this.tasks$.next(currentTasks);
+
+        // Send to worker
+        this.isCalculating$.next(true);
+        this.send({ type: 'ADD_TASK', payload: blankRow });
+
+        // Queue persistence
+        if (this.persistenceService) {
+            this.persistenceService.queueEvent('TASK_CREATED', blankRow.id, {
+                id: blankRow.id,
+                parent_id: blankRow.parentId,
+                sort_key: blankRow.sortKey,
+                row_type: 'blank',
+                name: '',
+                duration: 0,
+                constraint_type: 'asap',
+                dependencies: [],
+                progress: 0,
+            });
+        }
+
+        return blankRow;
+    }
+
+    /**
+     * Convert a blank row to a regular task (wake up)
+     * @param taskId - ID of the blank row to convert
+     * @param name - Name for the new task
+     * @returns The converted task, or undefined if not found/not blank
+     */
+    public wakeUpBlankRow(taskId: string, name: string = 'New Task'): Task | undefined {
+        const task = this.getTaskById(taskId);
+        if (!task || task.rowType !== 'blank') return undefined;
+
+        const updates: Partial<Task> = {
+            rowType: 'task',
+            name: name,
+            duration: 1, // Default duration for new tasks
+        };
+
+        // Optimistic update
+        const currentTasks = [...this.tasks$.value];
+        const taskIndex = currentTasks.findIndex(t => t.id === taskId);
+        if (taskIndex >= 0) {
+            currentTasks[taskIndex] = { ...currentTasks[taskIndex], ...updates };
+            this.tasks$.next(currentTasks);
+        }
+
+        // Send to worker
+        this.isCalculating$.next(true);
+        this.send({ type: 'UPDATE_TASK', payload: { id: taskId, updates } });
+
+        // Queue persistence
+        if (this.persistenceService) {
+            this.persistenceService.queueEvent('TASK_UPDATED', taskId, { field: 'row_type', new_value: 'task' });
+            this.persistenceService.queueEvent('TASK_UPDATED', taskId, { field: 'name', new_value: name });
+            this.persistenceService.queueEvent('TASK_UPDATED', taskId, { field: 'duration', new_value: 1 });
+        }
+
+        return currentTasks[taskIndex];
+    }
+
+    /**
+     * Move a task (change parent and/or sortKey)
+     * Used for indent/outdent and drag-drop operations
+     * @param taskId - ID of task to move
+     * @param newParentId - New parent ID (null for root level)
+     * @param newSortKey - New sort key for ordering
+     * @returns true if successful
+     */
+    public moveTask(taskId: string, newParentId: string | null, newSortKey: string): boolean {
+        const task = this.getTaskById(taskId);
+        if (!task) return false;
+
+        const oldParentId = task.parentId ?? null;
+        const oldSortKey = task.sortKey;
+
+        // Skip if no change
+        if (oldParentId === newParentId && oldSortKey === newSortKey) return true;
+
+        const updates: Partial<Task> = {
+            parentId: newParentId,
+            sortKey: newSortKey,
+        };
+
+        // Optimistic update
+        const currentTasks = [...this.tasks$.value];
+        const taskIndex = currentTasks.findIndex(t => t.id === taskId);
+        if (taskIndex >= 0) {
+            currentTasks[taskIndex] = { ...currentTasks[taskIndex], ...updates };
+            this.tasks$.next(currentTasks);
+        }
+
+        // Send to worker
+        this.isCalculating$.next(true);
+        this.send({ type: 'UPDATE_TASK', payload: { id: taskId, updates } });
+
+        // Queue TASK_MOVED event for persistence
+        if (this.persistenceService) {
+            this.persistenceService.queueEvent('TASK_MOVED', taskId, {
+                old_parent_id: oldParentId,
+                new_parent_id: newParentId,
+                old_sort_key: oldSortKey,
+                new_sort_key: newSortKey,
+            });
+        }
+
+        return true;
+    }
+
+    /**
+     * Update just the sort key of a task
+     * Used for reordering within siblings
+     * @param taskId - ID of task to update
+     * @param newSortKey - New sort key
+     * @returns true if successful
+     */
+    public updateSortKey(taskId: string, newSortKey: string): boolean {
+        const task = this.getTaskById(taskId);
+        if (!task) return false;
+
+        const oldSortKey = task.sortKey;
+        if (oldSortKey === newSortKey) return true;
+
+        // Use updateTask for consistency
+        this.updateTask(taskId, { sortKey: newSortKey });
+
+        return true;
+    }
+
+    /**
+     * Get the first sort key for siblings of a parent (for inserting before all siblings)
+     */
+    public getFirstSortKey(parentId: string | null): string | null {
+        const siblings = this.getChildren(parentId);
+        if (siblings.length === 0) return null;
+        return siblings[0].sortKey ?? null;
+    }
+
+    // ========================================================================
     // Lifecycle
     // ========================================================================
 

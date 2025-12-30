@@ -294,16 +294,16 @@ export class SchedulerService {
         if (this.snapshotService && this.persistenceService) {
             // Set state accessors for automatic snapshots
             this.snapshotService.setStateAccessors(
-                () => this.taskStore.getAll(),
-                () => this.calendarStore.get(),
+                () => ProjectController.getInstance().getTasks(),
+                () => ProjectController.getInstance().getCalendar(),
                 () => this.tradePartnerStore.getAll()
             );
             
             // Connect to persistence service
             this.persistenceService.setSnapshotService(
                 this.snapshotService,
-                () => this.taskStore.getAll(),
-                () => this.calendarStore.get()
+                () => ProjectController.getInstance().getTasks(),
+                () => ProjectController.getInstance().getCalendar()
             );
             
             // Set trade partners accessor
@@ -330,36 +330,18 @@ export class SchedulerService {
     }
 
     /**
-     * Initialize the Rust scheduling engine
+     * Initialize the scheduling engine
      * 
-     * CRITICAL: Desktop-only - if Rust engine fails, app cannot function.
+     * NOTE: With WASM Worker architecture, the engine is no longer used.
+     * All calculations happen in the Worker via ProjectController.
+     * This method is kept for backward compatibility but does nothing.
      * 
      * @private
-     * @throws Error if Rust engine fails to initialize
      */
     private async _initializeEngine(): Promise<void> {
-        // Import test mode utilities
-        const { shouldUseMocks } = await import('../utils/testMode');
-        const useMocks = await shouldUseMocks();
-        
-        const hierarchyContext: TaskHierarchyContext = {
-            isParent: (id: string) => this.taskStore.isParent(id),
-            getDepth: (id: string) => this.taskStore.getDepth(id),
-        };
-
-        const tasks = this.taskStore.getAll();
-        const calendar = this.calendarStore.get();
-        
-        // PHASE 7: Use NoOpEngine which delegates to ProjectController
-        // All calculations now happen in the WASM Worker via ProjectController
-        console.log('[SchedulerService] Initializing NoOpEngine (delegates to ProjectController)...');
-        
-        const { NoOpEngine } = await import('../core/engines/NoOpEngine');
-        this.engine = new NoOpEngine();
-        
-        await this.engine.initialize(tasks, calendar, hierarchyContext);
-        
-        console.log('[SchedulerService] ✅ NoOpEngine ready (WASM Worker handles calculations)');
+        // PHASE 8: Engine removed - all calculations happen in WASM Worker via ProjectController
+        // The engine property is kept as null - it's no longer needed
+        console.log('[SchedulerService] Engine initialization skipped - using ProjectController + WASM Worker');
     }
 
     /**
@@ -404,8 +386,8 @@ export class SchedulerService {
             onBarClick: (taskId, e) => this._handleRowClick(taskId, e),
             onBarDoubleClick: (taskId, e) => this._handleRowDoubleClick(taskId, e),
             onBarDrag: (task, start, end) => this._handleBarDrag(task, start, end),
-            isParent: (id) => this.taskStore.isParent(id),
-            getDepth: (id) => this.taskStore.getDepth(id),
+            isParent: (id) => ProjectController.getInstance().isParent(id),
+            getDepth: (id) => ProjectController.getInstance().getDepth(id),
         };
 
         // Use the parent container that holds both grid and gantt
@@ -433,8 +415,8 @@ export class SchedulerService {
             onEnterLastRow: (lastTaskId, field) => this._handleEnterLastRow(lastTaskId, field),
             onEditEnd: () => this.exitEditMode(),
             onTradePartnerClick: (taskId, tradePartnerId, e) => this._handleTradePartnerClick(taskId, tradePartnerId, e),
-            isParent: (id) => this.taskStore.isParent(id),
-            getDepth: (id) => this.taskStore.getDepth(id),
+            isParent: (id) => ProjectController.getInstance().isParent(id),
+            getDepth: (id) => ProjectController.getInstance().getDepth(id),
         };
         viewport.initGrid(gridOptions);
 
@@ -455,7 +437,7 @@ export class SchedulerService {
             onBarClick: (taskId, e) => this._handleRowClick(taskId, e),
             onBarDoubleClick: (taskId, e) => this._handleRowDoubleClick(taskId, e),
             onBarDrag: (task, start, end) => this._handleBarDrag(task, start, end),
-            isParent: (id) => this.taskStore.isParent(id),
+            isParent: (id) => ProjectController.getInstance().isParent(id),
             getHighlightDependencies: () => this.displaySettings.highlightDependenciesOnHover,
         };
         viewport.initGantt(ganttOptions);
@@ -489,8 +471,8 @@ export class SchedulerService {
 
         this.dependenciesModal = new DependenciesModal({
             container: modalsContainer,
-            getTasks: () => this.taskStore.getAll(),
-            isParent: (id) => this.taskStore.isParent(id),
+            getTasks: () => ProjectController.getInstance().getTasks(),
+            isParent: (id) => ProjectController.getInstance().isParent(id),
             onSave: (taskId, deps) => this._handleDependenciesSave(taskId, deps),
         });
 
@@ -520,12 +502,12 @@ export class SchedulerService {
 
         // Load persisted data
         try {
-            const taskCountBeforeLoad = this.taskStore.getAll().length;
+            const taskCountBeforeLoad = ProjectController.getInstance().getTasks().length;
             console.log('[SchedulerService] 🔍 Before loadData() - task count:', taskCountBeforeLoad);
             
             await this.loadData();
             
-            const taskCountAfterLoad = this.taskStore.getAll().length;
+            const taskCountAfterLoad = ProjectController.getInstance().getTasks().length;
             console.log('[SchedulerService] ✅ After loadData() - task count:', taskCountAfterLoad);
         } catch (error) {
             console.error('[SchedulerService] Error loading persisted data:', error);
@@ -533,7 +515,7 @@ export class SchedulerService {
         
         // TODO: Calendar integration for Flatpickr - add setCalendar to GridRenderer
         // Pass calendar to grid for date picker integration
-        // const calendar = this.calendarStore.get();
+        // const calendar = ProjectController.getInstance().getCalendar();
         // if (this.grid) {
         //     this.grid.setCalendar(calendar);
         // }
@@ -656,7 +638,7 @@ export class SchedulerService {
         // IMPORTANT: This is the ONLY place callbacks are triggered.
         // Do NOT add callbacks to _handleRowClick - it would cause double-firing
         // since row clicks internally trigger _handleSelectionChange via _updateSelection().
-        const primaryTask = primaryId ? this.taskStore.getById(primaryId) || null : null;
+        const primaryTask = primaryId ? ProjectController.getInstance().getTaskById(primaryId) || null : null;
         
         // Pass the clicked field (if any) to callbacks
         // Only pass field if this selection change was triggered by a click (not programmatic)
@@ -1686,7 +1668,7 @@ export class SchedulerService {
      * @returns All tasks
      */
     get tasks(): Task[] {
-        return this.taskStore.getAll();
+        return ProjectController.getInstance().getTasks();
     }
 
     /**
@@ -1701,7 +1683,7 @@ export class SchedulerService {
         // Unconditional reset - always safe when replacing entire dataset
         editingManager.reset();
         
-        this.taskStore.setAll(tasks);
+        ProjectController.getInstance().syncTasks(tasks);
         // Trigger render to update viewport with new data
         this.render();
     }
@@ -1711,7 +1693,7 @@ export class SchedulerService {
      * @returns Calendar object
      */
     get calendar(): Calendar {
-        return this.calendarStore.get();
+        return ProjectController.getInstance().getCalendar();
     }
 
     /**
@@ -1719,7 +1701,7 @@ export class SchedulerService {
      * @param calendar - Calendar object
      */
     set calendar(calendar: Calendar) {
-        this.calendarStore.set(calendar);
+        ProjectController.getInstance().updateCalendar(calendar);
     }
 
     // =========================================================================
@@ -1767,8 +1749,8 @@ export class SchedulerService {
         // Selection logic here
         if (e.shiftKey && this.anchorId) {
             // Range selection
-            const visibleTasks = this.taskStore.getVisibleTasks((id) => {
-                const task = this.taskStore.getById(id);
+            const visibleTasks = ProjectController.getInstance().getVisibleTasks((id) => {
+                const task = ProjectController.getInstance().getTaskById(id);
                 return task?._collapsed || false;
             });
             const anchorIndex = visibleTasks.findIndex(t => t.id === this.anchorId);
@@ -1850,10 +1832,10 @@ export class SchedulerService {
      * @param value - New date value (ISO format: YYYY-MM-DD)
      */
     private async _applyDateChangeImmediate(taskId: string, field: string, value: string): Promise<void> {
-        const task = this.taskStore.getById(taskId);
+        const task = ProjectController.getInstance().getTaskById(taskId);
         if (!task) return;
         
-        const isParent = this.taskStore.isParent(taskId);
+        const isParent = ProjectController.getInstance().isParent(taskId);
         if (isParent) return; // Parents don't have direct date edits
         
         // Validate date format
@@ -1863,7 +1845,7 @@ export class SchedulerService {
         }
         
         const isManual = task.schedulingMode === 'Manual';
-        const calendar = this.calendarStore.get();
+        const calendar = ProjectController.getInstance().getCalendar();
         
         // ═══════════════════════════════════════════════════════════════════════
         // SCHEDULED DATE EDITS (start, end)
@@ -1879,13 +1861,9 @@ export class SchedulerService {
                     start: value,
                     end: newEnd  // Always recalculate to ensure End >= Start
                 };
-                this.taskStore.update(taskId, updates);
+                ProjectController.getInstance().updateTask(taskId, updates);
                 
-                if (this.engine) {
-                    this.engine.updateTask(taskId, updates).catch(error => {
-                        console.warn('[SchedulerService] Failed to sync Manual task update to engine:', error);
-                    });
-                }
+                // NOTE: Removed engine sync - ProjectController handles via Worker
                 
                 this.toastService.info('Manual task dates updated');
             } else {
@@ -1895,16 +1873,9 @@ export class SchedulerService {
                     constraintType: 'snet' as ConstraintType,
                     constraintDate: value 
                 };
-                this.taskStore.update(taskId, updates);
+                ProjectController.getInstance().updateTask(taskId, updates);
                 
-                // CRITICAL: Await engine update to ensure constraint is synced before recalculation
-                if (this.engine) {
-                    try {
-                        await this.engine.updateTask(taskId, updates);
-                    } catch (error) {
-                        console.warn('[SchedulerService] Failed to sync task update to engine:', error);
-                    }
-                }
+                // NOTE: Removed engine sync - ProjectController handles via Worker
                 
                 this.toastService.info('Start constraint (SNET) applied');
             }
@@ -1940,16 +1911,9 @@ export class SchedulerService {
                     end: value,
                     duration: Math.max(1, newDuration)
                 };
-                this.taskStore.update(taskId, updates);
+                ProjectController.getInstance().updateTask(taskId, updates);
                 
-                // CRITICAL: Await engine update to ensure constraint is synced before recalculation
-                if (this.engine) {
-                    try {
-                        await this.engine.updateTask(taskId, updates);
-                    } catch (error) {
-                        console.warn('[SchedulerService] Failed to sync Manual task update to engine:', error);
-                    }
-                }
+                // NOTE: Removed engine sync - ProjectController handles via Worker
                 
                 this.toastService.info('Manual task dates updated');
             } else {
@@ -1968,16 +1932,9 @@ export class SchedulerService {
                     constraintType: 'fnlt' as ConstraintType,
                     constraintDate: value 
                 };
-                this.taskStore.update(taskId, updates);
+                ProjectController.getInstance().updateTask(taskId, updates);
                 
-                // CRITICAL: Await engine update to ensure constraint is synced before recalculation
-                if (this.engine) {
-                    try {
-                        await this.engine.updateTask(taskId, updates);
-                    } catch (error) {
-                        console.warn('[SchedulerService] Failed to sync task update to engine:', error);
-                    }
-                }
+                // NOTE: Removed engine sync - ProjectController handles via Worker
                 
                 // Warn if deadline is before current start
                 if (task.start && value < task.start) {
@@ -2000,7 +1957,7 @@ export class SchedulerService {
         
         if (field === 'actualStart') {
             // DRIVER MODE + ANCHOR: actualStart drives schedule and locks history
-            const calendar = this.calendarStore.get();
+            const calendar = ProjectController.getInstance().getCalendar();
             const updates: Partial<Task> = {
                 actualStart: value,
                 start: value,
@@ -2012,13 +1969,8 @@ export class SchedulerService {
                 updates.duration = DateUtils.calcWorkDays(value, task.actualFinish, calendar);
             }
             
-            this.taskStore.update(taskId, updates);
-            
-            if (this.engine) {
-                this.engine.updateTask(taskId, updates).catch(error => {
-                    console.warn('[SchedulerService] Failed to sync actualStart to engine:', error);
-                });
-            }
+            ProjectController.getInstance().updateTask(taskId, updates);
+            // NOTE: Removed engine sync - ProjectController handles via Worker
             
             this.toastService.info('Task started - schedule locked with SNET constraint');
             this.recalculateAll();
@@ -2034,7 +1986,7 @@ export class SchedulerService {
                 return;
             }
             
-            const calendar = this.calendarStore.get();
+            const calendar = ProjectController.getInstance().getCalendar();
             const actualDuration = effectiveStart
                 ? DateUtils.calcWorkDays(effectiveStart, value, calendar)
                 : task.duration;
@@ -2061,13 +2013,8 @@ export class SchedulerService {
                 }
             }
             
-            this.taskStore.update(taskId, updates);
-            
-            if (this.engine) {
-                this.engine.updateTask(taskId, updates).catch(error => {
-                    console.warn('[SchedulerService] Failed to sync actualFinish to engine:', error);
-                });
-            }
+            ProjectController.getInstance().updateTask(taskId, updates);
+            // NOTE: Removed engine sync - ProjectController handles via Worker
             
             this.toastService.success('Task complete');
             this.recalculateAll();
@@ -2093,12 +2040,12 @@ export class SchedulerService {
         needsRender: boolean;
         success: boolean;
     }> {
-        const task = this.taskStore.getById(taskId);
+        const task = ProjectController.getInstance().getTaskById(taskId);
         if (!task) {
             return { needsRecalc: false, needsRender: false, success: false };
         }
         
-        const isParent = this.taskStore.isParent(taskId);
+        const isParent = ProjectController.getInstance().isParent(taskId);
         let needsRecalc = false;
         let needsRender = false;
 
@@ -2117,16 +2064,12 @@ export class SchedulerService {
                 // Only update store if we have a valid positive number
                 // Invalid values (empty, NaN) are ignored - DOM keeps user's input
                 if (!isNaN(parsedDuration) && parsedDuration >= 1) {
-                    this.taskStore.update(taskId, { duration: parsedDuration });
+                    ProjectController.getInstance().updateTask(taskId, { duration: parsedDuration });
                     
                     // CRITICAL: Await engine update to ensure it completes before recalculation
                     // This prevents race condition where recalculateAll() runs before engine
                     // has processed the duration update, causing the user's input to be overwritten
-                    if (this.engine) {
-                        await this.engine.updateTask(taskId, { duration: parsedDuration }).catch(error => {
-                            console.warn('[SchedulerService] Failed to sync task update:', error);
-                        });
-                    }
+                    // NOTE: Removed engine sync - ProjectController handles via Worker
                     
                     needsRecalc = true;
                 }
@@ -2197,19 +2140,14 @@ export class SchedulerService {
                         updates.duration = DateUtils.calcWorkDays(
                             actualStartValue,
                             task.actualFinish,
-                            this.calendarStore.get()
+                            ProjectController.getInstance().getCalendar()
                         );
                     }
 
                     // Atomic update
-                    this.taskStore.update(taskId, updates);
+                    ProjectController.getInstance().updateTask(taskId, updates);
 
-                    // Sync to engine
-                    if (this.engine) {
-                        this.engine.updateTask(taskId, updates).catch(error => {
-                            console.warn('[SchedulerService] Failed to sync actualStart to engine:', error);
-                        });
-                    }
+                    // NOTE: Removed engine sync - ProjectController handles via Worker
 
                     this.toastService.info('Task started - schedule locked with SNET constraint');
                     needsRecalc = true;
@@ -2218,13 +2156,8 @@ export class SchedulerService {
                     // Clearing actualStart
                     // NOTE: We preserve the constraint - user may have wanted SNET anyway
                     // They can manually remove it if needed
-                    this.taskStore.update(taskId, { actualStart: null });
-                    
-                    if (this.engine) {
-                        this.engine.updateTask(taskId, { actualStart: null }).catch(error => {
-                            console.warn('[SchedulerService] Failed to sync actualStart clear to engine:', error);
-                        });
-                    }
+                    ProjectController.getInstance().updateTask(taskId, { actualStart: null });
+                    // NOTE: Removed engine sync - ProjectController handles via Worker
                     
                     this.toastService.info('Actual start cleared. Start constraint preserved.');
                     needsRecalc = true;
@@ -2254,7 +2187,7 @@ export class SchedulerService {
                     }
 
                     // Calculate actual duration
-                    const calendar = this.calendarStore.get();
+                    const calendar = ProjectController.getInstance().getCalendar();
                     const actualDuration = effectiveStart
                         ? DateUtils.calcWorkDays(effectiveStart, actualFinishValue, calendar)
                         : task.duration;
@@ -2284,14 +2217,9 @@ export class SchedulerService {
                     }
 
                     // Atomic update
-                    this.taskStore.update(taskId, updates);
+                    ProjectController.getInstance().updateTask(taskId, updates);
 
-                    // Sync to engine
-                    if (this.engine) {
-                        this.engine.updateTask(taskId, updates).catch(error => {
-                            console.warn('[SchedulerService] Failed to sync actualFinish to engine:', error);
-                        });
-                    }
+                    // NOTE: Removed engine sync - ProjectController handles via Worker
 
                     // User feedback with duration variance
                     const plannedDuration = task.duration || 0;
@@ -2313,20 +2241,13 @@ export class SchedulerService {
                     
                 } else if (!value && !isParent) {
                     // Clearing actualFinish - task is no longer complete
-                    this.taskStore.update(taskId, { 
+                    ProjectController.getInstance().updateTask(taskId, { 
                         actualFinish: null,
                         progress: 0,
                         remainingDuration: task.duration // Reset remaining work
                     });
                     
-                    if (this.engine) {
-                        this.engine.updateTask(taskId, { 
-                            actualFinish: null, 
-                            progress: 0 
-                        }).catch(error => {
-                            console.warn('[SchedulerService] Failed to sync actualFinish clear to engine:', error);
-                        });
-                    }
+                    // NOTE: Removed engine sync - ProjectController handles via Worker
                     
                     this.toastService.info('Task reopened');
                     needsRecalc = true;
@@ -2337,34 +2258,29 @@ export class SchedulerService {
                 // Constraint type change: if set to ASAP, clear constraint date
                 const constraintValue = String(value);
                 if (constraintValue === 'asap') {
-                    this.taskStore.update(taskId, { 
+                    ProjectController.getInstance().updateTask(taskId, { 
                         constraintType: 'asap',
                         constraintDate: null 
                     });
                     this.toastService.info('Constraint removed - task will schedule based on dependencies');
                 } else {
                     // For other constraint types, just update
-                    this.taskStore.update(taskId, { constraintType: constraintValue as ConstraintType });
+                    ProjectController.getInstance().updateTask(taskId, { constraintType: constraintValue as ConstraintType });
                 }
                 needsRecalc = true;
                 break;
                 
             case 'constraintDate':
                 // Constraint date change
-                this.taskStore.update(taskId, { constraintDate: String(value) || null });
+                ProjectController.getInstance().updateTask(taskId, { constraintDate: String(value) || null });
                 needsRecalc = true;
                 break;
                 
             case 'tradePartnerIds':
                 // Trade partner assignments - display only, doesn't affect CPM
-                this.taskStore.update(taskId, { tradePartnerIds: Array.isArray(value) ? value as string[] : [] });
+                ProjectController.getInstance().updateTask(taskId, { tradePartnerIds: Array.isArray(value) ? value as string[] : [] });
                 
-                // Sync to engine (for data round-trip preservation)
-                if (this.engine) {
-                    this.engine.updateTask(taskId, { tradePartnerIds: Array.isArray(value) ? value as string[] : [] }).catch(error => {
-                        console.warn('[SchedulerService] Failed to sync tradePartnerIds to engine:', error);
-                    });
-                }
+                // NOTE: Removed engine sync - ProjectController handles via Worker
                 
                 needsRender = true;
                 break;
@@ -2408,24 +2324,14 @@ export class SchedulerService {
                         constraintDate: task.start || null
                     };
                     
-                    this.taskStore.update(taskId, updates);
-                    
-                    if (this.engine) {
-                        this.engine.updateTask(taskId, updates).catch(error => {
-                            console.warn('[SchedulerService] Failed to sync Manual→Auto transition:', error);
-                        });
-                    }
+                    ProjectController.getInstance().updateTask(taskId, updates);
+                    // NOTE: Removed engine sync - ProjectController handles via Worker
                     
                     this.toastService.info('Task is now auto-scheduled with SNET constraint (remove constraint for ASAP)');
                 } else {
                     // AUTO → MANUAL: Simple mode change, dates preserved
-                    this.taskStore.update(taskId, { schedulingMode: newMode });
-                    
-                    if (this.engine) {
-                        this.engine.updateTask(taskId, { schedulingMode: newMode }).catch(error => {
-                            console.warn('[SchedulerService] Failed to sync schedulingMode to engine:', error);
-                        });
-                    }
+                    ProjectController.getInstance().updateTask(taskId, { schedulingMode: newMode });
+                    // NOTE: Removed engine sync - ProjectController handles via Worker
                     
                     this.toastService.info('Task is now manually scheduled - dates are fixed');
                 }
@@ -2436,7 +2342,7 @@ export class SchedulerService {
                 
             default:
                 // All other fields - simple update (name, notes, progress, etc.)
-                this.taskStore.update(taskId, { [field]: value } as Partial<Task>);
+                ProjectController.getInstance().updateTask(taskId, { [field]: value } as Partial<Task>);
                 needsRender = true;
         }
         
@@ -2515,7 +2421,7 @@ export class SchedulerService {
      */
     private _handleEnterLastRow(lastTaskId: string, field: string): void {
         // Get the last task to determine its parent (new task will be a sibling)
-        const lastTask = this.taskStore.getById(lastTaskId);
+        const lastTask = ProjectController.getInstance().getTaskById(lastTaskId);
         if (!lastTask) return;
         
         // Create new task with same parent as the last task (making it a sibling)
@@ -2640,7 +2546,7 @@ export class SchedulerService {
         
         // Sync drawer with updated values (dates may have changed from CPM)
         if (this.drawer && this.drawer.isDrawerOpen() && this.drawer.getActiveTaskId() === taskId) {
-            const updatedTask = this.taskStore.getById(taskId);
+            const updatedTask = ProjectController.getInstance().getTaskById(taskId);
             if (updatedTask) {
                 this.drawer.sync(updatedTask);
             }
@@ -2662,15 +2568,9 @@ export class SchedulerService {
         }
 
         this.saveCheckpoint();
-        this.taskStore.update(taskId, { dependencies });
+        ProjectController.getInstance().updateTask(taskId, { dependencies });
         
-        // Sync update to engine
-        if (this.engine) {
-            this.engine.updateTask(taskId, { dependencies }).catch(error => {
-                console.warn('[SchedulerService] Failed to sync task update to engine:', error);
-                this.toastService.error('Failed to sync dependency changes to scheduling engine');
-            });
-        }
+        // NOTE: Removed engine sync - ProjectController handles via Worker
         
         this.recalculateAll();
         this.saveData();
@@ -2684,19 +2584,9 @@ export class SchedulerService {
      */
     private _handleCalendarSave(calendar: Calendar): void {
         this.saveCheckpoint();
-        this.calendarStore.set(calendar);
+        ProjectController.getInstance().updateCalendar(calendar);
         
-        // Sync calendar to engine (reinitialize with new calendar)
-        if (this.engine) {
-            const tasks = this.taskStore.getAll();
-            const context: TaskHierarchyContext = {
-                isParent: (id: string) => this.taskStore.isParent(id),
-                getDepth: (id: string) => this.taskStore.getDepth(id),
-            };
-            this.engine.initialize(tasks, calendar, context).catch(error => {
-                console.warn('[SchedulerService] Failed to sync calendar to engine:', error);
-            });
-        }
+        // NOTE: Removed engine sync - ProjectController handles via Worker
         
         this.recalculateAll();
         this.saveData();
@@ -2731,7 +2621,7 @@ export class SchedulerService {
         }
         
         // Guard: No valid target
-        const targetTask = this.taskStore.getById(targetId);
+        const targetTask = ProjectController.getInstance().getTaskById(targetId);
         if (!targetTask) {
             this.toastService.warning('Invalid drop target');
             return;
@@ -2751,7 +2641,7 @@ export class SchedulerService {
         // Find "top-level" selected tasks (tasks whose parent is NOT also selected)
         // This is the same pattern used in indentSelection()
         const topLevelSelected = taskIds
-            .map(id => this.taskStore.getById(id))
+            .map(id => ProjectController.getInstance().getTaskById(id))
             .filter((t): t is Task => t !== undefined)
             .filter(task => !task.parentId || !selectedSet.has(task.parentId));
         
@@ -2769,7 +2659,7 @@ export class SchedulerService {
             taskIdsToMove.add(task.id);
             
             // Recursively collect all descendants
-            this.taskStore.getChildren(task.id).forEach(child => {
+            ProjectController.getInstance().getChildren(task.id).forEach(child => {
                 collectDescendants(child);
             });
         };
@@ -2792,7 +2682,7 @@ export class SchedulerService {
                 this.toastService.warning('Cannot drop a task onto its own descendant');
                 return;
             }
-            const parent = this.taskStore.getById(checkParent);
+            const parent = ProjectController.getInstance().getTaskById(checkParent);
             checkParent = parent?.parentId ?? null;
         }
         
@@ -2817,7 +2707,7 @@ export class SchedulerService {
             newParentId = targetId;
             
             // Append to end of target's children
-            const existingChildren = this.taskStore.getChildren(targetId);
+            const existingChildren = ProjectController.getInstance().getChildren(targetId);
             beforeKey = existingChildren.length > 0 
                 ? existingChildren[existingChildren.length - 1].sortKey ?? null 
                 : null;
@@ -2825,7 +2715,7 @@ export class SchedulerService {
             
             // If target was collapsed, expand it to show the newly added children
             if (targetTask._collapsed) {
-                this.taskStore.update(targetId, { _collapsed: false });
+                ProjectController.getInstance().updateTask(targetId, { _collapsed: false });
             }
             
         } else if (position === 'before') {
@@ -2835,7 +2725,7 @@ export class SchedulerService {
             newParentId = targetTask.parentId ?? null;
             
             // Get siblings at target's level
-            const siblings = this.taskStore.getChildren(newParentId);
+            const siblings = ProjectController.getInstance().getChildren(newParentId);
             const targetIndex = siblings.findIndex(t => t.id === targetId);
             
             // beforeKey = previous sibling's key (or null if first)
@@ -2850,7 +2740,7 @@ export class SchedulerService {
             newParentId = targetTask.parentId ?? null;
             
             // Get siblings at target's level
-            const siblings = this.taskStore.getChildren(newParentId);
+            const siblings = ProjectController.getInstance().getChildren(newParentId);
             const targetIndex = siblings.findIndex(t => t.id === targetId);
             
             // beforeKey = target's key
@@ -2877,7 +2767,7 @@ export class SchedulerService {
         // =========================================================================
         
         topLevelSelected.forEach((task, index) => {
-            this.taskStore.update(task.id, {
+            ProjectController.getInstance().updateTask(task.id, {
                 parentId: newParentId,
                 sortKey: sortKeys[index]
             });
@@ -2919,10 +2809,10 @@ export class SchedulerService {
      */
     private _handleBarDrag(task: Task, start: string, end: string): void {
         this.saveCheckpoint();
-        const calendar = this.calendarStore.get();
+        const calendar = ProjectController.getInstance().getCalendar();
         const duration = DateUtils.calcWorkDays(start, end, calendar);
         
-        this.taskStore.update(task.id, { start, end, duration });
+        ProjectController.getInstance().updateTask(task.id, { start, end, duration });
         this.recalculateAll();
         this.saveData();
         this.render();
@@ -2940,8 +2830,8 @@ export class SchedulerService {
      * @param ctrlKey - Ctrl key pressed
      */
     private _handleArrowNavigation(key: 'ArrowUp' | 'ArrowDown', shiftKey: boolean, _ctrlKey: boolean): void {
-        const visibleTasks = this.taskStore.getVisibleTasks((id) => {
-            const task = this.taskStore.getById(id);
+        const visibleTasks = ProjectController.getInstance().getVisibleTasks((id) => {
+            const task = ProjectController.getInstance().getTaskById(id);
             return task?._collapsed || false;
         });
         
@@ -3009,8 +2899,8 @@ export class SchedulerService {
         
         if (editableColumns.length === 0) return;
         
-        const visibleTasks = this.taskStore.getVisibleTasks((id) => {
-            const task = this.taskStore.getById(id);
+        const visibleTasks = ProjectController.getInstance().getVisibleTasks((id) => {
+            const task = ProjectController.getInstance().getTaskById(id);
             return task?._collapsed || false;
         });
         
@@ -3092,8 +2982,8 @@ export class SchedulerService {
     private _handleArrowCollapse(key: 'ArrowLeft' | 'ArrowRight'): void {
         if (!this.focusedId) return;
         
-        const task = this.taskStore.getById(this.focusedId);
-        if (!task || !this.taskStore.isParent(this.focusedId)) return;
+        const task = ProjectController.getInstance().getTaskById(this.focusedId);
+        if (!task || !ProjectController.getInstance().isParent(this.focusedId)) return;
 
         if (key === 'ArrowRight' && task._collapsed) {
             this.toggleCollapse(this.focusedId);
@@ -3115,7 +3005,7 @@ export class SchedulerService {
         
         const list = this._getFlatList();
         const selectedIds = new Set(this.selectedIds);
-        const allTasks = this.taskStore.getAll();
+        const allTasks = ProjectController.getInstance().getTasks();
         
         // 1. Find the "top-level" selected tasks 
         //    (tasks whose parent is NOT also selected)
@@ -3136,8 +3026,8 @@ export class SchedulerService {
         if (firstIdx <= 0) return;
         
         const prev = list[firstIdx - 1];
-        const taskDepth = this.taskStore.getDepth(firstTask.id);
-        const prevDepth = this.taskStore.getDepth(prev.id);
+        const taskDepth = ProjectController.getInstance().getDepth(firstTask.id);
+        const prevDepth = ProjectController.getInstance().getDepth(prev.id);
         
         // Can't indent if previous task is at a deeper level
         if (prevDepth < taskDepth) return;
@@ -3150,7 +3040,7 @@ export class SchedulerService {
         } else {
             // Previous task is at shallower depth - find ancestor at same depth
             let curr: Task | undefined = prev;
-            while (curr && this.taskStore.getDepth(curr.id) > taskDepth) {
+            while (curr && ProjectController.getInstance().getDepth(curr.id) > taskDepth) {
                 curr = allTasks.find(t => t.id === curr!.parentId);
             }
             if (curr) {
@@ -3178,9 +3068,9 @@ export class SchedulerService {
         topLevelSelected.forEach(task => {
             // Get the new parent's last child's sortKey
             const newSortKey = OrderingService.generateAppendKey(
-                this.taskStore.getLastSortKey(newParentId)
+                ProjectController.getInstance().getLastSortKey(newParentId)
             );
-            this.taskStore.update(task.id, { 
+            ProjectController.getInstance().updateTask(task.id, { 
                 parentId: newParentId,
                 sortKey: newSortKey
             });
@@ -3203,7 +3093,7 @@ export class SchedulerService {
         
         const list = this._getFlatList();
         const selectedIds = new Set(this.selectedIds);
-        const allTasks = this.taskStore.getAll();
+        const allTasks = ProjectController.getInstance().getTasks();
         
         // 1. Find top-level selected tasks (parent not selected)
         const topLevelSelected = list.filter(task => 
@@ -3225,7 +3115,7 @@ export class SchedulerService {
             
             // Insert after the former parent among its siblings
             const formerParent = currentParent;
-            const auntsUncles = this.taskStore.getChildren(grandparentId);
+            const auntsUncles = ProjectController.getInstance().getChildren(grandparentId);
             const formerParentIndex = auntsUncles.findIndex(t => t.id === formerParent?.id);
             
             const beforeKey = formerParent?.sortKey ?? null;
@@ -3235,7 +3125,7 @@ export class SchedulerService {
             
             const newSortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
             
-            this.taskStore.update(task.id, { 
+            ProjectController.getInstance().updateTask(task.id, { 
                 parentId: grandparentId,
                 sortKey: newSortKey
             });
@@ -3362,7 +3252,7 @@ export class SchedulerService {
         }
 
         // Verify task exists in store first
-        const task = this.taskStore.getById(taskId);
+        const task = ProjectController.getInstance().getTaskById(taskId);
         if (!task) {
             console.warn('[SchedulerService] Cannot scroll to task - task not found in store:', taskId);
             return;
@@ -3370,7 +3260,7 @@ export class SchedulerService {
 
         // Check if task's parent is collapsed (task won't be visible)
         if (task.parentId) {
-            const parent = this.taskStore.getById(task.parentId);
+            const parent = ProjectController.getInstance().getTaskById(task.parentId);
             if (parent?._collapsed) {
                 console.log('[SchedulerService] Task parent is collapsed - task will not be visible until parent is expanded:', taskId);
                 // Still try to scroll - the viewport might handle this
@@ -3382,8 +3272,8 @@ export class SchedulerService {
             attempts++;
             
             // Get current visible tasks from viewport
-            const visibleTasks = this.taskStore.getVisibleTasks((id) => {
-                const t = this.taskStore.getById(id);
+            const visibleTasks = ProjectController.getInstance().getVisibleTasks((id) => {
+                const t = ProjectController.getInstance().getTaskById(id);
                 return t?._collapsed || false;
             });
             
@@ -3454,7 +3344,7 @@ export class SchedulerService {
      * @returns Task or undefined
      */
     getTask(id: string): Task | undefined {
-        return this.taskStore.getById(id);
+        return ProjectController.getInstance().getTaskById(id);
     }
 
     // =========================================================================
@@ -3486,7 +3376,7 @@ export class SchedulerService {
      */
     public getSelectedTask(): Task | null {
         if (!this.focusedId) return null;
-        return this.taskStore.getById(this.focusedId) || null;
+        return ProjectController.getInstance().getTaskById(this.focusedId) || null;
     }
 
     /**
@@ -3533,7 +3423,7 @@ export class SchedulerService {
      * @returns True if parent
      */
     isParent(id: string): boolean {
-        return this.taskStore.isParent(id);
+        return ProjectController.getInstance().isParent(id);
     }
 
     /**
@@ -3542,7 +3432,7 @@ export class SchedulerService {
      * @returns Depth level
      */
     getDepth(id: string): number {
-        return this.taskStore.getDepth(id);
+        return ProjectController.getInstance().getDepth(id);
     }
 
     /**
@@ -3559,20 +3449,22 @@ export class SchedulerService {
             return Promise.resolve(undefined);
         }
         
+        const controller = ProjectController.getInstance();
+        
         return this.operationQueue.enqueue(async () => {
             this.saveCheckpoint();
             
             // Determine parent
             let parentId: string | null = taskData.parentId ?? null;
             if (this.focusedId && taskData.parentId === undefined) {
-                const focusedTask = this.taskStore.getById(this.focusedId);
+                const focusedTask = controller.getTaskById(this.focusedId);
                 if (focusedTask) {
                     parentId = focusedTask.parentId ?? null;
                 }
             }
             
             // Generate sort key (now guaranteed to see latest state)
-            const lastSortKey = this.taskStore.getLastSortKey(parentId);
+            const lastSortKey = controller.getLastSortKey(parentId);
             const sortKey = OrderingService.generateAppendKey(lastSortKey);
             
             const today = DateUtils.today();
@@ -3596,8 +3488,8 @@ export class SchedulerService {
                 _collapsed: false,
             } as Task;
             
-            // Add to store
-            this.taskStore.add(task, 'Add Task');
+            // Fire-and-forget to ProjectController (handles optimistic update + worker + persistence)
+            controller.addTask(task);
             
             // Update UI state
             this.selectedIds.clear();
@@ -3613,17 +3505,9 @@ export class SchedulerService {
             }
             this._updateHeaderCheckboxState();
             
-            // Recalculate and render
-            // Sync new task to engine
-            if (this.engine) {
-                this.engine.addTask(task).catch(error => {
-                    console.warn('[SchedulerService] Failed to sync new task to engine:', error);
-                });
-            }
-            
-            this.recalculateAll();
-            this.saveData();
-            this.render();
+            // NOTE: Removed recalculateAll(), engine sync, saveData(), render()
+            // ProjectController handles these via Worker + optimistic updates
+            // SchedulerViewport subscribes to controller.tasks$ and auto-renders
             
             this.toastService?.success('Task added');
             return task;
@@ -3635,37 +3519,25 @@ export class SchedulerService {
      */
     deleteTask(taskId: string): void {
         const editingManager = getEditingStateManager();
+        const controller = ProjectController.getInstance();
         
         if (editingManager.isEditingTask(taskId)) {
             editingManager.exitEditMode('task-deleted');
         }
         
-        // TaskStore.delete() now handles composite actions internally
-        this.taskStore.delete(taskId, true);
+        // Fire-and-forget to ProjectController (handles optimistic update + worker + persistence)
+        // ProjectController.deleteTask() also handles descendants
+        controller.deleteTask(taskId);
         
-        // Sync to engine
-        if (this.engine) {
-            const collectIds = (id: string): string[] => {
-                const children = this.taskStore.getChildren(id);
-                let ids = [id];
-                for (const child of children) {
-                    ids = ids.concat(collectIds(child.id));
-                }
-                return ids;
-            };
-            
-            // Note: Children already deleted from store, just need to sync
-            this.engine.deleteTask(taskId).catch(console.error);
-        }
-        
+        // Update UI state
         this.selectedIds.delete(taskId);
         if (this.focusedId === taskId) {
             this.focusedId = null;
         }
 
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        // NOTE: Removed recalculateAll(), engine sync, saveData(), render()
+        // ProjectController handles these via Worker + optimistic updates
+        // SchedulerViewport subscribes to controller.tasks$ and auto-renders
         
         this.toastService.success('Task deleted');
     }
@@ -3677,18 +3549,18 @@ export class SchedulerService {
     private _deleteSelected(): void {
         if (this.selectedIds.size === 0) return;
         
+        const controller = ProjectController.getInstance();
         const idsToDelete = Array.from(this.selectedIds);
         
-        // Begin composite action for bulk delete
+        // Begin composite action for bulk delete (for undo/redo grouping)
         if (this.historyManager) {
             this.historyManager.beginComposite(`Delete ${idsToDelete.length} Task(s)`);
         }
         
         try {
             for (const id of idsToDelete) {
-                // Delete each task (including children)
-                // TaskStore will add events to the active composite
-                this.taskStore.delete(id, true);
+                // Fire-and-forget to ProjectController (handles optimistic update + worker + persistence)
+                controller.deleteTask(id);
             }
         } finally {
             // End composite action
@@ -3700,9 +3572,8 @@ export class SchedulerService {
         this.selectedIds.clear();
         this.focusedId = null;
         
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        // NOTE: Removed recalculateAll(), saveData(), render()
+        // ProjectController handles these via Worker + optimistic updates
         
         this.toastService.success(`Deleted ${idsToDelete.length} task(s)`);
     }
@@ -3712,43 +3583,29 @@ export class SchedulerService {
      * @param taskId - Task ID
      */
     toggleCollapse(taskId: string): void {
-        const task = this.taskStore.getById(taskId);
+        const controller = ProjectController.getInstance();
+        const task = controller.getTaskById(taskId);
         if (!task) return;
 
-        this.taskStore.update(taskId, {
+        // Fire-and-forget to ProjectController
+        controller.updateTask(taskId, {
             _collapsed: !task._collapsed
         });
         
-        // Force immediate render to update visible data and cell states
-        // Clear hashes to ensure all cells update (especially name cell with collapse button)
-        if (this.grid) {
-            const tasks = this.taskStore.getVisibleTasks((id) => {
-                const t = this.taskStore.getById(id);
-                return t?._collapsed || false;
-            });
-            this.grid.setVisibleData(tasks);
-            this.grid.setSelection(this.selectedIds, this.focusedId);
-        }
-        
-        if (this.gantt) {
-            const tasks = this.taskStore.getVisibleTasks((id) => {
-                const t = this.taskStore.getById(id);
-                return t?._collapsed || false;
-            });
-            this.gantt.setData(tasks);
-            this.gantt.setSelection(this.selectedIds);
-        }
+        // NOTE: Removed manual render logic - SchedulerViewport subscribes to controller.tasks$
+        // and will auto-update when the optimistic update is applied
     }
 
     /**
      * Indent a task (make it a child of previous sibling)
      */
     indent(taskId: string): void {
-        const task = this.taskStore.getById(taskId);
+        const controller = ProjectController.getInstance();
+        const task = controller.getTaskById(taskId);
         if (!task) return;
 
-        const list = this.taskStore.getVisibleTasks((id) => {
-            const t = this.taskStore.getById(id);
+        const list = controller.getVisibleTasks((id) => {
+            const t = controller.getTaskById(id);
             return t?._collapsed || false;
         });
         
@@ -3756,8 +3613,8 @@ export class SchedulerService {
         if (idx <= 0) return;
         
         const prev = list[idx - 1];
-        const taskDepth = this.taskStore.getDepth(taskId);
-        const prevDepth = this.taskStore.getDepth(prev.id);
+        const taskDepth = controller.getDepth(taskId);
+        const prevDepth = controller.getDepth(prev.id);
         
         if (prevDepth < taskDepth) return;
         
@@ -3767,8 +3624,8 @@ export class SchedulerService {
             newParentId = prev.id;
         } else {
             let curr: Task | undefined = prev;
-            while (curr && this.taskStore.getDepth(curr.id) > taskDepth) {
-                curr = curr.parentId ? this.taskStore.getById(curr.parentId) : undefined;
+            while (curr && controller.getDepth(curr.id) > taskDepth) {
+                curr = curr.parentId ? controller.getTaskById(curr.parentId) : undefined;
             }
             if (curr) {
                 newParentId = curr.id;
@@ -3778,15 +3635,13 @@ export class SchedulerService {
         if (newParentId !== null) {
             // Generate new sort key for new parent's children
             const newSortKey = OrderingService.generateAppendKey(
-                this.taskStore.getLastSortKey(newParentId)
+                controller.getLastSortKey(newParentId)
             );
             
-            // Use move() which properly records the composite operation
-            this.taskStore.move(taskId, newParentId, newSortKey, 'Indent Task');
+            // Fire-and-forget to ProjectController
+            controller.moveTask(taskId, newParentId, newSortKey);
             
-            this.recalculateAll();
-            this.saveData();
-            this.render();
+            // NOTE: Removed recalculateAll(), saveData(), render()
         }
     }
 
@@ -3794,14 +3649,15 @@ export class SchedulerService {
      * Outdent a task (move to parent's level)
      */
     outdent(taskId: string): void {
-        const task = this.taskStore.getById(taskId);
+        const controller = ProjectController.getInstance();
+        const task = controller.getTaskById(taskId);
         if (!task || !task.parentId) return;
 
-        const parent = this.taskStore.getById(task.parentId);
+        const parent = controller.getTaskById(task.parentId);
         const newParentId = parent ? parent.parentId : null;
         
         // Generate sort key to insert after former parent
-        const siblings = this.taskStore.getChildren(newParentId);
+        const siblings = controller.getChildren(newParentId);
         const parentIndex = siblings.findIndex(t => t.id === task.parentId);
         
         let newSortKey: string;
@@ -3814,15 +3670,14 @@ export class SchedulerService {
         } else {
             // Insert at end
             newSortKey = OrderingService.generateAppendKey(
-                this.taskStore.getLastSortKey(newParentId)
+                controller.getLastSortKey(newParentId)
             );
         }
         
-        this.taskStore.move(taskId, newParentId, newSortKey, 'Outdent Task');
+        // Fire-and-forget to ProjectController
+        controller.moveTask(taskId, newParentId, newSortKey);
         
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        // NOTE: Removed recalculateAll(), saveData(), render()
     }
 
     /**
@@ -3930,29 +3785,29 @@ export class SchedulerService {
      * Insert blank row above a task
      */
     insertBlankRowAbove(taskId: string): void {
-        const task = this.taskStore.getById(taskId);
+        const controller = ProjectController.getInstance();
+        const task = controller.getTaskById(taskId);
         if (!task) return;
         
         this.saveCheckpoint();
         
         // Get siblings to find sort key position
-        const siblings = this.taskStore.getChildren(task.parentId);
+        const siblings = controller.getChildren(task.parentId);
         const taskIndex = siblings.findIndex(s => s.id === taskId);
         
         const beforeKey = taskIndex > 0 ? siblings[taskIndex - 1].sortKey : null;
         const afterKey = task.sortKey;
         
         const newSortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
-        const blankRow = this.taskStore.createBlankRow(newSortKey, task.parentId);
+        // Fire-and-forget to ProjectController
+        const blankRow = controller.createBlankRow(newSortKey, task.parentId);
         
         // Select the new blank row
         this.selectedIds.clear();
         this.selectedIds.add(blankRow.id);
         this.focusedId = blankRow.id;
         
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
         
         // Scroll to and highlight the new row
         if (this.grid) {
@@ -3965,29 +3820,29 @@ export class SchedulerService {
      * Insert blank row below a task
      */
     insertBlankRowBelow(taskId: string): void {
-        const task = this.taskStore.getById(taskId);
+        const controller = ProjectController.getInstance();
+        const task = controller.getTaskById(taskId);
         if (!task) return;
         
         this.saveCheckpoint();
         
         // Get siblings to find sort key position
-        const siblings = this.taskStore.getChildren(task.parentId);
+        const siblings = controller.getChildren(task.parentId);
         const taskIndex = siblings.findIndex(s => s.id === taskId);
         
         const beforeKey = task.sortKey;
         const afterKey = taskIndex < siblings.length - 1 ? siblings[taskIndex + 1].sortKey : null;
         
         const newSortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
-        const blankRow = this.taskStore.createBlankRow(newSortKey, task.parentId);
+        // Fire-and-forget to ProjectController
+        const blankRow = controller.createBlankRow(newSortKey, task.parentId);
         
         // Select the new blank row
         this.selectedIds.clear();
         this.selectedIds.add(blankRow.id);
         this.focusedId = blankRow.id;
         
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
         
         // Scroll to and highlight the new row
         if (this.grid) {
@@ -4001,14 +3856,16 @@ export class SchedulerService {
      * Called when user double-clicks a blank row
      */
     wakeUpBlankRow(taskId: string): void {
-        const task = this.taskStore.getById(taskId);
-        if (!task || !this.taskStore.isBlankRow(taskId)) {
+        const controller = ProjectController.getInstance();
+        const task = controller.getTaskById(taskId);
+        if (!task || !controller.isBlankRow(taskId)) {
             return;
         }
         
         this.saveCheckpoint();
         
-        const wokenTask = this.taskStore.wakeUpBlankRow(taskId);
+        // Fire-and-forget to ProjectController
+        const wokenTask = controller.wakeUpBlankRow(taskId);
         if (!wokenTask) return;
         
         // Update selection state
@@ -4020,11 +3877,9 @@ export class SchedulerService {
         // Update anchor for range selection
         this.anchorId = taskId;
         
-        this.recalculateAll();
-        this.render(); // This queues the visual update
+        // NOTE: Removed recalculateAll(), render() - ProjectController handles via Worker
         
-        // FIX: Wait for the render to complete before focusing
-        // The double-RAF ensures we wait for the next paint frame
+        // Wait for the next paint frame before focusing (allows reactive update to propagate)
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
                 this.enterEditMode();
@@ -4036,19 +3891,20 @@ export class SchedulerService {
      * Convert a blank row to a task
      */
     convertBlankToTask(taskId: string): void {
-        if (!this.taskStore.isBlankRow(taskId)) {
+        const controller = ProjectController.getInstance();
+        
+        if (!controller.isBlankRow(taskId)) {
             this.toastService?.error('Only blank rows can be converted');
             return;
         }
         
         this.saveCheckpoint();
         
-        const task = this.taskStore.wakeUpBlankRow(taskId, 'New Task');
+        // Fire-and-forget to ProjectController
+        const task = controller.wakeUpBlankRow(taskId, 'New Task');
         if (!task) return;
         
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
         
         // Focus the name field for immediate editing
         if (this.grid) {
@@ -4100,8 +3956,8 @@ export class SchedulerService {
             if (idx <= 0) continue;
             
             const prev = list[idx - 1];
-            const taskDepth = this.taskStore.getDepth(task.id);
-            const prevDepth = this.taskStore.getDepth(prev.id);
+            const taskDepth = ProjectController.getInstance().getDepth(task.id);
+            const prevDepth = ProjectController.getInstance().getDepth(prev.id);
             
             // Can only indent if prev is at same or higher depth
             if (prevDepth < taskDepth) continue;
@@ -4111,17 +3967,17 @@ export class SchedulerService {
                 newParentId = prev.id;
             } else {
                 let curr: Task | undefined = prev;
-                while (curr && this.taskStore.getDepth(curr.id) > taskDepth) {
-                    curr = curr.parentId ? this.taskStore.getById(curr.parentId) : undefined;
+                while (curr && ProjectController.getInstance().getDepth(curr.id) > taskDepth) {
+                    curr = curr.parentId ? ProjectController.getInstance().getTaskById(curr.parentId) : undefined;
                 }
                 if (curr) newParentId = curr.id;
             }
             
             if (newParentId !== null) {
                 const newSortKey = OrderingService.generateAppendKey(
-                    this.taskStore.getLastSortKey(newParentId)
+                    ProjectController.getInstance().getLastSortKey(newParentId)
                 );
-                this.taskStore.move(task.id, newParentId, newSortKey, 'Indent Task');
+                ProjectController.getInstance().moveTask(task.id, newParentId, newSortKey, 'Indent Task');
                 indentedCount++;
             }
         }
@@ -4148,7 +4004,7 @@ export class SchedulerService {
         
         const list = this._getFlatList();
         const selectedIds = new Set(this.selectedIds);
-        const allTasks = this.taskStore.getAll();
+        const allTasks = ProjectController.getInstance().getTasks();
         
         // Get top-level selected tasks
         const topLevelSelected = list.filter(task =>
@@ -4164,7 +4020,7 @@ export class SchedulerService {
             const grandparentId = currentParent ? currentParent.parentId : null;
             
             // Position after former parent among its siblings
-            const auntsUncles = this.taskStore.getChildren(grandparentId);
+            const auntsUncles = ProjectController.getInstance().getChildren(grandparentId);
             const formerParentIndex = auntsUncles.findIndex(t => t.id === currentParent?.id);
             
             const beforeKey = currentParent?.sortKey ?? null;
@@ -4174,7 +4030,7 @@ export class SchedulerService {
             
             const newSortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
             
-            this.taskStore.update(task.id, {
+            ProjectController.getInstance().updateTask(task.id, {
                 parentId: grandparentId,
                 sortKey: newSortKey
             });
@@ -4200,7 +4056,7 @@ export class SchedulerService {
         }
         
         const selectedCount = this.selectedIds.size;
-        const hasParents = Array.from(this.selectedIds).some(id => this.taskStore.isParent(id));
+        const hasParents = Array.from(this.selectedIds).some(id => ProjectController.getInstance().isParent(id));
         
         // Confirm for multiple tasks or parent tasks
         if (selectedCount > 1 || hasParents) {
@@ -4226,12 +4082,9 @@ export class SchedulerService {
             if (editingManager.isEditingTask(taskId)) {
                 editingManager.exitEditMode('task-deleted');
             }
-            this.taskStore.delete(taskId, true);
+            ProjectController.getInstance().deleteTask(taskId, true);
             this.selectedIds.delete(taskId);
-            
-            if (this.engine) {
-                this.engine.deleteTask(taskId).catch(console.error);
-            }
+            // NOTE: Removed engine sync - ProjectController handles via Worker
         }
         
         if (this.focusedId && idsToDelete.includes(this.focusedId)) {
@@ -4262,8 +4115,8 @@ export class SchedulerService {
      * @private
      */
     private _getFlatList(): Task[] {
-        return this.taskStore.getVisibleTasks((id) => {
-            const t = this.taskStore.getById(id);
+        return ProjectController.getInstance().getVisibleTasks((id) => {
+            const t = ProjectController.getInstance().getTaskById(id);
             return t?._collapsed || false;
         });
     }
@@ -4275,7 +4128,7 @@ export class SchedulerService {
     private _getAllDescendants(taskId: string): Set<string> {
         const descendants = new Set<string>();
         const collect = (id: string) => {
-            const children = this.taskStore.getChildren(id);
+            const children = ProjectController.getInstance().getChildren(id);
             for (const child of children) {
                 descendants.add(child.id);
                 collect(child.id);
@@ -4300,7 +4153,7 @@ export class SchedulerService {
             if (visited.has(currentId)) continue;
             visited.add(currentId);
             
-            const task = this.taskStore.getById(currentId);
+            const task = ProjectController.getInstance().getTaskById(currentId);
             if (task?.dependencies) {
                 for (const dep of task.dependencies) {
                     if (!visited.has(dep.id)) {
@@ -4335,7 +4188,7 @@ export class SchedulerService {
      * @returns Validation result with error message if invalid
      */
     private _validateDependencies(taskId: string, dependencies: Array<{ id: string; type: LinkType; lag: number }>): { valid: boolean; error?: string } {
-        const task = this.taskStore.getById(taskId);
+        const task = ProjectController.getInstance().getTaskById(taskId);
         if (!task) {
             return { valid: false, error: 'Task not found' };
         }
@@ -4343,7 +4196,7 @@ export class SchedulerService {
         // Check each dependency
         for (const dep of dependencies) {
             // Check if predecessor exists
-            const predecessor = this.taskStore.getById(dep.id);
+            const predecessor = ProjectController.getInstance().getTaskById(dep.id);
             if (!predecessor) {
                 return { valid: false, error: `Predecessor task "${dep.id}" not found` };
             }
@@ -4397,8 +4250,8 @@ export class SchedulerService {
      * @private
      */
     private _rollupParentDatesSafeguard(): void {
-        const allTasks = this.taskStore.getAll();
-        const calendar = this.calendarStore.get();
+        const allTasks = ProjectController.getInstance().getTasks();
+        const calendar = ProjectController.getInstance().getCalendar();
         
         // Find all parent tasks (tasks that have children)
         const parentIds = new Set<string>();
@@ -4414,7 +4267,7 @@ export class SchedulerService {
         // This ensures child-parents are processed before grandparents
         const parents = allTasks.filter(t => parentIds.has(t.id));
         const sortedParents = [...parents].sort((a, b) => 
-            this.taskStore.getDepth(b.id) - this.taskStore.getDepth(a.id)
+            ProjectController.getInstance().getDepth(b.id) - ProjectController.getInstance().getDepth(a.id)
         );
 
         sortedParents.forEach(parent => {
@@ -4429,7 +4282,7 @@ export class SchedulerService {
             }
 
             // Get direct children of this parent (exclude blank rows)
-            const children = this.taskStore.getChildren(parent.id).filter(
+            const children = ProjectController.getInstance().getChildren(parent.id).filter(
                 child => !child.rowType || child.rowType === 'task'
             );
             
@@ -4512,7 +4365,7 @@ export class SchedulerService {
         }
         
         // Filter out parent/summary tasks (can't link them)
-        const linkable = selectedArray.filter(id => !this.taskStore.isParent(id));
+        const linkable = selectedArray.filter(id => !ProjectController.getInstance().isParent(id));
         
         if (linkable.length < 2) {
             this.toastService?.warning('Need 2+ non-summary tasks to link');
@@ -4527,7 +4380,7 @@ export class SchedulerService {
         for (let i = 0; i < linkable.length - 1; i++) {
             const predecessorId = linkable[i];
             const successorId = linkable[i + 1];
-            const successor = this.taskStore.getById(successorId);
+            const successor = ProjectController.getInstance().getTaskById(successorId);
             
             if (!successor) continue;
             
@@ -4564,14 +4417,9 @@ export class SchedulerService {
         // The undo stack will have multiple entries, but that's acceptable
         // For true batch undo, we'd need HistoryManager changes
         for (const update of tasksToUpdate) {
-            this.taskStore.update(update.id, { dependencies: update.newDeps });
+            ProjectController.getInstance().updateTask(update.id, { dependencies: update.newDeps });
             
-            // Sync to engine if available
-            if (this.engine) {
-                this.engine.updateTask(update.id, { dependencies: update.newDeps }).catch(err => {
-                    console.warn('[SchedulerService] Failed to sync dependency update to engine:', err);
-                });
-            }
+            // NOTE: Removed engine sync - ProjectController handles via Worker
         }
         
         // Recalculate CPM (dates may change due to new dependencies)
@@ -4595,13 +4443,15 @@ export class SchedulerService {
             return;
         }
         
+        const controller = ProjectController.getInstance();
+        
         // If no focused task, just add to bottom
         if (!this.focusedId) {
             this.addTask();
             return;
         }
         
-        const focusedTask = this.taskStore.getById(this.focusedId);
+        const focusedTask = controller.getTaskById(this.focusedId);
         if (!focusedTask) {
             this.addTask();
             return;
@@ -4610,7 +4460,7 @@ export class SchedulerService {
         this.saveCheckpoint();
         
         // Get siblings sorted by sortKey
-        const siblings = this.taskStore.getChildren(focusedTask.parentId ?? null);
+        const siblings = controller.getChildren(focusedTask.parentId ?? null);
         const focusedIndex = siblings.findIndex(t => t.id === focusedTask.id);
         
         // Determine sort key bounds for insertion
@@ -4640,8 +4490,8 @@ export class SchedulerService {
             _collapsed: false,
         } as Task;
         
-        // Add to store
-        this.taskStore.add(newTask, 'Insert Task Above');
+        // Fire-and-forget to ProjectController
+        controller.addTask(newTask);
         
         // Focus the new task
         this.selectedIds.clear();
@@ -4657,10 +4507,7 @@ export class SchedulerService {
         }
         this._updateHeaderCheckboxState();
         
-        // Recalculate and render
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
         
         this.toastService.success('Task inserted');
     }
@@ -4676,13 +4523,15 @@ export class SchedulerService {
             return;
         }
         
+        const controller = ProjectController.getInstance();
+        
         // If no focused task, just add to bottom
         if (!this.focusedId) {
             this.addTask();
             return;
         }
         
-        const focusedTask = this.taskStore.getById(this.focusedId);
+        const focusedTask = controller.getTaskById(this.focusedId);
         if (!focusedTask) {
             this.addTask();
             return;
@@ -4691,7 +4540,7 @@ export class SchedulerService {
         this.saveCheckpoint();
         
         // Get siblings sorted by sortKey
-        const siblings = this.taskStore.getChildren(focusedTask.parentId ?? null);
+        const siblings = controller.getChildren(focusedTask.parentId ?? null);
         const focusedIndex = siblings.findIndex(t => t.id === focusedTask.id);
         
         // Determine sort key bounds for insertion BELOW focused task
@@ -4725,8 +4574,8 @@ export class SchedulerService {
             _collapsed: false,
         } as Task;
         
-        // Add to store
-        this.taskStore.add(newTask, 'Insert Task Below');
+        // Fire-and-forget to ProjectController
+        controller.addTask(newTask);
         
         // Focus the new task
         this.selectedIds.clear();
@@ -4742,10 +4591,7 @@ export class SchedulerService {
         }
         this._updateHeaderCheckboxState();
         
-        // Recalculate and render
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
         
         this.toastService.success('Task inserted');
     }
@@ -4763,13 +4609,15 @@ export class SchedulerService {
             return;
         }
         
+        const controller = ProjectController.getInstance();
+        
         // If no focused task, just add to root level
         if (!this.focusedId) {
             this.addTask();
             return;
         }
         
-        const parentTask = this.taskStore.getById(this.focusedId);
+        const parentTask = controller.getTaskById(this.focusedId);
         if (!parentTask) {
             this.addTask();
             return;
@@ -4781,7 +4629,7 @@ export class SchedulerService {
         const newParentId = this.focusedId;
         
         // Get existing children of this parent (sorted by sortKey)
-        const existingChildren = this.taskStore.getChildren(newParentId);
+        const existingChildren = controller.getChildren(newParentId);
         
         // Generate sortKey - append after last child (or first child if none)
         const lastChildKey = existingChildren.length > 0 
@@ -4811,11 +4659,11 @@ export class SchedulerService {
         
         // Ensure parent is expanded so child is visible
         if (parentTask._collapsed) {
-            this.taskStore.update(newParentId, { _collapsed: false });
+            controller.updateTask(newParentId, { _collapsed: false });
         }
         
-        // Add to store
-        this.taskStore.add(newTask, 'Add Child Task');
+        // Fire-and-forget to ProjectController
+        controller.addTask(newTask);
         
         // Focus the new task
         this.selectedIds.clear();
@@ -4831,10 +4679,7 @@ export class SchedulerService {
         }
         this._updateHeaderCheckboxState();
         
-        // Recalculate (parent becomes summary task if it wasn't already)
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
         
         // Scroll to new task
         if (this.grid) {
@@ -4849,12 +4694,14 @@ export class SchedulerService {
      * Only modifies the moved task's sortKey
      */
     moveSelectedTasks(direction: number): void {
+        const controller = ProjectController.getInstance();
+        
         if (!this.focusedId) return;
         
-        const task = this.taskStore.getById(this.focusedId);
+        const task = controller.getTaskById(this.focusedId);
         if (!task) return;
         
-        const siblings = this.taskStore.getChildren(task.parentId ?? null);
+        const siblings = controller.getChildren(task.parentId ?? null);
         const currentIndex = siblings.findIndex(t => t.id === task.id);
         
         // Already at top
@@ -4873,8 +4720,8 @@ export class SchedulerService {
             // Generate new key
             const newSortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
             
-            // Update only this task's sortKey
-            this.taskStore.updateSortKey(task.id, newSortKey);
+            // Fire-and-forget to ProjectController
+            controller.updateSortKey(task.id, newSortKey);
         } else {
             // Move down: after next sibling
             const nextSibling = siblings[currentIndex + 1];
@@ -4884,13 +4731,11 @@ export class SchedulerService {
             // Generate new key
             const newSortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
             
-            // Update only this task's sortKey
-            this.taskStore.updateSortKey(task.id, newSortKey);
+            // Fire-and-forget to ProjectController
+            controller.updateSortKey(task.id, newSortKey);
         }
         
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
         
         // Keep focus on moved task
         if (this.grid) {
@@ -4963,7 +4808,7 @@ export class SchedulerService {
         if (!this.focusedId || !this.focusedColumn) return;
         
         const editingManager = getEditingStateManager();
-        const task = this.taskStore.getById(this.focusedId);
+        const task = ProjectController.getInstance().getTaskById(this.focusedId);
         const originalValue = task ? getTaskFieldValue(task, this.focusedColumn as GridColumn['field']) : undefined;
         
         editingManager.enterEditMode(
@@ -5038,8 +4883,8 @@ export class SchedulerService {
         }
 
         // Get visible tasks (respecting collapse state)
-        const visibleTasks = this.taskStore.getVisibleTasks((id) => {
-            const task = this.taskStore.getById(id);
+        const visibleTasks = ProjectController.getInstance().getVisibleTasks((id) => {
+            const task = ProjectController.getInstance().getTaskById(id);
             return task?._collapsed || false;
         });
 
@@ -5074,8 +4919,8 @@ export class SchedulerService {
      */
     private _handleSelectAllClick(checkbox: HTMLInputElement): void {
         // Get visible tasks (respecting collapse state)
-        const visibleTasks = this.taskStore.getVisibleTasks((id) => {
-            const task = this.taskStore.getById(id);
+        const visibleTasks = ProjectController.getInstance().getVisibleTasks((id) => {
+            const task = ProjectController.getInstance().getTaskById(id);
             return task?._collapsed || false;
         });
 
@@ -5104,12 +4949,12 @@ export class SchedulerService {
             return;
         }
 
-        const selected = this.taskStore.getAll().filter(t => this.selectedIds.has(t.id));
+        const selected = ProjectController.getInstance().getTasks().filter(t => this.selectedIds.has(t.id));
         
         // Include children - for each selected parent, auto-include ALL descendants (recursively)
         const payload = new Set<Task>();
         const getDescendants = (parentId: string): void => {
-            this.taskStore.getChildren(parentId).forEach(child => {
+            ProjectController.getInstance().getChildren(parentId).forEach(child => {
                 payload.add(child);
                 getDescendants(child.id);
             });
@@ -5117,7 +4962,7 @@ export class SchedulerService {
 
         selected.forEach(task => {
             payload.add(task);
-            if (this.taskStore.isParent(task.id)) {
+            if (ProjectController.getInstance().isParent(task.id)) {
                 getDescendants(task.id);
             }
         });
@@ -5145,12 +4990,12 @@ export class SchedulerService {
         }
 
         // Perform same logic as copySelection()
-        const selected = this.taskStore.getAll().filter(t => this.selectedIds.has(t.id));
+        const selected = ProjectController.getInstance().getTasks().filter(t => this.selectedIds.has(t.id));
         
         // Include children - for each selected parent, auto-include ALL descendants (recursively)
         const payload = new Set<Task>();
         const getDescendants = (parentId: string): void => {
-            this.taskStore.getChildren(parentId).forEach(child => {
+            ProjectController.getInstance().getChildren(parentId).forEach(child => {
                 payload.add(child);
                 getDescendants(child.id);
             });
@@ -5158,7 +5003,7 @@ export class SchedulerService {
 
         selected.forEach(task => {
             payload.add(task);
-            if (this.taskStore.isParent(task.id)) {
+            if (ProjectController.getInstance().isParent(task.id)) {
                 getDescendants(task.id);
             }
         });
@@ -5205,7 +5050,7 @@ export class SchedulerService {
         // 4. Determine target parentId (same parent as focused task, or null)
         let targetParentId: string | null = null;
         if (this.focusedId) {
-            const focusedTask = this.taskStore.getById(this.focusedId);
+            const focusedTask = ProjectController.getInstance().getTaskById(this.focusedId);
             if (focusedTask) {
                 targetParentId = focusedTask.parentId;
             }
@@ -5275,8 +5120,8 @@ export class SchedulerService {
             if (isTargetLevel && this.focusedId) {
                 // INSERT AFTER FOCUSED TASK
                 // Get the focused task and its siblings
-                const focusedTask = this.taskStore.getById(this.focusedId);
-                const siblings = this.taskStore.getChildren(parentId);
+                const focusedTask = ProjectController.getInstance().getTaskById(this.focusedId);
+                const siblings = ProjectController.getInstance().getChildren(parentId);
                 const focusedIndex = siblings.findIndex(t => t.id === this.focusedId);
                 
                 // Determine the sort key bounds for insertion
@@ -5300,7 +5145,7 @@ export class SchedulerService {
             } else {
                 // APPEND TO END (for nested children or when no focused task)
                 // This handles internal hierarchy within pasted content
-                const existingLastKey = this.taskStore.getLastSortKey(parentId);
+                const existingLastKey = ProjectController.getInstance().getLastSortKey(parentId);
                 
                 const sortKeys = OrderingService.generateBulkKeys(
                     existingLastKey,
@@ -5315,11 +5160,11 @@ export class SchedulerService {
         });
 
         // 9. Append newTasks to existing tasks
-        const allTasks = this.taskStore.getAll();
+        const allTasks = ProjectController.getInstance().getTasks();
         const finalTasks = [...allTasks, ...newTasks];
 
         // Update store with new array (use finalTasks, not allTasks!)
-        this.taskStore.setAll(finalTasks);
+        ProjectController.getInstance().syncTasks(finalTasks);
 
         // 10. If clipboardIsCut === true:
         //     - Delete original tasks using clipboardOriginalIds
@@ -5329,7 +5174,7 @@ export class SchedulerService {
         if (this.clipboardIsCut) {
             // Delete original tasks
             this.clipboardOriginalIds.forEach(id => {
-                this.taskStore.delete(id);
+                ProjectController.getInstance().deleteTask(id);
             });
             
             // Clear clipboard (cut is one-time)
@@ -5414,7 +5259,7 @@ export class SchedulerService {
      * @param taskId - Task ID
      */
     openDependencies(taskId: string): void {
-        const task = this.taskStore.getById(taskId);
+        const task = ProjectController.getInstance().getTaskById(taskId);
         if (!task) return;
         
         // Try to open via panel system first (if RightSidebarManager is available)
@@ -5450,7 +5295,7 @@ export class SchedulerService {
      */
     openCalendar(): void {
         if (!this.calendarModal) return;
-        this.calendarModal.open(this.calendarStore.get());
+        this.calendarModal.open(ProjectController.getInstance().getCalendar());
     }
 
     /**
@@ -5467,61 +5312,17 @@ export class SchedulerService {
 
     /**
      * Recalculate all tasks using CPM
-     * @returns Promise that resolves when recalculation completes
+     * NOTE: With ProjectController + WASM Worker architecture, this method is now
+     * largely redundant. The Worker calculates and emits results via tasks$.
+     * Keeping this as a thin wrapper for backward compatibility.
+     * @returns Promise that resolves immediately (Worker handles async calculation)
      */
     recalculateAll(): Promise<void> {
-        // Prevent infinite recursion / overlapping calculations
-        if (this._isRecalculating) {
-            // console.warn('[SchedulerService] Skipping overlap calculation');
-            return Promise.resolve();
-        }
-        
-        this._isRecalculating = true;
-        const startTime = performance.now();
-        const allTasks = this.taskStore.getAll();
-        
-        // Get only schedulable tasks for CPM (exclude blank rows)
-        const tasks = allTasks.filter(t => !t.rowType || t.rowType === 'task');
-        const calendar = this.calendarStore.get();
-
-        if (tasks.length === 0) {
-            this._lastCalcTime = 0;
-            this._isRecalculating = false;
-            return Promise.resolve();
-        }
-
-        if (!this.engine) {
-            this._isRecalculating = false;
-            throw new Error('[SchedulerService] FATAL: Rust engine not initialized');
-        }
-
-        return this.engine.recalculateAll()
-            .then((result) => {
-                this._applyCalculationResult(result);
-                this._lastCalcTime = performance.now() - startTime;
-            })
-            .catch((error) => {
-                console.error('[SchedulerService] FATAL: CPM calculation failed:', error);
-                
-                // Parse error message for user-friendly feedback
-                const errorMessage = error instanceof Error ? error.message : String(error);
-                let userMessage = 'Schedule calculation failed. ';
-                
-                // Check for circular dependency indication
-                if (errorMessage.includes('circular') || errorMessage.includes('max iterations')) {
-                    userMessage += 'Circular dependencies detected. Please check task dependencies.';
-                } else if (errorMessage.includes('not initialized')) {
-                    userMessage += 'Scheduling engine not initialized. Please restart the application.';
-                } else {
-                    userMessage += 'Please check for invalid dependencies or constraints.';
-                }
-                
-                this.toastService.error(userMessage);
-                throw error;
-            })
-            .finally(() => {
-                this._isRecalculating = false;
-            });
+        // In the new architecture, ProjectController.forceRecalculate() sends
+        // a CALCULATE command to the WASM Worker. The Worker emits results
+        // via tasks$ which the UI subscribes to. No manual result application needed.
+        ProjectController.getInstance().forceRecalculate();
+        return Promise.resolve();
     }
 
     /**
@@ -5529,8 +5330,7 @@ export class SchedulerService {
      * @private
      */
     private _applyCalculationResult(result: CPMResult): void {
-        // Temporarily disable onChange to prevent recursion
-        const restoreNotifications = this.taskStore.disableNotifications();
+        // NOTE: disableNotifications was removed - ProjectController handles this via reactive streams
 
         // Track which tasks had recent user edits to preserve their input values
         // This prevents overwriting user input with calculated values during recalculation
@@ -5538,7 +5338,7 @@ export class SchedulerService {
         
         // Update tasks with calculated values
         result.tasks.forEach(calculatedTask => {
-            const task = this.taskStore.getById(calculatedTask.id);
+            const task = ProjectController.getInstance().getTaskById(calculatedTask.id);
             if (task) {
                 // For Manual mode tasks, preserve manual dates and only update calculated fields
                 const isManual = task.schedulingMode === 'Manual';
@@ -5584,8 +5384,7 @@ export class SchedulerService {
         // even if there are edge cases or timing issues
         this._rollupParentDatesSafeguard();
 
-        // Restore onChange
-        restoreNotifications();
+        // NOTE: restoreNotifications was removed - ProjectController handles this via reactive streams
         
         // CRITICAL: Update renderers synchronously BEFORE render() to eliminate flash
         // This ensures GridRenderer.data has the latest values before any render cycle begins
@@ -5651,7 +5450,7 @@ export class SchedulerService {
     private _onCalendarChanged(): void {
         // Calendar changed - trigger recalculation
         // TODO: Calendar integration for Flatpickr - add setCalendar to GridRenderer
-        // const calendar = this.calendarStore.get();
+        // const calendar = ProjectController.getInstance().getCalendar();
         // 
         // // Update grid's date picker calendar
         // if (this.grid) {
@@ -5723,7 +5522,7 @@ export class SchedulerService {
          */
         const traverse = (parentId: string | null): void => {
             // getChildren returns tasks SORTED by sortKey - this is critical
-            const children = this.taskStore.getChildren(parentId);
+            const children = ProjectController.getInstance().getChildren(parentId);
             
             for (const task of children) {
                 // 1. Assign number based on row type
@@ -5737,7 +5536,7 @@ export class SchedulerService {
                 
                 // 2. Recurse into children (regardless of collapsed state)
                 // This ensures number continuity even for hidden tasks
-                if (this.taskStore.isParent(task.id)) {
+                if (ProjectController.getInstance().isParent(task.id)) {
                     traverse(task.id);
                 }
             }
@@ -5755,8 +5554,8 @@ export class SchedulerService {
      */
     private _updateGridDataSync(): void {
         if (this.grid) {
-            const tasks = this.taskStore.getVisibleTasks((id) => {
-                const task = this.taskStore.getById(id);
+            const tasks = ProjectController.getInstance().getVisibleTasks((id) => {
+                const task = ProjectController.getInstance().getTaskById(id);
                 return task?._collapsed || false;
             });
             this.grid.setData(tasks);
@@ -5771,8 +5570,8 @@ export class SchedulerService {
      */
     private _updateGanttDataSync(): void {
         if (this.gantt) {
-            const tasks = this.taskStore.getVisibleTasks((id) => {
-                const task = this.taskStore.getById(id);
+            const tasks = ProjectController.getInstance().getVisibleTasks((id) => {
+                const task = ProjectController.getInstance().getTaskById(id);
                 return task?._collapsed || false;
             });
             this.gantt.setData(tasks);
@@ -5794,8 +5593,8 @@ export class SchedulerService {
             this._assignVisualRowNumbers();
             
             // Get visible tasks for hierarchy-aware display
-            const tasks = this.taskStore.getVisibleTasks((id) => {
-                const task = this.taskStore.getById(id);
+            const tasks = ProjectController.getInstance().getVisibleTasks((id) => {
+                const task = ProjectController.getInstance().getTaskById(id);
                 return task?._collapsed || false;
             });
 
@@ -5847,19 +5646,11 @@ export class SchedulerService {
             if (tasks.length > 0 || Object.keys(calendar.exceptions).length > 0) {
                 const tasksWithSortKeys = this._assignSortKeysToImportedTasks(tasks);
                 
-                const restoreNotifications = this.taskStore.disableNotifications();
-                this.taskStore.setAll(tasksWithSortKeys);
-                restoreNotifications();
+                // NOTE: disableNotifications removed - ProjectController handles via reactive streams
+                ProjectController.getInstance().syncTasks(tasksWithSortKeys);
                 
-                this.calendarStore.set(calendar, true);
-                
-                if (this.engine) {
-                    const context: TaskHierarchyContext = {
-                        isParent: (id: string) => this.taskStore.isParent(id),
-                        getDepth: (id: string) => this.taskStore.getDepth(id),
-                    };
-                    await this.engine.initialize(tasksWithSortKeys, calendar, context);
-                }
+                ProjectController.getInstance().updateCalendar(calendar);
+                // NOTE: Removed engine sync - ProjectController handles via Worker
                 
                 this.recalculateAll();
                 console.log('[SchedulerService] ✅ Loaded from SQLite:', tasks.length, 'tasks');
@@ -5885,8 +5676,8 @@ export class SchedulerService {
         
         try {
             await this.snapshotService.createSnapshot(
-                this.taskStore.getAll(),
-                this.calendarStore.get(),
+                ProjectController.getInstance().getTasks(),
+                ProjectController.getInstance().getCalendar(),
                 this.tradePartnerStore.getAll()
             );
             console.log('[SchedulerService] ✅ Snapshot checkpoint created');
@@ -5908,8 +5699,8 @@ export class SchedulerService {
         
         if (this.snapshotService) {
             await this.snapshotService.createSnapshot(
-                this.taskStore.getAll(),
-                this.calendarStore.get(),
+                ProjectController.getInstance().getTasks(),
+                ProjectController.getInstance().getCalendar(),
                 this.tradePartnerStore.getAll()
             );
             this.snapshotService.stopPeriodicSnapshots();
@@ -5924,7 +5715,7 @@ export class SchedulerService {
      */
     private _createSampleData(): void {
         const today = DateUtils.today();
-        const calendar = this.calendarStore.get(); // Get calendar from store
+        const calendar = ProjectController.getInstance().getCalendar(); // Get calendar from store
         
         const tasks: Task[] = [
             {
@@ -5961,10 +5752,8 @@ export class SchedulerService {
             },
         ];
         
-        // Temporarily disable onChange to prevent recursion
-        const restoreNotifications = this.taskStore.disableNotifications();
-        this.taskStore.setAll(tasks);
-        restoreNotifications();
+        // NOTE: disableNotifications removed - ProjectController handles via reactive streams
+        ProjectController.getInstance().syncTasks(tasks);
         
         // Recalculate after a brief delay to ensure everything is set up
         setTimeout(() => {
@@ -6202,8 +5991,8 @@ export class SchedulerService {
     async saveToFile(): Promise<void> {
         try {
             await this.fileService.saveToFile({
-                tasks: this.taskStore.getAll(),
-                calendar: this.calendarStore.get(),
+                tasks: ProjectController.getInstance().getTasks(),
+                calendar: ProjectController.getInstance().getCalendar(),
             });
         } catch (err) {
             // Error handled by FileService
@@ -6219,14 +6008,14 @@ export class SchedulerService {
             const data = await this.fileService.openFromFile();
             if (data) {
                 this.saveCheckpoint();
-                this.taskStore.setAll(data.tasks || []);
+                ProjectController.getInstance().syncTasks(data.tasks || []);
                 if (data.calendar) {
-                    this.calendarStore.set(data.calendar);
+                    ProjectController.getInstance().updateCalendar(data.calendar);
                 }
                 this.recalculateAll();
                 this.saveData();
                 this.render();
-                this.toastService.success(`Loaded ${this.taskStore.getAll().length} tasks`);
+                this.toastService.success(`Loaded ${ProjectController.getInstance().getTasks().length} tasks`);
             }
         } catch (err) {
             // Error handled by FileService
@@ -6238,8 +6027,8 @@ export class SchedulerService {
      */
     exportAsDownload(): void {
         this.fileService.exportAsDownload({
-            tasks: this.taskStore.getAll(),
-            calendar: this.calendarStore.get(),
+            tasks: ProjectController.getInstance().getTasks(),
+            calendar: ProjectController.getInstance().getCalendar(),
         });
     }
 
@@ -6257,9 +6046,9 @@ export class SchedulerService {
             const tasks = data.tasks || [];
             const tasksWithSortKeys = this._assignSortKeysToImportedTasks(tasks);
             
-            this.taskStore.setAll(tasksWithSortKeys);
+            ProjectController.getInstance().syncTasks(tasksWithSortKeys);
             if (data.calendar) {
-                this.calendarStore.set(data.calendar);
+                ProjectController.getInstance().updateCalendar(data.calendar);
             }
             // Note: recalculateAll() and render() will be triggered automatically by _onTasksChanged()
             this.saveData();
@@ -6285,10 +6074,10 @@ export class SchedulerService {
             
             // Import calendar if provided
             if (data.calendar) {
-                this.calendarStore.set(data.calendar, true); // skipEvent=true to avoid duplicate persistence
+                ProjectController.getInstance().updateCalendar(data.calendar); // skipEvent=true to avoid duplicate persistence
             }
             
-            this.taskStore.setAll(tasksWithSortKeys);
+            ProjectController.getInstance().syncTasks(tasksWithSortKeys);
             // Note: recalculateAll() and render() will be triggered automatically by _onTasksChanged()
             this.saveData();
             this.toastService.success(`Imported ${tasksWithSortKeys.length} tasks`);
@@ -6307,10 +6096,10 @@ export class SchedulerService {
         this.saveCheckpoint();
         
         const tasksWithSortKeys = this._assignSortKeysToImportedTasks(result.tasks);
-        this.taskStore.setAll(tasksWithSortKeys);
+        ProjectController.getInstance().syncTasks(tasksWithSortKeys);
         
         if (result.calendar) {
-            this.calendarStore.set(result.calendar);
+            ProjectController.getInstance().updateCalendar(result.calendar);
         }
         
         this.recalculateAll();
@@ -6323,8 +6112,8 @@ export class SchedulerService {
      */
     exportToMSProjectXML(): void {
         this.fileService.exportToMSProjectXML({
-            tasks: this.taskStore.getAll(),
-            calendar: this.calendarStore.get(),
+            tasks: ProjectController.getInstance().getTasks(),
+            calendar: ProjectController.getInstance().getCalendar(),
         });
     }
 
@@ -6353,7 +6142,7 @@ export class SchedulerService {
         localStorage.removeItem('pro_scheduler_column_preferences');
         
         // Reset in-memory state
-        this.taskStore.setAll([]);
+        ProjectController.getInstance().syncTasks([]);
         this._createSampleData();
         
         this.recalculateAll();
@@ -6495,9 +6284,9 @@ export class SchedulerService {
         ganttStats?: unknown;
     } {
         return {
-            taskCount: this.taskStore.getAll().length,
-            visibleCount: this.taskStore.getVisibleTasks((id) => {
-                const task = this.taskStore.getById(id);
+            taskCount: ProjectController.getInstance().getTasks().length,
+            visibleCount: ProjectController.getInstance().getVisibleTasks((id) => {
+                const task = ProjectController.getInstance().getTaskById(id);
                 return task?._collapsed || false;
             }).length,
             lastCalcTime: `${this._lastCalcTime.toFixed(2)}ms`,
@@ -6514,14 +6303,14 @@ export class SchedulerService {
         this.saveCheckpoint();
         
         const today = DateUtils.today();
-        const existingTasks = this.taskStore.getAll();
+        const existingTasks = ProjectController.getInstance().getTasks();
         const tasks: Task[] = [...existingTasks];
         
         // Pre-generate all sortKeys to avoid stale reads
-        const lastKey = this.taskStore.getLastSortKey(null);
+        const lastKey = ProjectController.getInstance().getLastSortKey(null);
         const sortKeys = OrderingService.generateBulkKeys(lastKey, null, count);
         
-        const calendar = this.calendarStore.get();
+        const calendar = ProjectController.getInstance().getCalendar();
         
         for (let i = 0; i < count; i++) {
             const duration = Math.floor(Math.random() * 10) + 1;
@@ -6565,7 +6354,7 @@ export class SchedulerService {
             tasks.push(task);
         }
         
-        this.taskStore.setAll(tasks);
+        ProjectController.getInstance().syncTasks(tasks);
         this.recalculateAll();
         this.saveData();
         this.render();
@@ -6612,7 +6401,7 @@ export class SchedulerService {
      * @param mode - 'Auto' or 'Manual'
      */
     public setSchedulingMode(taskId: string, mode: 'Auto' | 'Manual'): void {
-        const task = this.taskStore.getById(taskId);
+        const task = ProjectController.getInstance().getTaskById(taskId);
         if (!task) {
             console.warn('[SchedulerService] Task not found:', taskId);
             return;
@@ -6635,7 +6424,7 @@ export class SchedulerService {
      * @param taskId - Task ID
      */
     public toggleSchedulingMode(taskId: string): void {
-        const task = this.taskStore.getById(taskId);
+        const task = ProjectController.getInstance().getTaskById(taskId);
         if (!task) return;
         
         const newMode = task.schedulingMode === 'Manual' ? 'Auto' : 'Manual';
@@ -6705,7 +6494,7 @@ export class SchedulerService {
         if (!partner) return;
         
         // Remove from all tasks first
-        const affectedTasks = this.taskStore.getAll().filter(
+        const affectedTasks = ProjectController.getInstance().getTasks().filter(
             t => t.tradePartnerIds?.includes(id)
         );
         
@@ -6731,7 +6520,7 @@ export class SchedulerService {
      * Assign a trade partner to a task
      */
     assignTradePartner(taskId: string, tradePartnerId: string): void {
-        const task = this.taskStore.getById(taskId);
+        const task = ProjectController.getInstance().getTaskById(taskId);
         const partner = this.tradePartnerStore.get(tradePartnerId);
         if (!task || !partner) return;
         
@@ -6740,7 +6529,7 @@ export class SchedulerService {
         
         // Update task
         const newIds = [...(task.tradePartnerIds || []), tradePartnerId];
-        this.taskStore.update(taskId, { tradePartnerIds: newIds });
+        ProjectController.getInstance().updateTask(taskId, { tradePartnerIds: newIds });
         
         // Queue persistence event
         if (this.persistenceService) {
@@ -6757,7 +6546,7 @@ export class SchedulerService {
      * Unassign a trade partner from a task
      */
     unassignTradePartner(taskId: string, tradePartnerId: string, showToast = true): void {
-        const task = this.taskStore.getById(taskId);
+        const task = ProjectController.getInstance().getTaskById(taskId);
         if (!task || !task.tradePartnerIds) return;
         
         // Check if assigned
@@ -6765,7 +6554,7 @@ export class SchedulerService {
         
         // Update task
         const newIds = task.tradePartnerIds.filter(id => id !== tradePartnerId);
-        this.taskStore.update(taskId, { tradePartnerIds: newIds });
+        ProjectController.getInstance().updateTask(taskId, { tradePartnerIds: newIds });
         
         // Queue persistence event
         if (this.persistenceService) {
@@ -6783,7 +6572,7 @@ export class SchedulerService {
      * Get trade partners for a task
      */
     getTaskTradePartners(taskId: string): TradePartner[] {
-        const task = this.taskStore.getById(taskId);
+        const task = ProjectController.getInstance().getTaskById(taskId);
         if (!task?.tradePartnerIds) return [];
         return this.tradePartnerStore.getMany(task.tradePartnerIds);
     }
