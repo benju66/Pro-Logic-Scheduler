@@ -5,6 +5,7 @@
 import type { SchedulerService } from '../services/SchedulerService';
 import type { UIEventManager } from '../services/UIEventManager';
 import type { StatsService } from '../services/StatsService';
+import type { ProjectController } from '../services/ProjectController';
 
 /**
  * Global Window interface extensions
@@ -18,6 +19,9 @@ declare global {
     
     /** Main scheduler service instance */
     scheduler?: SchedulerService;
+    
+    /** Project controller (new architecture - Phase 6+) */
+    projectController?: ProjectController;
     
     /** UI event manager instance */
     uiEventManager?: UIEventManager;

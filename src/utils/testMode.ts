@@ -38,7 +38,7 @@ export async function isTauriAvailable(): Promise<boolean> {
     // In Playwright, __TAURI__ might exist from imports but invoke won't work
     if (isTestMode()) {
         // In test mode, assume Tauri is NOT available unless proven otherwise
-        // The fallback in SchedulerService will catch RustEngine failures
+        // ProjectController will use the WASM Worker for calculations
         return false;
     }
     

@@ -11,6 +11,7 @@
 import { SchedulerService } from './services/SchedulerService';
 import { AppInitializer } from './services/AppInitializer';
 import { UIEventManager } from './services/UIEventManager';
+import { ProjectController } from './services/ProjectController';
 import type { ToastType } from './types';
 
 // Import Unified Scheduler V2 styles
@@ -67,10 +68,11 @@ async function initApp(): Promise<void> {
         appInitializer.initialize().then(sched => {
             scheduler = sched;
             
-            // --- ADD THIS BLOCK ---
             // Expose for E2E testing and debugging
-            (window as any).scheduler = scheduler; 
-            // ----------------------
+            (window as any).scheduler = scheduler;
+            
+            // Expose ProjectController for new architecture tests
+            (window as any).projectController = ProjectController.getInstance();
 
             // Initialize keyboard shortcuts (after scheduler is fully initialized)
             scheduler.initKeyboard();

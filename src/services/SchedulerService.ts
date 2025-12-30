@@ -343,74 +343,16 @@ export class SchedulerService {
         const tasks = this.taskStore.getAll();
         const calendar = this.calendarStore.get();
         
-        if (useMocks) {
-            // Test mode: use mock engine when Tauri APIs aren't available
-            console.log('[SchedulerService] Initializing Mock Rust engine (TEST MODE)...');
-            
-            const { MockRustEngine } = await import('../core/engines/MockRustEngine');
-            this.engine = new MockRustEngine();
-            
-            await this.engine.initialize(tasks, calendar, hierarchyContext);
-            
-            console.log('[SchedulerService] ✅ Mock Rust engine ready (TEST MODE)');
-        } else {
-            // Production: use real Rust engine
-            // Check for Tauri environment
-            let tauriAvailable = false;
-            
-            // Quick check: window.__TAURI__
-            if ((window as Window & { __TAURI__?: unknown }).__TAURI__) {
-                tauriAvailable = true;
-            } else {
-                // Try to detect Tauri v2 by attempting to use the API
-                try {
-                    const { invoke } = await import('@tauri-apps/api/core');
-                    if (invoke && typeof invoke === 'function') {
-                        tauriAvailable = true;
-                    }
-                } catch (e) {
-                    tauriAvailable = false;
-                }
-            }
-            
-            // In test mode, if RustEngine fails, fall back to MockRustEngine
-            const { isTestMode } = await import('../utils/testMode');
-            const testMode = isTestMode();
-            
-            if (!tauriAvailable && !testMode) {
-                throw new Error(
-                    'Pro Logic Scheduler requires the desktop application. ' +
-                    'Please run: npm run tauri:dev'
-                );
-            }
-
-            console.log('[SchedulerService] Initializing Rust engine...');
-            
-            try {
-                const { RustEngine } = await import('../core/engines/RustEngine');
-                this.engine = new RustEngine();
-                
-                await this.engine.initialize(tasks, calendar, hierarchyContext);
-                
-                console.log('[SchedulerService] ✅ Rust engine ready');
-            } catch (error) {
-                // If RustEngine fails in test mode, fall back to MockRustEngine
-                if (testMode) {
-                    console.warn('[SchedulerService] Rust engine failed in test mode, falling back to MockRustEngine');
-                    console.warn('[SchedulerService] Error:', error);
-                    
-                    const { MockRustEngine } = await import('../core/engines/MockRustEngine');
-                    this.engine = new MockRustEngine();
-                    
-                    await this.engine.initialize(tasks, calendar, hierarchyContext);
-                    
-                    console.log('[SchedulerService] ✅ Mock Rust engine ready (TEST MODE - fallback)');
-                } else {
-                    // In production, re-throw the error
-                    throw error;
-                }
-            }
-        }
+        // PHASE 7: Use NoOpEngine which delegates to ProjectController
+        // All calculations now happen in the WASM Worker via ProjectController
+        console.log('[SchedulerService] Initializing NoOpEngine (delegates to ProjectController)...');
+        
+        const { NoOpEngine } = await import('../core/engines/NoOpEngine');
+        this.engine = new NoOpEngine();
+        
+        await this.engine.initialize(tasks, calendar, hierarchyContext);
+        
+        console.log('[SchedulerService] ✅ NoOpEngine ready (WASM Worker handles calculations)');
     }
 
     /**

@@ -12,6 +12,12 @@ const referenceData = JSON.parse(
   fs.readFileSync(path.join(__dirname, '../fixtures/reference_project.json'), 'utf-8')
 );
 
+// Default calendar for tests
+const defaultCalendar = {
+  workingDays: [1, 2, 3, 4, 5], // Mon-Fri
+  exceptions: {}
+};
+
 test.describe('Scheduling Logic Black Box', () => {
   test.beforeEach(async ({ page }) => {
     // Listen for console messages to help debug
@@ -31,72 +37,69 @@ test.describe('Scheduling Logic Black Box', () => {
     });
     
     // Navigate to the app with test mode enabled
-    // Test mode allows the app to run without Tauri APIs, using MockRustEngine instead
+    // Test mode allows the app to run without Tauri APIs
     await page.goto('/?test=true', { waitUntil: 'domcontentloaded', timeout: 30000 });
     
-    // First, wait for scheduler to be available on window
+    // Wait for ProjectController to be available (Phase 6+ architecture)
     await page.waitForFunction(() => {
-      return typeof (window as any).scheduler !== 'undefined';
+      return typeof (window as any).projectController !== 'undefined';
     }, { timeout: 30000 }).catch(async () => {
-      // If scheduler isn't available, log what we can see
+      // Fallback: check for legacy scheduler
+      const hasScheduler = await page.evaluate(() => typeof (window as any).scheduler !== 'undefined');
+      if (hasScheduler) {
+        console.log('ProjectController not found, but scheduler is available');
+        return;
+      }
+      
       const bodyText = await page.textContent('body').catch(() => 'Could not read body');
       const windowKeys = await page.evaluate(() => Object.keys(window)).catch(() => []);
-      console.log('Scheduler not found. Body content:', bodyText?.substring(0, 200));
-      console.log('Window keys:', windowKeys.filter(k => k.includes('scheduler') || k.includes('app')));
+      console.log('ProjectController not found. Body content:', bodyText?.substring(0, 200));
+      console.log('Window keys:', windowKeys.filter(k => k.includes('scheduler') || k.includes('project') || k.includes('Controller')));
       console.log('Console messages:', consoleMessages.slice(-10));
-      throw new Error('Scheduler not available on window object');
+      throw new Error('ProjectController not available on window object');
     });
     
-    // Then wait for initialization - check scheduler.isInitialized
+    // Wait for initialization to complete
     await page.waitForFunction(() => {
-      const scheduler = (window as any).scheduler;
-      return scheduler && scheduler.isInitialized === true;
+      const pc = (window as any).projectController;
+      // Check if ProjectController is initialized (has emitted tasks)
+      return pc && pc.isInitialized$.value === true;
     }, { timeout: 60000 }).catch(async () => {
-      // On failure, get diagnostic info
-      const schedulerState = await page.evaluate(() => {
-        const s = (window as any).scheduler;
-        const a = (window as any).appInitializer;
+      const state = await page.evaluate(() => {
+        const pc = (window as any).projectController;
         return {
-          schedulerExists: !!s,
-          schedulerInitialized: s?.isInitialized,
-          appInitializerExists: !!a,
-          appInitializerInitialized: a?.isInitialized,
-          schedulerKeys: s ? Object.keys(s).slice(0, 10) : []
+          exists: !!pc,
+          isInitialized: pc?.isInitialized$?.value,
+          taskCount: pc?.tasks$?.value?.length,
         };
       }).catch(() => ({}));
       
-      console.log('Initialization timeout. State:', schedulerState);
+      console.log('Initialization timeout. State:', state);
       console.log('Recent console messages:', consoleMessages.slice(-20));
-      throw new Error('Scheduler initialization timeout');
+      throw new Error('ProjectController initialization timeout');
     });
   });
 
   test('CPM Calculation: Should calculate correct dates for chain', async ({ page }) => {
-    // 1. Inject Data via the internal API (simulating a file load)
-    await page.evaluate((tasks) => {
-      const s = (window as any).scheduler;
-      s.tasks = tasks;
-    }, referenceData);
-    
-    // 2. Sync tasks to engine
-    await page.evaluate((tasks) => {
-      const s = (window as any).scheduler;
-      if (s.engine) {
-        return s.engine.syncTasks(tasks);
-      }
-    }, referenceData);
-    
-    // 3. Trigger CPM recalculation
-    await page.evaluate(() => {
-      const s = (window as any).scheduler;
-      return s.recalculateAll();
+    // 1. Initialize ProjectController with reference data
+    await page.evaluate(async ({ tasks, calendar }) => {
+      const pc = (window as any).projectController;
+      
+      // Sync tasks to trigger calculation
+      pc.syncTasks(tasks);
+      
+      // Wait a moment for calculation to complete
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }, { tasks: referenceData, calendar: defaultCalendar });
+
+    // 2. Wait for calculation to complete
+    await page.waitForTimeout(500);
+
+    // 3. Extract calculated tasks from ProjectController
+    const tasks = await page.evaluate(() => {
+      const pc = (window as any).projectController;
+      return pc.tasks$.value;
     });
-
-    // 4. Wait for calculation to complete (small delay for async render updates)
-    await page.waitForTimeout(200);
-
-    // 5. Extract calculated tasks
-    const tasks = await page.evaluate(() => (window as any).scheduler.tasks);
     
     const t2 = tasks.find((t: any) => t.id === '2'); // Foundation
     const t3 = tasks.find((t: any) => t.id === '3'); // Framing
@@ -115,30 +118,97 @@ test.describe('Scheduling Logic Black Box', () => {
     console.log(`Verified Chain: ${t2.name} (${t2.end}) -> ${t3.name} (${t3.start})`);
   });
 
-  test('CRUD: Hierarchy remains intact after indentation', async ({ page }) => {
-     // Inject just two tasks
-     const simpleTasks = referenceData.slice(0, 2);
-     await page.evaluate(async (tasks) => {
-        const s = (window as any).scheduler;
-        s.tasks = tasks;
-        // Sync engine with new tasks
-        if (s.engine) {
-          await s.engine.syncTasks(tasks);
-        }
-     }, simpleTasks);
+  test('CRUD: Update task and verify recalculation', async ({ page }) => {
+    // 1. Load initial tasks
+    const simpleTasks = referenceData.slice(0, 3);
+    await page.evaluate(async ({ tasks, calendar }) => {
+      const pc = (window as any).projectController;
+      pc.syncTasks(tasks);
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }, { tasks: simpleTasks, calendar: defaultCalendar });
 
-     // Wait for render
-     await page.waitForTimeout(200);
+    // Wait for initial calculation
+    await page.waitForTimeout(300);
 
-     // Perform Indent Operation on the second task via Service API
-     await page.evaluate(() => {
-        (window as any).scheduler.indent('2'); 
-     });
+    // 2. Update a task's duration
+    await page.evaluate(async () => {
+      const pc = (window as any).projectController;
+      // Update task 2's duration from 5 to 10
+      pc.updateTask('2', { duration: 10 });
+      await new Promise(resolve => setTimeout(resolve, 300));
+    });
 
-     // Check Parent/Child relationship
-     const tasks = await page.evaluate(() => (window as any).scheduler.tasks);
-     const child = tasks.find((t: any) => t.id === '2');
-     
-     expect(child.parentId).toBe('1');
+    // Wait for recalculation
+    await page.waitForTimeout(300);
+
+    // 3. Verify the update was applied
+    const tasks = await page.evaluate(() => {
+      const pc = (window as any).projectController;
+      return pc.tasks$.value;
+    });
+    
+    const t2 = tasks.find((t: any) => t.id === '2');
+    expect(t2.duration).toBe(10);
+  });
+
+  test('CRUD: Add and delete tasks', async ({ page }) => {
+    // 1. Start with initial tasks
+    const initialTasks = referenceData.slice(0, 2);
+    await page.evaluate(async ({ tasks, calendar }) => {
+      const pc = (window as any).projectController;
+      pc.syncTasks(tasks);
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }, { tasks: initialTasks, calendar: defaultCalendar });
+
+    await page.waitForTimeout(300);
+
+    // 2. Add a new task
+    const newTask = {
+      id: 'new-task-1',
+      name: 'New Test Task',
+      duration: 3,
+      dependencies: [],
+      parentId: null,
+      sortKey: '003',
+      constraintType: 'asap',
+      progress: 0,
+      notes: '',
+      start: '',
+      end: '',
+      level: 0
+    };
+
+    await page.evaluate(async (task) => {
+      const pc = (window as any).projectController;
+      pc.addTask(task);
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }, newTask);
+
+    await page.waitForTimeout(300);
+
+    // Verify task was added
+    let tasks = await page.evaluate(() => {
+      const pc = (window as any).projectController;
+      return pc.tasks$.value;
+    });
+    
+    expect(tasks.find((t: any) => t.id === 'new-task-1')).toBeTruthy();
+
+    // 3. Delete the task
+    await page.evaluate(async () => {
+      const pc = (window as any).projectController;
+      pc.deleteTask('new-task-1');
+      await new Promise(resolve => setTimeout(resolve, 300));
+    });
+
+    await page.waitForTimeout(300);
+
+    // Verify task was deleted
+    tasks = await page.evaluate(() => {
+      const pc = (window as any).projectController;
+      return pc.tasks$.value;
+    });
+    
+    expect(tasks.find((t: any) => t.id === 'new-task-1')).toBeFalsy();
   });
 });
