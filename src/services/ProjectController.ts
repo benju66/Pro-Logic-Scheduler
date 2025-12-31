@@ -864,15 +864,6 @@ export class ProjectController {
         return true;
     }
 
-    /**
-     * Get the first sort key for siblings of a parent (for inserting before all siblings)
-     */
-    public getFirstSortKey(parentId: string | null): string | null {
-        const siblings = this.getChildren(parentId);
-        if (siblings.length === 0) return null;
-        return siblings[0].sortKey ?? null;
-    }
-
     // ========================================================================
     // Lifecycle
     // ========================================================================
