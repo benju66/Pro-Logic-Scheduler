@@ -145,6 +145,133 @@ export class SchedulerService {
     // Data change callbacks for unified panel sync (e.g., RightSidebarManager)
     private _dataChangeCallbacks: Array<() => void> = [];
 
+    // =========================================================================
+    // SELECTION SHIM HELPERS (Strangler Fig Migration)
+    // These methods update BOTH local state and SelectionModel during transition.
+    // Once migration is complete, local state will be removed and these will
+    // delegate entirely to SelectionModel.
+    // =========================================================================
+
+    /**
+     * Clear all selection (shim - updates both local and SelectionModel)
+     * @internal For migration - will eventually delegate to SelectionModel only
+     */
+    private _sel_clear(): void {
+        this.selectedIds.clear();
+        this.selectionOrder = [];
+        SelectionModel.getInstance().clear();
+    }
+
+    /**
+     * Add task to selection (shim - updates both local and SelectionModel)
+     * @internal For migration - will eventually delegate to SelectionModel only
+     */
+    private _sel_add(id: string): void {
+        this.selectedIds.add(id);
+        if (!this.selectionOrder.includes(id)) {
+            this.selectionOrder.push(id);
+        }
+        SelectionModel.getInstance().addToSelection([id]);
+    }
+
+    /**
+     * Remove task from selection (shim - updates both local and SelectionModel)
+     * @internal For migration - will eventually delegate to SelectionModel only
+     */
+    private _sel_delete(id: string): void {
+        this.selectedIds.delete(id);
+        this.selectionOrder = this.selectionOrder.filter(i => i !== id);
+        SelectionModel.getInstance().removeFromSelection([id]);
+    }
+
+    /**
+     * Replace entire selection (shim - updates both local and SelectionModel)
+     * @internal For migration - will eventually delegate to SelectionModel only
+     */
+    private _sel_set(ids: string[], focusId?: string | null): void {
+        this.selectedIds = new Set(ids);
+        this.selectionOrder = [...ids];
+        const focus = focusId ?? (ids.length > 0 ? ids[ids.length - 1] : null);
+        SelectionModel.getInstance().setSelection(this.selectedIds, focus);
+    }
+
+    /**
+     * Set focused task (shim - updates both local and SelectionModel)
+     * @internal For migration - will eventually delegate to SelectionModel only
+     */
+    private _sel_setFocused(id: string | null, field?: string): void {
+        this.focusedId = id;
+        if (field !== undefined) {
+            this.focusedColumn = field;
+        }
+        SelectionModel.getInstance().setFocus(id, field ?? undefined);
+    }
+
+    /**
+     * Set anchor for range selection (shim - updates both local and SelectionModel)
+     * @internal For migration - will eventually delegate to SelectionModel only
+     */
+    private _sel_setAnchor(id: string | null): void {
+        this.anchorId = id;
+        // SelectionModel handles anchor internally via select() calls
+    }
+
+    /**
+     * Get selection count (reads from local state during migration)
+     * @internal For migration - will eventually read from SelectionModel only
+     */
+    private _sel_count(): number {
+        return this.selectedIds.size;
+    }
+
+    /**
+     * Check if task is selected (reads from local state during migration)
+     * @internal For migration - will eventually read from SelectionModel only
+     */
+    private _sel_has(id: string): boolean {
+        return this.selectedIds.has(id);
+    }
+
+    /**
+     * Get selected IDs as array (reads from local state during migration)
+     * @internal For migration - will eventually read from SelectionModel only
+     */
+    private _sel_toArray(): string[] {
+        return Array.from(this.selectedIds);
+    }
+
+    /**
+     * Select a single task (convenience method - clear, add, focus, anchor)
+     * This is the most common selection pattern in the codebase.
+     * @internal For migration - will eventually delegate to SelectionModel only
+     */
+    private _sel_selectSingle(id: string): void {
+        this._sel_clear();
+        this._sel_add(id);
+        this._sel_setFocused(id);
+        this._sel_setAnchor(id);
+    }
+
+    /**
+     * Get focused task ID (read-only shim)
+     * @internal For migration - will eventually read from SelectionModel only
+     */
+    private _sel_getFocused(): string | null {
+        return this.focusedId;
+    }
+
+    /**
+     * Get anchor ID (read-only shim)
+     * @internal For migration - will eventually read from SelectionModel only
+     */
+    private _sel_getAnchor(): string | null {
+        return this.anchorId;
+    }
+
+    // =========================================================================
+    // END SELECTION SHIM HELPERS
+    // =========================================================================
+
     // View state
     public viewMode: ViewMode = 'Week';  // Public for access from StatsService
     
@@ -1703,48 +1830,37 @@ export class SchedulerService {
         }
         
         // Selection logic here
-        if (e.shiftKey && this.anchorId) {
+        if (e.shiftKey && this._sel_getAnchor()) {
             // Range selection
             const visibleTasks = ProjectController.getInstance().getVisibleTasks((id) => {
                 const task = ProjectController.getInstance().getTaskById(id);
                 return task?._collapsed || false;
             });
-            const anchorIndex = visibleTasks.findIndex(t => t.id === this.anchorId);
+            const anchorIndex = visibleTasks.findIndex(t => t.id === this._sel_getAnchor());
             const targetIndex = visibleTasks.findIndex(t => t.id === taskId);
             
             if (anchorIndex !== -1 && targetIndex !== -1) {
-                this.selectedIds.clear();
-                this.selectionOrder = [];
                 const start = Math.min(anchorIndex, targetIndex);
                 const end = Math.max(anchorIndex, targetIndex);
-                for (let i = start; i <= end; i++) {
-                    this.selectedIds.add(visibleTasks[i].id);
-                    this.selectionOrder.push(visibleTasks[i].id);
-                }
+                const rangeIds = visibleTasks.slice(start, end + 1).map(t => t.id);
+                this._sel_set(rangeIds, taskId);
             }
         } else if (e.ctrlKey || e.metaKey) {
             // Toggle selection
-            if (this.selectedIds.has(taskId)) {
-                // Removing - filter from order
-                this.selectedIds.delete(taskId);
-                this.selectionOrder = this.selectionOrder.filter(id => id !== taskId);
+            if (this._sel_has(taskId)) {
+                // Removing
+                this._sel_delete(taskId);
             } else {
-                // Adding - append to order
-                this.selectedIds.add(taskId);
-                if (!this.selectionOrder.includes(taskId)) {
-                    this.selectionOrder.push(taskId);
-                }
+                // Adding
+                this._sel_add(taskId);
             }
-            this.anchorId = taskId;
+            this._sel_setAnchor(taskId);
         } else {
-            // Single selection - reset order
-            this.selectedIds.clear();
-            this.selectionOrder = [taskId];
-            this.selectedIds.add(taskId);
-            this.anchorId = taskId;
+            // Single selection
+            this._sel_selectSingle(taskId);
         }
 
-        this.focusedId = taskId;
+        this._sel_setFocused(taskId);
         this._updateSelection();
         this._updateHeaderCheckboxState();
     }
@@ -2388,7 +2504,7 @@ export class SchedulerService {
         // - Scrolling to it
         
         // We need to temporarily set focusedId so addTask creates sibling at correct level
-        this.focusedId = lastTaskId;
+        this._sel_setFocused(lastTaskId);
         
         // Add the task - this will create it as a sibling of lastTask
         this.addTask().then((newTask) => {
@@ -2794,8 +2910,9 @@ export class SchedulerService {
         if (visibleTasks.length === 0) return;
 
         let currentIndex = -1;
-        if (this.focusedId) {
-            currentIndex = visibleTasks.findIndex(t => t.id === this.focusedId);
+        const focused = this._sel_getFocused();
+        if (focused) {
+            currentIndex = visibleTasks.findIndex(t => t.id === focused);
         }
 
         let newIndex: number;
@@ -2807,24 +2924,20 @@ export class SchedulerService {
 
         const newTaskId = visibleTasks[newIndex].id;
 
-        if (shiftKey && this.anchorId) {
+        if (shiftKey && this._sel_getAnchor()) {
             // Extend selection
-            const anchorIndex = visibleTasks.findIndex(t => t.id === this.anchorId);
+            const anchorIndex = visibleTasks.findIndex(t => t.id === this._sel_getAnchor());
             const start = Math.min(anchorIndex, newIndex);
             const end = Math.max(anchorIndex, newIndex);
             
-            this.selectedIds.clear();
-            for (let i = start; i <= end; i++) {
-                this.selectedIds.add(visibleTasks[i].id);
-            }
+            const rangeIds = visibleTasks.slice(start, end + 1).map(t => t.id);
+            this._sel_set(rangeIds, newTaskId);
         } else if (!shiftKey) {
             // Single selection
-            this.selectedIds.clear();
-            this.selectedIds.add(newTaskId);
-            this.anchorId = newTaskId;
+            this._sel_selectSingle(newTaskId);
         }
 
-        this.focusedId = newTaskId;
+        this._sel_setFocused(newTaskId);
         this._updateSelection();
 
         // Scroll to task
@@ -2867,8 +2980,9 @@ export class SchedulerService {
             this.focusedColumn = editableColumns[0]; // Default to first editable column (name)
         }
         
-        let currentRowIndex = this.focusedId 
-            ? visibleTasks.findIndex(t => t.id === this.focusedId)
+        const focused = this._sel_getFocused();
+        let currentRowIndex = focused 
+            ? visibleTasks.findIndex(t => t.id === focused)
             : 0;
         let currentColIndex = this.focusedColumn ? editableColumns.indexOf(this.focusedColumn as typeof editableColumns[number]) : -1;
         if (currentColIndex === -1) currentColIndex = 0;
@@ -2901,26 +3015,21 @@ export class SchedulerService {
         
         // Update row selection (for up/down movement)
         if (direction === 'up' || direction === 'down') {
-            if (shiftKey && this.anchorId) {
+            if (shiftKey && this._sel_getAnchor()) {
                 // Extend selection range
-                const anchorIndex = visibleTasks.findIndex(t => t.id === this.anchorId);
+                const anchorIndex = visibleTasks.findIndex(t => t.id === this._sel_getAnchor());
                 const start = Math.min(anchorIndex, newRowIndex);
                 const end = Math.max(anchorIndex, newRowIndex);
                 
-                this.selectedIds.clear();
-                for (let i = start; i <= end; i++) {
-                    this.selectedIds.add(visibleTasks[i].id);
-                }
+                const rangeIds = visibleTasks.slice(start, end + 1).map(t => t.id);
+                this._sel_set(rangeIds, newTaskId);
             } else if (!shiftKey) {
                 // Single selection
-                this.selectedIds.clear();
-                this.selectedIds.add(newTaskId);
-                this.anchorId = newTaskId;
+                this._sel_selectSingle(newTaskId);
             }
         }
         
-        this.focusedId = newTaskId;
-        this.focusedColumn = newColumn;
+        this._sel_setFocused(newTaskId, newColumn);
         this._updateSelection();
         
         // Update cell highlight (visual only, no input focus)
@@ -2936,15 +3045,16 @@ export class SchedulerService {
      * @param key - 'ArrowLeft' or 'ArrowRight'
      */
     private _handleArrowCollapse(key: 'ArrowLeft' | 'ArrowRight'): void {
-        if (!this.focusedId) return;
+        const focusedId = this._sel_getFocused();
+        if (!focusedId) return;
         
-        const task = ProjectController.getInstance().getTaskById(this.focusedId);
-        if (!task || !ProjectController.getInstance().isParent(this.focusedId)) return;
+        const task = ProjectController.getInstance().getTaskById(focusedId);
+        if (!task || !ProjectController.getInstance().isParent(focusedId)) return;
 
         if (key === 'ArrowRight' && task._collapsed) {
-            this.toggleCollapse(this.focusedId);
+            this.toggleCollapse(focusedId);
         } else if (key === 'ArrowLeft' && !task._collapsed) {
-            this.toggleCollapse(this.focusedId);
+            this.toggleCollapse(focusedId);
         }
     }
 
@@ -2955,12 +3065,12 @@ export class SchedulerService {
      * @private
      */
     private _handleTabIndent(): void {
-        if (this.selectedIds.size === 0) return;
+        if (this._sel_count() === 0) return;
         
         this.saveCheckpoint();
         
         const list = this._getFlatList();
-        const selectedIds = new Set(this.selectedIds);
+        const selectedIds = new Set(this._sel_toArray());
         const allTasks = ProjectController.getInstance().getTasks();
         
         // 1. Find the "top-level" selected tasks 
@@ -3043,12 +3153,12 @@ export class SchedulerService {
      * @private
      */
     private _handleTabOutdent(): void {
-        if (this.selectedIds.size === 0) return;
+        if (this._sel_count() === 0) return;
         
         this.saveCheckpoint();
         
         const list = this._getFlatList();
-        const selectedIds = new Set(this.selectedIds);
+        const selectedIds = new Set(this._sel_toArray());
         const allTasks = ProjectController.getInstance().getTasks();
         
         // 1. Find top-level selected tasks (parent not selected)
@@ -3119,7 +3229,7 @@ export class SchedulerService {
         }
         
         // Otherwise, deselect all
-        this.selectedIds.clear();
+        this._sel_clear();
         this._updateSelection();
     }
 
@@ -3331,8 +3441,9 @@ export class SchedulerService {
      * Returns the primary selection (last selected task)
      */
     public getSelectedTask(): Task | null {
-        if (!this.focusedId) return null;
-        return ProjectController.getInstance().getTaskById(this.focusedId) || null;
+        const focusedId = this._sel_getFocused();
+        if (!focusedId) return null;
+        return ProjectController.getInstance().getTaskById(focusedId) || null;
     }
 
     /**
@@ -3412,8 +3523,9 @@ export class SchedulerService {
             
             // Determine parent
             let parentId: string | null = taskData.parentId ?? null;
-            if (this.focusedId && taskData.parentId === undefined) {
-                const focusedTask = controller.getTaskById(this.focusedId);
+            const currentFocusedId = this._sel_getFocused();
+            if (currentFocusedId && taskData.parentId === undefined) {
+                const focusedTask = controller.getTaskById(currentFocusedId);
                 if (focusedTask) {
                     parentId = focusedTask.parentId ?? null;
                 }
@@ -3448,13 +3560,11 @@ export class SchedulerService {
             controller.addTask(task);
             
             // Update UI state
-            this.selectedIds.clear();
-            this.selectedIds.add(task.id);
-            this.focusedId = task.id;
+            this._sel_selectSingle(task.id);
             
             // Pass focusCell: true to focus the name input for immediate editing
             if (this.grid) {
-                this.grid.setSelection(this.selectedIds, this.focusedId, { focusCell: true, focusField: 'name' });
+                this.grid.setSelection(this.selectedIds, this._sel_getFocused(), { focusCell: true, focusField: 'name' });
             }
             if (this.gantt) {
                 this.gantt.setSelection(this.selectedIds);
@@ -3486,9 +3596,9 @@ export class SchedulerService {
         controller.deleteTask(taskId);
         
         // Update UI state
-        this.selectedIds.delete(taskId);
-        if (this.focusedId === taskId) {
-            this.focusedId = null;
+        this._sel_delete(taskId);
+        if (this._sel_getFocused() === taskId) {
+            this._sel_setFocused(null);
         }
 
         // NOTE: Removed recalculateAll(), engine sync, saveData(), render()
@@ -3503,10 +3613,10 @@ export class SchedulerService {
      * @private
      */
     private _deleteSelected(): void {
-        if (this.selectedIds.size === 0) return;
+        if (this._sel_count() === 0) return;
         
         const controller = ProjectController.getInstance();
-        const idsToDelete = Array.from(this.selectedIds);
+        const idsToDelete = this._sel_toArray();
         
         // Begin composite action for bulk delete (for undo/redo grouping)
         if (this.historyManager) {
@@ -3525,8 +3635,8 @@ export class SchedulerService {
             }
         }
 
-        this.selectedIds.clear();
-        this.focusedId = null;
+        this._sel_clear();
+        this._sel_setFocused(null);
         
         // NOTE: Removed recalculateAll(), saveData(), render()
         // ProjectController handles these via Worker + optimistic updates
@@ -3759,9 +3869,7 @@ export class SchedulerService {
         const blankRow = controller.createBlankRow(newSortKey, task.parentId);
         
         // Select the new blank row
-        this.selectedIds.clear();
-        this.selectedIds.add(blankRow.id);
-        this.focusedId = blankRow.id;
+        this._sel_selectSingle(blankRow.id);
         
         // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
         
@@ -3794,9 +3902,7 @@ export class SchedulerService {
         const blankRow = controller.createBlankRow(newSortKey, task.parentId);
         
         // Select the new blank row
-        this.selectedIds.clear();
-        this.selectedIds.add(blankRow.id);
-        this.focusedId = blankRow.id;
+        this._sel_selectSingle(blankRow.id);
         
         // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
         
@@ -3825,13 +3931,8 @@ export class SchedulerService {
         if (!wokenTask) return;
         
         // Update selection state
-        this.selectedIds.clear();
-        this.selectedIds.add(taskId);
-        this.focusedId = taskId;
-        this.focusedColumn = 'name';
-        
-        // Update anchor for range selection
-        this.anchorId = taskId;
+        this._sel_selectSingle(taskId);
+        this._sel_setFocused(taskId, 'name');
         
         // NOTE: Removed recalculateAll(), render() - ProjectController handles via Worker
         
@@ -3878,9 +3979,7 @@ export class SchedulerService {
         this._notifyOpenPanel('details');
         
         // Ensure task is selected
-        this.selectedIds.clear();
-        this.selectedIds.add(taskId);
-        this.focusedId = taskId;
+        this._sel_selectSingle(taskId);
         this._updateSelection();
     }
 
@@ -3889,7 +3988,7 @@ export class SchedulerService {
      * Processes top-level selections only (children move with parents)
      */
     indentSelected(): void {
-        if (this.selectedIds.size === 0) {
+        if (this._sel_count() === 0) {
             this.toastService?.info('No tasks selected');
             return;
         }
@@ -3897,7 +3996,7 @@ export class SchedulerService {
         this.saveCheckpoint();
         
         const list = this._getFlatList();
-        const selectedIds = new Set(this.selectedIds);
+        const selectedIds = new Set(this._sel_toArray());
         
         // Get top-level selected tasks (parent not in selection)
         const topLevelSelected = list.filter(task =>
@@ -3951,7 +4050,7 @@ export class SchedulerService {
      * Processes top-level selections only (children move with parents)
      */
     outdentSelected(): void {
-        if (this.selectedIds.size === 0) {
+        if (this._sel_count() === 0) {
             this.toastService?.info('No tasks selected');
             return;
         }
@@ -3959,7 +4058,7 @@ export class SchedulerService {
         this.saveCheckpoint();
         
         const list = this._getFlatList();
-        const selectedIds = new Set(this.selectedIds);
+        const selectedIds = new Set(this._sel_toArray());
         const allTasks = ProjectController.getInstance().getTasks();
         
         // Get top-level selected tasks
@@ -4006,18 +4105,19 @@ export class SchedulerService {
      * Shows confirmation for multiple tasks or parent tasks
      */
     async deleteSelected(): Promise<void> {
-        if (this.selectedIds.size === 0) {
+        if (this._sel_count() === 0) {
             this.toastService?.info('No tasks selected');
             return;
         }
         
-        const selectedCount = this.selectedIds.size;
-        const hasParents = Array.from(this.selectedIds).some(id => ProjectController.getInstance().isParent(id));
+        const selectedCount = this._sel_count();
+        const selectedArray = this._sel_toArray();
+        const hasParents = selectedArray.some(id => ProjectController.getInstance().isParent(id));
         
         // Confirm for multiple tasks or parent tasks
         if (selectedCount > 1 || hasParents) {
             const childCount = hasParents
-                ? Array.from(this.selectedIds).reduce((sum, id) => 
+                ? selectedArray.reduce((sum, id) => 
                     sum + this._getAllDescendants(id).size, 0)
                 : 0;
             
@@ -4032,19 +4132,20 @@ export class SchedulerService {
         this.saveCheckpoint();
         
         const editingManager = getEditingStateManager();
-        const idsToDelete = Array.from(this.selectedIds);
+        const idsToDelete = this._sel_toArray();
         
         for (const taskId of idsToDelete) {
             if (editingManager.isEditingTask(taskId)) {
                 editingManager.exitEditMode('task-deleted');
             }
             ProjectController.getInstance().deleteTask(taskId, true);
-            this.selectedIds.delete(taskId);
+            this._sel_delete(taskId);
             // NOTE: Removed engine sync - ProjectController handles via Worker
         }
         
-        if (this.focusedId && idsToDelete.includes(this.focusedId)) {
-            this.focusedId = null;
+        const currentFocusedId = this._sel_getFocused();
+        if (currentFocusedId && idsToDelete.includes(currentFocusedId)) {
+            this._sel_setFocused(null);
         }
         
         this.recalculateAll();
@@ -4400,14 +4501,15 @@ export class SchedulerService {
         }
         
         const controller = ProjectController.getInstance();
+        const currentFocusedId = this._sel_getFocused();
         
         // If no focused task, just add to bottom
-        if (!this.focusedId) {
+        if (!currentFocusedId) {
             this.addTask();
             return;
         }
         
-        const focusedTask = controller.getTaskById(this.focusedId);
+        const focusedTask = controller.getTaskById(currentFocusedId);
         if (!focusedTask) {
             this.addTask();
             return;
@@ -4450,13 +4552,11 @@ export class SchedulerService {
         controller.addTask(newTask);
         
         // Focus the new task
-        this.selectedIds.clear();
-        this.selectedIds.add(newTask.id);
-        this.focusedId = newTask.id;
+        this._sel_selectSingle(newTask.id);
         
         // Pass focusCell: true to focus the name input for immediate editing
         if (this.grid) {
-            this.grid.setSelection(this.selectedIds, this.focusedId, { focusCell: true, focusField: 'name' });
+            this.grid.setSelection(this.selectedIds, this._sel_getFocused(), { focusCell: true, focusField: 'name' });
         }
         if (this.gantt) {
             this.gantt.setSelection(this.selectedIds);
@@ -4480,14 +4580,15 @@ export class SchedulerService {
         }
         
         const controller = ProjectController.getInstance();
+        const currentFocusedId = this._sel_getFocused();
         
         // If no focused task, just add to bottom
-        if (!this.focusedId) {
+        if (!currentFocusedId) {
             this.addTask();
             return;
         }
         
-        const focusedTask = controller.getTaskById(this.focusedId);
+        const focusedTask = controller.getTaskById(currentFocusedId);
         if (!focusedTask) {
             this.addTask();
             return;
@@ -4534,13 +4635,11 @@ export class SchedulerService {
         controller.addTask(newTask);
         
         // Focus the new task
-        this.selectedIds.clear();
-        this.selectedIds.add(newTask.id);
-        this.focusedId = newTask.id;
+        this._sel_selectSingle(newTask.id);
         
         // Pass focusCell: true to focus the name input for immediate editing
         if (this.grid) {
-            this.grid.setSelection(this.selectedIds, this.focusedId, { focusCell: true, focusField: 'name' });
+            this.grid.setSelection(this.selectedIds, this._sel_getFocused(), { focusCell: true, focusField: 'name' });
         }
         if (this.gantt) {
             this.gantt.setSelection(this.selectedIds);
@@ -4566,14 +4665,15 @@ export class SchedulerService {
         }
         
         const controller = ProjectController.getInstance();
+        const currentFocusedId = this._sel_getFocused();
         
         // If no focused task, just add to root level
-        if (!this.focusedId) {
+        if (!currentFocusedId) {
             this.addTask();
             return;
         }
         
-        const parentTask = controller.getTaskById(this.focusedId);
+        const parentTask = controller.getTaskById(currentFocusedId);
         if (!parentTask) {
             this.addTask();
             return;
@@ -4582,7 +4682,7 @@ export class SchedulerService {
         this.saveCheckpoint();
         
         // The focused task becomes the parent
-        const newParentId = this.focusedId;
+        const newParentId = currentFocusedId;
         
         // Get existing children of this parent (sorted by sortKey)
         const existingChildren = controller.getChildren(newParentId);
@@ -4622,13 +4722,11 @@ export class SchedulerService {
         controller.addTask(newTask);
         
         // Focus the new task
-        this.selectedIds.clear();
-        this.selectedIds.add(newTask.id);
-        this.focusedId = newTask.id;
+        this._sel_selectSingle(newTask.id);
         
         // Update selection with focusCell to immediately enter edit mode
         if (this.grid) {
-            this.grid.setSelection(this.selectedIds, this.focusedId, { focusCell: true, focusField: 'name' });
+            this.grid.setSelection(this.selectedIds, this._sel_getFocused(), { focusCell: true, focusField: 'name' });
         }
         if (this.gantt) {
             this.gantt.setSelection(this.selectedIds);
@@ -4652,9 +4750,10 @@ export class SchedulerService {
     moveSelectedTasks(direction: number): void {
         const controller = ProjectController.getInstance();
         
-        if (!this.focusedId) return;
+        const focusedId = this._sel_getFocused();
+        if (!focusedId) return;
         
-        const task = controller.getTaskById(this.focusedId);
+        const task = controller.getTaskById(focusedId);
         if (!task) return;
         
         const siblings = controller.getChildren(task.parentId ?? null);
@@ -4695,9 +4794,12 @@ export class SchedulerService {
         
         // Keep focus on moved task
         if (this.grid) {
-            requestAnimationFrame(() => {
-                this.grid!.scrollToTask(this.focusedId!);
-            });
+            const currentFocusedId = this._sel_getFocused();
+            if (currentFocusedId) {
+                requestAnimationFrame(() => {
+                    this.grid!.scrollToTask(currentFocusedId);
+                });
+            }
         }
     }
 
@@ -4714,8 +4816,9 @@ export class SchedulerService {
             // Exiting edit mode
             
             // Re-highlight the cell visually
-            if (this.focusedId && this.focusedColumn && this.grid) {
-                this.grid.highlightCell(this.focusedId, this.focusedColumn);
+            const currentFocusedId = this._sel_getFocused();
+            if (currentFocusedId && this.focusedColumn && this.grid) {
+                this.grid.highlightCell(currentFocusedId, this.focusedColumn);
             }
             
             // Focus the grid container for keyboard navigation
@@ -4747,11 +4850,8 @@ export class SchedulerService {
             
             // If we moved to a new row, update checkbox selection
             if (prevTaskId && newTaskId !== prevTaskId) {
-                this.selectedIds.clear();
-                this.selectedIds.add(newTaskId);
-                this.focusedId = newTaskId;
-                this.focusedColumn = newState.context.field;
-                this.anchorId = newTaskId;
+                this._sel_selectSingle(newTaskId);
+                this._sel_setFocused(newTaskId, newState.context.field);
                 this._updateSelection();
             }
         }
@@ -4761,20 +4861,21 @@ export class SchedulerService {
      * Enter edit mode for the currently highlighted cell
      */
     enterEditMode(): void {
-        if (!this.focusedId || !this.focusedColumn) return;
+        const focusedId = this._sel_getFocused();
+        if (!focusedId || !this.focusedColumn) return;
         
         const editingManager = getEditingStateManager();
-        const task = ProjectController.getInstance().getTaskById(this.focusedId);
+        const task = ProjectController.getInstance().getTaskById(focusedId);
         const originalValue = task ? getTaskFieldValue(task, this.focusedColumn as GridColumn['field']) : undefined;
         
         editingManager.enterEditMode(
-            { taskId: this.focusedId, field: this.focusedColumn },
+            { taskId: focusedId, field: this.focusedColumn },
             'f2',
             originalValue
         );
         
         if (this.grid) {
-            this.grid.focusCell(this.focusedId, this.focusedColumn);
+            this.grid.focusCell(focusedId, this.focusedColumn);
         }
     }
 
@@ -4807,10 +4908,10 @@ export class SchedulerService {
      */
     private _updateSelection(): void {
         if (this.grid) {
-            this.grid.setSelection(this.selectedIds, this.focusedId);
+            this.grid.setSelection(new Set(this._sel_toArray()), this._sel_getFocused());
         }
         if (this.gantt) {
-            this.gantt.setSelection(this.selectedIds);
+            this.gantt.setSelection(new Set(this._sel_toArray()));
         }
         // Update header checkbox state
         this._updateHeaderCheckboxState();
@@ -4851,7 +4952,7 @@ export class SchedulerService {
         }
 
         // Count how many visible tasks are selected
-        const selectedCount = visibleTasks.filter(t => this.selectedIds.has(t.id)).length;
+        const selectedCount = visibleTasks.filter(t => this._sel_has(t.id)).length;
 
         if (selectedCount === 0) {
             // None selected
@@ -4883,12 +4984,12 @@ export class SchedulerService {
         if (checkbox.checked) {
             // Select all visible tasks
             visibleTasks.forEach(task => {
-                this.selectedIds.add(task.id);
+                this._sel_add(task.id);
             });
         } else {
             // Deselect all visible tasks
             visibleTasks.forEach(task => {
-                this.selectedIds.delete(task.id);
+                this._sel_delete(task.id);
             });
         }
 
@@ -4900,12 +5001,12 @@ export class SchedulerService {
      * Copy selected tasks
      */
     copySelected(): void {
-        if (this.selectedIds.size === 0) {
+        if (this._sel_count() === 0) {
             this.toastService.info('No tasks selected');
             return;
         }
 
-        const selected = ProjectController.getInstance().getTasks().filter(t => this.selectedIds.has(t.id));
+        const selected = ProjectController.getInstance().getTasks().filter(t => this._sel_has(t.id));
         
         // Include children - for each selected parent, auto-include ALL descendants (recursively)
         const payload = new Set<Task>();
@@ -4940,13 +5041,13 @@ export class SchedulerService {
      * Cut selected tasks
      */
     cutSelected(): void {
-        if (this.selectedIds.size === 0) {
+        if (this._sel_count() === 0) {
             this.toastService.info('No tasks selected');
             return;
         }
 
         // Perform same logic as copySelection()
-        const selected = ProjectController.getInstance().getTasks().filter(t => this.selectedIds.has(t.id));
+        const selected = ProjectController.getInstance().getTasks().filter(t => this._sel_has(t.id));
         
         // Include children - for each selected parent, auto-include ALL descendants (recursively)
         const payload = new Set<Task>();
@@ -4995,9 +5096,10 @@ export class SchedulerService {
         // 3. Determine insert location (after focusedId, or at end)
         const flatList = this._getFlatList();
         let insertIndex = flatList.length;
+        const currentFocusedId = this._sel_getFocused();
         
-        if (this.focusedId) {
-            const focusedIndex = flatList.findIndex(t => t.id === this.focusedId);
+        if (currentFocusedId) {
+            const focusedIndex = flatList.findIndex(t => t.id === currentFocusedId);
             if (focusedIndex !== -1) {
                 insertIndex = focusedIndex + 1;
             }
@@ -5005,8 +5107,8 @@ export class SchedulerService {
 
         // 4. Determine target parentId (same parent as focused task, or null)
         let targetParentId: string | null = null;
-        if (this.focusedId) {
-            const focusedTask = ProjectController.getInstance().getTaskById(this.focusedId);
+        if (currentFocusedId) {
+            const focusedTask = ProjectController.getInstance().getTaskById(currentFocusedId);
             if (focusedTask) {
                 targetParentId = focusedTask.parentId;
             }
@@ -5073,12 +5175,12 @@ export class SchedulerService {
             // Check if this is the same parent level as the focused task
             const isTargetLevel = parentId === targetParentId;
             
-            if (isTargetLevel && this.focusedId) {
+            if (isTargetLevel && currentFocusedId) {
                 // INSERT AFTER FOCUSED TASK
                 // Get the focused task and its siblings
-                const focusedTask = ProjectController.getInstance().getTaskById(this.focusedId);
+                const focusedTask = ProjectController.getInstance().getTaskById(currentFocusedId);
                 const siblings = ProjectController.getInstance().getChildren(parentId);
-                const focusedIndex = siblings.findIndex(t => t.id === this.focusedId);
+                const focusedIndex = siblings.findIndex(t => t.id === currentFocusedId);
                 
                 // Determine the sort key bounds for insertion
                 // beforeKey = focused task's key (insert AFTER this)
@@ -5140,10 +5242,10 @@ export class SchedulerService {
         }
 
         // 11. Select the newly pasted tasks
-        this.selectedIds.clear();
-        newTasks.forEach(t => this.selectedIds.add(t.id));
-        this.focusedId = newTasks[0]?.id || null;
-        this.anchorId = this.focusedId;
+        const pastedIds = newTasks.map(t => t.id);
+        const firstId = newTasks[0]?.id || null;
+        this._sel_set(pastedIds, firstId);
+        this._sel_setAnchor(firstId);
 
         // Update selection in UI
         this._updateSelection();
@@ -5155,9 +5257,10 @@ export class SchedulerService {
 
         // Scroll to show the first pasted task
         // Use requestAnimationFrame to ensure render completes before scrolling
-        if (this.grid && this.focusedId) {
+        const focused = this._sel_getFocused();
+        if (this.grid && focused) {
             requestAnimationFrame(() => {
-                this.grid?.scrollToTask(this.focusedId!);
+                this.grid?.scrollToTask(focused!);
             });
         }
 
@@ -5181,13 +5284,9 @@ export class SchedulerService {
      */
     openDrawer(taskId: string): void {
         // 1. Ensure selection is synced first (this triggers _handleSelectionChange)
-        if (this.focusedId !== taskId) {
+        if (this._sel_getFocused() !== taskId) {
             // Select the task - this will sync data to panels via onTaskSelect
-            this.selectedIds.clear();
-            this.selectedIds.add(taskId);
-            this.selectionOrder = [taskId];
-            this.focusedId = taskId;
-            this.anchorId = taskId;
+            this._sel_selectSingle(taskId);
             this._updateSelection();
         }
         
@@ -5229,12 +5328,8 @@ export class SchedulerService {
             });
             // Sync the panel with the task (panel will handle it via selection callback)
             // But we also need to ensure the task is selected
-            if (this.focusedId !== taskId) {
-                this.selectedIds.clear();
-                this.selectedIds.add(taskId);
-                this.selectionOrder = [taskId];
-                this.focusedId = taskId;
-                this.anchorId = taskId;
+            if (this._sel_getFocused() !== taskId) {
+                this._sel_selectSingle(taskId);
                 this._updateSelection();
             }
             return;
@@ -5428,7 +5523,7 @@ export class SchedulerService {
             if (this.grid) {
                 // Pass visible tasks to grid (it handles virtual scrolling)
                 this.grid.setData(tasks);
-                this.grid.setSelection(this.selectedIds, this.focusedId);
+                this.grid.setSelection(new Set(this._sel_toArray()), this._sel_getFocused());
             }
 
             if (this.gantt) {
