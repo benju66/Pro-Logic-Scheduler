@@ -31,13 +31,19 @@ export interface AppInitializerOptions {
 /**
  * App Initializer Service
  * Handles application initialization sequence
+ * 
+ * STRANGLER FIG: Now a singleton to provide shared access to services
  */
 export class AppInitializer {
+  // Singleton instance
+  private static instance: AppInitializer | null = null;
+  
   private isTauri: boolean;
   private scheduler: SchedulerService | null = null;
   private statsService: StatsService | null = null;
   private persistenceService: PersistenceService | null = null;
   private snapshotService: SnapshotService | null = null;
+  private dataLoader: DataLoader | null = null;
   private projectController: ProjectController | null = null;
   private activityBar: ActivityBar | null = null;
   private settingsModal: SettingsModal | null = null;
@@ -50,6 +56,13 @@ export class AppInitializer {
   private loadedTradePartners: TradePartner[] = [];
 
   /**
+   * Get singleton instance (must be created first via constructor)
+   */
+  public static getInstance(): AppInitializer | null {
+    return AppInitializer.instance;
+  }
+
+  /**
    * Create a new AppInitializer instance
    * @param options - Configuration
    */
@@ -57,6 +70,9 @@ export class AppInitializer {
     this.isTauri = options.isTauri || false;
     this.scheduler = null;
     this.statsService = null;
+    
+    // Store singleton reference
+    AppInitializer.instance = this;
     this.isInitializing = false;
     this.isInitialized = false;
   }
@@ -172,9 +188,9 @@ export class AppInitializer {
       
       // 3. Load data from SQLite via DataLoader
       console.log('[AppInitializer] Loading data from SQLite...');
-      const dataLoader = new DataLoader();
-      await dataLoader.init();
-      const { tasks, calendar, tradePartners } = await dataLoader.loadData();
+      this.dataLoader = new DataLoader();
+      await this.dataLoader.init();
+      const { tasks, calendar, tradePartners } = await this.dataLoader.loadData();
       
       // Store for SnapshotService accessors
       this.loadedCalendar = calendar;
@@ -409,6 +425,22 @@ export class AppInitializer {
    */
   getScheduler(): SchedulerService | null {
     return this.scheduler;
+  }
+
+  /**
+   * Get the SnapshotService instance
+   * STRANGLER FIG: Shared access for SchedulerService
+   */
+  getSnapshotService(): SnapshotService | null {
+    return this.snapshotService;
+  }
+
+  /**
+   * Get the DataLoader instance
+   * STRANGLER FIG: Shared access for SchedulerService reload operations
+   */
+  getDataLoader(): DataLoader | null {
+    return this.dataLoader;
   }
 
   /**

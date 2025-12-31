@@ -1,0 +1,305 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Behavior Snapshots: DateUtils Integration > SNAPSHOT: calcWorkDays Mon-Fri 1`] = `5`;
+
+exports[`Behavior Snapshots: DateUtils Integration > SNAPSHOT: calcWorkDays across weekend 1`] = `6`;
+
+exports[`Behavior Snapshots: DateUtils Integration > SNAPSHOT: calcWorkDays same day 1`] = `1`;
+
+exports[`Behavior Snapshots: Task Edit Operations > ActualFinish Edit Snapshots (Completion Mode) > SNAPSHOT: actualFinish before start → failure 1`] = `
+{
+  "message": "Actual finish cannot be before start date",
+  "needsRecalc": false,
+  "needsRender": false,
+  "success": false,
+  "updates": {},
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > ActualFinish Edit Snapshots (Completion Mode) > SNAPSHOT: actualFinish without start → failure 1`] = `
+{
+  "message": "Cannot mark finished: Task has no Start Date.",
+  "needsRecalc": false,
+  "needsRender": false,
+  "success": false,
+  "updates": {},
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > ActualFinish Edit Snapshots (Completion Mode) > SNAPSHOT: clear actualFinish → reopen task 1`] = `
+{
+  "message": "Task reopened",
+  "needsRecalc": true,
+  "needsRender": false,
+  "success": true,
+  "updates": {
+    "actualFinish": null,
+    "progress": 0,
+    "remainingDuration": 5,
+  },
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > ActualFinish Edit Snapshots (Completion Mode) > SNAPSHOT: finish early → success message 1`] = `
+{
+  "message": "Task complete - finished 5 days early!",
+  "needsRecalc": true,
+  "needsRender": false,
+  "success": true,
+  "updates": {
+    "actualFinish": "2024-01-05",
+    "actualStart": "2024-01-01",
+    "constraintDate": "2024-01-01",
+    "constraintType": "snet",
+    "duration": 5,
+    "end": "2024-01-05",
+    "progress": 100,
+    "remainingDuration": 0,
+    "start": "2024-01-01",
+  },
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > ActualFinish Edit Snapshots (Completion Mode) > SNAPSHOT: finish late → warning message 1`] = `
+{
+  "message": "Task complete - took 5 days longer than planned",
+  "needsRecalc": true,
+  "needsRender": false,
+  "success": true,
+  "updates": {
+    "actualFinish": "2024-01-10",
+    "actualStart": "2024-01-01",
+    "constraintDate": "2024-01-01",
+    "constraintType": "snet",
+    "duration": 8,
+    "end": "2024-01-10",
+    "progress": 100,
+    "remainingDuration": 0,
+    "start": "2024-01-01",
+  },
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > ActualFinish Edit Snapshots (Completion Mode) > SNAPSHOT: set actualFinish → complete task 1`] = `
+{
+  "message": "Task complete - on schedule",
+  "needsRecalc": true,
+  "needsRender": false,
+  "success": true,
+  "updates": {
+    "actualFinish": "2024-01-05",
+    "actualStart": "2024-01-01",
+    "constraintDate": "2024-01-01",
+    "constraintType": "snet",
+    "duration": 5,
+    "end": "2024-01-05",
+    "progress": 100,
+    "remainingDuration": 0,
+    "start": "2024-01-01",
+  },
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > ActualStart Edit Snapshots (Driver Mode) > SNAPSHOT: clear actualStart → preserve constraint 1`] = `
+{
+  "message": "Actual start cleared. Start constraint preserved.",
+  "needsRecalc": true,
+  "needsRender": false,
+  "success": true,
+  "updates": {
+    "actualStart": null,
+  },
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > ActualStart Edit Snapshots (Driver Mode) > SNAPSHOT: set actualStart with existing actualFinish → recalc duration 1`] = `
+{
+  "message": "Task started - schedule locked with SNET constraint",
+  "needsRecalc": true,
+  "needsRender": false,
+  "success": true,
+  "updates": {
+    "actualStart": "2024-01-03",
+    "constraintDate": "2024-01-03",
+    "constraintType": "snet",
+    "duration": 6,
+    "start": "2024-01-03",
+  },
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > ActualStart Edit Snapshots (Driver Mode) > SNAPSHOT: set actualStart → SNET + anchor 1`] = `
+{
+  "message": "Task started - schedule locked with SNET constraint",
+  "needsRecalc": true,
+  "needsRender": false,
+  "success": true,
+  "updates": {
+    "actualStart": "2024-01-03",
+    "constraintDate": "2024-01-03",
+    "constraintType": "snet",
+    "start": "2024-01-03",
+  },
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > ConstraintType Edit Snapshots > SNAPSHOT: set to ASAP → clear constraintDate 1`] = `
+{
+  "message": "Constraint removed - task will schedule based on dependencies",
+  "needsRecalc": true,
+  "needsRender": false,
+  "success": true,
+  "updates": {
+    "constraintDate": null,
+    "constraintType": "asap",
+  },
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > ConstraintType Edit Snapshots > SNAPSHOT: set to SNET → keep constraintDate 1`] = `
+{
+  "message": undefined,
+  "needsRecalc": true,
+  "needsRender": false,
+  "success": true,
+  "updates": {
+    "constraintType": "snet",
+  },
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > Duration Edit Snapshots > SNAPSHOT: invalid duration → no update 1`] = `
+{
+  "message": undefined,
+  "needsRecalc": false,
+  "needsRender": false,
+  "success": true,
+  "updates": {},
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > Duration Edit Snapshots > SNAPSHOT: valid duration → updates and recalc 1`] = `
+{
+  "message": undefined,
+  "needsRecalc": true,
+  "needsRender": false,
+  "success": true,
+  "updates": {
+    "duration": 10,
+  },
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > Duration Edit Snapshots > SNAPSHOT: zero duration → no update 1`] = `
+{
+  "message": undefined,
+  "needsRecalc": false,
+  "needsRender": false,
+  "success": true,
+  "updates": {},
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > SchedulingMode Edit Snapshots > SNAPSHOT: Auto → Manual → pin dates 1`] = `
+{
+  "message": "Task is now manually scheduled - dates are fixed",
+  "needsRecalc": true,
+  "needsRender": false,
+  "success": true,
+  "updates": {
+    "schedulingMode": "Manual",
+  },
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > SchedulingMode Edit Snapshots > SNAPSHOT: Manual → Auto → SNET constraint 1`] = `
+{
+  "message": "Task is now auto-scheduled with SNET constraint",
+  "needsRecalc": true,
+  "needsRender": false,
+  "success": true,
+  "updates": {
+    "constraintDate": "2024-01-15",
+    "constraintType": "snet",
+    "schedulingMode": "Auto",
+  },
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > SchedulingMode Edit Snapshots > SNAPSHOT: parent task Manual → failure 1`] = `
+{
+  "message": "Parent tasks cannot be manually scheduled",
+  "needsRecalc": false,
+  "needsRender": false,
+  "success": false,
+  "updates": {},
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > SchedulingMode Edit Snapshots > SNAPSHOT: same mode → no change 1`] = `
+{
+  "message": undefined,
+  "needsRecalc": false,
+  "needsRender": false,
+  "success": true,
+  "updates": {},
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > Simple Field Edit Snapshots > SNAPSHOT: name edit → render only 1`] = `
+{
+  "message": undefined,
+  "needsRecalc": false,
+  "needsRender": true,
+  "success": true,
+  "updates": {
+    "name": "New Name",
+  },
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > Simple Field Edit Snapshots > SNAPSHOT: notes edit → render only 1`] = `
+{
+  "message": undefined,
+  "needsRecalc": false,
+  "needsRender": true,
+  "success": true,
+  "updates": {
+    "notes": "Some notes",
+  },
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > Start Date Edit Snapshots > SNAPSHOT: invalid date format → failure 1`] = `
+{
+  "message": undefined,
+  "needsRecalc": false,
+  "needsRender": false,
+  "success": false,
+  "updates": {},
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > Start Date Edit Snapshots > SNAPSHOT: parent task → no update 1`] = `
+{
+  "message": undefined,
+  "needsRecalc": false,
+  "needsRender": false,
+  "success": true,
+  "updates": {},
+}
+`;
+
+exports[`Behavior Snapshots: Task Edit Operations > Start Date Edit Snapshots > SNAPSHOT: valid start → SNET constraint 1`] = `
+{
+  "message": undefined,
+  "needsRecalc": true,
+  "needsRender": false,
+  "success": true,
+  "updates": {
+    "constraintDate": "2024-01-15",
+    "constraintType": "snet",
+    "start": "2024-01-15",
+  },
+}
+`;

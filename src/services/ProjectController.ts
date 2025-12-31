@@ -91,6 +91,22 @@ export class ProjectController {
     }
 
     /**
+     * Get the persistence service (for shared access by other services)
+     * Used by SchedulerService for trade partner persistence
+     */
+    public getPersistenceService(): PersistenceService | null {
+        return this.persistenceService;
+    }
+
+    /**
+     * Check if persistence service is already attached
+     * Used to prevent duplicate initialization
+     */
+    public hasPersistenceService(): boolean {
+        return this.persistenceService !== null;
+    }
+
+    /**
      * Initialize the Web Worker
      */
     private initializeWorker(): void {

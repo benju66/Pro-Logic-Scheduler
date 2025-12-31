@@ -34,6 +34,7 @@ import { KeyboardService } from '../ui/services/KeyboardService';
 import { OrderingService } from './OrderingService';
 import { ProjectController } from './ProjectController';
 import { SelectionModel } from './SelectionModel';
+import { AppInitializer } from './AppInitializer';
 import { getEditingStateManager, type EditingStateChangeEvent } from './EditingStateManager';
 import { getTaskFieldValue } from '../types';
 import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport';
@@ -225,76 +226,50 @@ export class SchedulerService {
     /**
      * Initialize all services
      * @private
+     * 
+     * STRANGLER FIG: Service initialization moved to AppInitializer.
+     * SchedulerService now uses shared services via AppInitializer singleton.
      */
     private async _initServices(): Promise<void> {
-        // 1. Initialize PersistenceService first (if Tauri environment)
-        if (this.isTauri) {
-            try {
-                this.persistenceService = new PersistenceService();
-                await this.persistenceService.init();
-                console.log('[SchedulerService] ✅ PersistenceService initialized');
-            } catch (error) {
-                console.error('[SchedulerService] Failed to initialize PersistenceService:', error);
-                // Continue without persistence - app can still work
-            }
+        // STRANGLER FIG: PersistenceService, DataLoader, SnapshotService
+        // are now initialized by AppInitializer and accessed via singleton.
+        // This prevents duplicate initialization and double snapshot timers.
+        
+        const appInitializer = AppInitializer.getInstance();
+        const controller = ProjectController.getInstance();
+        
+        // Get reference to shared PersistenceService
+        if (controller.hasPersistenceService()) {
+            this.persistenceService = controller.getPersistenceService();
+            console.log('[SchedulerService] Using shared PersistenceService from AppInitializer');
+        } else {
+            console.warn('[SchedulerService] PersistenceService not available - trade partner events will not be persisted');
+        }
+        
+        // Get references to shared DataLoader and SnapshotService
+        if (appInitializer) {
+            this.dataLoader = appInitializer.getDataLoader();
+            this.snapshotService = appInitializer.getSnapshotService();
+            console.log('[SchedulerService] Using shared DataLoader and SnapshotService from AppInitializer');
+        } else {
+            console.warn('[SchedulerService] AppInitializer not available - some features may be limited');
         }
 
-        // 2. Initialize stores (TradePartnerStore only - TaskStore/CalendarStore removed)
+        // Initialize stores (TradePartnerStore only - TaskStore/CalendarStore removed)
         // NOTE: Task and calendar data now flows through ProjectController
         this.tradePartnerStore = getTradePartnerStore();
-
-        // 3. Inject persistence into ProjectController (if available)
-        if (this.persistenceService) {
-            ProjectController.getInstance().setPersistenceService(this.persistenceService);
-        }
-
-        // 4. Initialize DataLoader and SnapshotService (if Tauri environment)
-        if (this.isTauri) {
-            try {
-                this.dataLoader = new DataLoader();
-                await this.dataLoader.init();
-                console.log('[SchedulerService] ✅ DataLoader initialized');
-
-                this.snapshotService = new SnapshotService();
-                await this.snapshotService.init();
-                console.log('[SchedulerService] ✅ SnapshotService initialized');
-            } catch (error) {
-                console.error('[SchedulerService] Failed to initialize SQLite services:', error);
-                // Continue without SQLite - will fall back to localStorage
-            }
-        }
-
-        // 5. Initialize other services
-        this.historyManager = new HistoryManager({
-            maxHistory: 50
-        });
-
-        // 6. History manager configured (stores removed - history tracked via HistoryManager directly)
         
-        // 7. Wire up snapshot service (if available)
-        if (this.snapshotService && this.persistenceService) {
-            // Set state accessors for automatic snapshots
-            this.snapshotService.setStateAccessors(
-                () => ProjectController.getInstance().getTasks(),
-                () => ProjectController.getInstance().getCalendar(),
-                () => this.tradePartnerStore.getAll()
-            );
-            
-            // Connect to persistence service
-            this.persistenceService.setSnapshotService(
-                this.snapshotService,
-                () => ProjectController.getInstance().getTasks(),
-                () => ProjectController.getInstance().getCalendar()
-            );
-            
-            // Set trade partners accessor
+        // Set trade partners accessor on shared persistence service
+        if (this.persistenceService) {
             this.persistenceService.setTradePartnersAccessor(
                 () => this.tradePartnerStore.getAll()
             );
-            
-            // Start periodic snapshots
-            this.snapshotService.startPeriodicSnapshots();
         }
+
+        // Initialize HistoryManager for undo/redo
+        this.historyManager = new HistoryManager({
+            maxHistory: 50
+        });
 
         // UI services
         this.toastService = new ToastService({
@@ -5301,144 +5276,15 @@ export class SchedulerService {
         return Promise.resolve();
     }
 
-    /**
-     * Apply calculation result to task store
-     * @private
-     */
-    private _applyCalculationResult(result: CPMResult): void {
-        // NOTE: disableNotifications was removed - ProjectController handles this via reactive streams
-
-        // Track which tasks had recent user edits to preserve their input values
-        // This prevents overwriting user input with calculated values during recalculation
-        const recentEdits = new Map<string, { duration?: number; start?: string; end?: string }>();
-        
-        // Update tasks with calculated values
-        result.tasks.forEach(calculatedTask => {
-            const task = ProjectController.getInstance().getTaskById(calculatedTask.id);
-            if (task) {
-                // For Manual mode tasks, preserve manual dates and only update calculated fields
-                const isManual = task.schedulingMode === 'Manual';
-                
-                if (isManual) {
-                    // Manual mode: Preserve start/end/duration, only update calculated fields
-                    Object.assign(task, {
-                        // Don't overwrite start, end, or duration for Manual tasks
-                        _isCritical: calculatedTask._isCritical || false,
-                        _totalFloat: calculatedTask._totalFloat || 0,
-                        _freeFloat: calculatedTask._freeFloat || 0,
-                        lateStart: calculatedTask.lateStart,
-                        lateFinish: calculatedTask.lateFinish,
-                        totalFloat: calculatedTask.totalFloat,
-                        freeFloat: calculatedTask.freeFloat,
-                        _health: calculatedTask._health,
-                    });
-                } else {
-                    // Auto mode: Update all fields including dates
-                    // BUT: Preserve user's duration input if it was just edited
-                    // The engine should have the correct duration, but we preserve it as a safeguard
-                    const updates: Partial<Task> = {
-                        start: calculatedTask.start,
-                        end: calculatedTask.end,
-                        duration: calculatedTask.duration, // Engine should have correct duration
-                        _isCritical: calculatedTask._isCritical || false,
-                        _totalFloat: calculatedTask._totalFloat || 0,
-                        _freeFloat: calculatedTask._freeFloat || 0,
-                        lateStart: calculatedTask.lateStart,
-                        lateFinish: calculatedTask.lateFinish,
-                        totalFloat: calculatedTask.totalFloat,
-                        freeFloat: calculatedTask.freeFloat,
-                        _health: calculatedTask._health,
-                    };
-                    
-                    Object.assign(task, updates);
-                }
-            }
-        });
-
-        // CRITICAL: Roll up parent dates as a safeguard
-        // Rust CPM should calculate parent dates correctly, but this ensures they're always correct
-        // even if there are edge cases or timing issues
-        this._rollupParentDatesSafeguard();
-
-        // NOTE: restoreNotifications was removed - ProjectController handles this via reactive streams
-        
-        // CRITICAL: Update renderers synchronously BEFORE render() to eliminate flash
-        // This ensures GridRenderer.data has the latest values before any render cycle begins
-        this._updateGridDataSync();
-        this._updateGanttDataSync();
-        
-        // Trigger render updates
-        // Note: render() uses requestAnimationFrame, but _updateGridDataSync() ensures
-        // GridRenderer.data is updated synchronously before the RAF callback executes
-        this.render();
-
-        // Check for constraint violations and warn user
-        const criticalTasks = result.tasks.filter(t => 
-            t._health?.status === 'critical'
-        );
-
-        if (criticalTasks.length > 0) {
-            const deadlineViolations = criticalTasks.filter(t => t.constraintType === 'fnlt');
-            
-            if (deadlineViolations.length > 0) {
-                const names = deadlineViolations.slice(0, 2).map(t => `"${t.name}"`).join(', ');
-                const moreCount = deadlineViolations.length > 2 ? ` +${deadlineViolations.length - 2} more` : '';
-                this.toastService.warning(`Deadline at risk: ${names}${moreCount}`);
-            } else {
-                const names = criticalTasks.slice(0, 2).map(t => `"${t.name}"`).join(', ');
-                const moreCount = criticalTasks.length > 2 ? ` +${criticalTasks.length - 2} more` : '';
-                this.toastService.warning(`Schedule issues: ${names}${moreCount}`);
-            }
-        }
-    }
+    // STRANGLER FIG: _applyCalculationResult() removed - dead code
+    // ProjectController + WASM Worker now handles CPM results via reactive streams (tasks$).
+    // The viewport subscribes to tasks$ and renders automatically.
 
 
 
-    // =========================================================================
-    // DATA CHANGE HANDLERS
-    // =========================================================================
-
-    /**
-     * Handle tasks changed event from TaskStore
-     * @private
-     */
-    private _onTasksChanged(): void {
-        // Prevent recursion - if we're already recalculating, skip
-        if (this._isRecalculating) {
-            return;
-        }
-        
-        // NOTE: Engine state is kept in sync via delta updates (addTask/updateTask/deleteTask)
-        // No need to syncTasks here - engine already has latest state
-        
-        // Tasks changed - trigger recalculation and render
-        this.recalculateAll();
-        this.render();
-        
-        // Notify data change listeners (for unified panel sync)
-        this._notifyDataChange();
-    }
-
-    /**
-     * Handle calendar changed event from CalendarStore
-     * @private
-     */
-    private _onCalendarChanged(): void {
-        // Calendar changed - trigger recalculation
-        // TODO: Calendar integration for Flatpickr - add setCalendar to GridRenderer
-        // const calendar = ProjectController.getInstance().getCalendar();
-        // 
-        // // Update grid's date picker calendar
-        // if (this.grid) {
-        //     this.grid.setCalendar(calendar);
-        // }
-        
-        this.recalculateAll();
-        this.render();
-        
-        // Notify data change listeners (for unified panel sync)
-        this._notifyDataChange();
-    }
+    // STRANGLER FIG: _onTasksChanged() and _onCalendarChanged() removed - dead code
+    // ProjectController + WASM Worker handles data changes via reactive streams.
+    // The viewport subscribes to tasks$ and calendar$ and renders automatically.
 
     /**
      * Notify all data change listeners
