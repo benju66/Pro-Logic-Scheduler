@@ -96,6 +96,9 @@ export class SchedulerViewport {
 
     // Subscriptions (for cleanup)
     private subscriptions: Subscription[] = [];
+    
+    // Flag to prevent circular selection updates
+    private isUpdatingFromSubscription: boolean = false;
 
     /**
      * Constructor (NO SINGLETON)
@@ -300,29 +303,56 @@ export class SchedulerViewport {
     }
 
     /**
+     * Track if start() has been called to prevent duplicate subscriptions
+     */
+    private isStarted: boolean = false;
+
+    /**
      * Start the render loop
      */
     start(): void {
         console.log('[SchedulerViewport] start() called');
+        
+        // CRITICAL FIX: Prevent duplicate subscriptions
+        if (this.isStarted) {
+            console.log('[SchedulerViewport] start() already called - skipping duplicate');
+            return;
+        }
+        
         if (!this.gridReady || !this.ganttReady) {
             throw new Error('Both Grid and Gantt must be initialized before start()');
         }
+        
+        this.isStarted = true;
 
         // Subscribe to ProjectController for task data updates (Worker -> UI)
+        // IMPORTANT: Transform to visible hierarchy order for correct navigation/display
         console.log('[SchedulerViewport] Subscribing to ProjectController.tasks$...');
         this.subscriptions.push(
-            this.controller.tasks$.subscribe(tasks => {
-                console.log(`[SchedulerViewport] Received ${tasks.length} tasks from ProjectController`);
-                this.setData(tasks);
+            this.controller.tasks$.subscribe(_tasks => {
+                // Get tasks in HIERARCHY ORDER (matching navigation expectations)
+                // This ensures index-based navigation (up/down arrows) works correctly
+                const visibleTasks = this.controller.getVisibleTasks((id) => {
+                    const task = this.controller.getTaskById(id);
+                    return task?._collapsed || false;
+                });
+                console.log(`[SchedulerViewport] Received ${visibleTasks.length} visible tasks from ProjectController`);
+                this.setData(visibleTasks);
             })
         );
 
         // Subscribe to SelectionModel for selection state updates (UI -> UI, synchronous)
+        // CRITICAL: Set flag to prevent circular callback loop
         this.subscriptions.push(
             this.selectionModel.state$.subscribe(state => {
                 // Convert Set to Array for setSelection signature
                 const selectedArray = Array.from(state.selectedIds);
+                
+                // Set flag to prevent callback loop:
+                // SelectionModel → setSelection() → onSelectionChange → _handleSelectionChange → SelectionModel (LOOP!)
+                this.isUpdatingFromSubscription = true;
                 this.setSelection(selectedArray, state.focusedId);
+                this.isUpdatingFromSubscription = false;
             })
         );
 
@@ -681,8 +711,9 @@ export class SchedulerViewport {
             this.ganttRenderer.setSelection(this.selectedIds);
         }
 
-        // Notify SchedulerService
-        if (this.options.onSelectionChange) {
+        // Notify SchedulerService - BUT NOT if this came from SelectionModel subscription
+        // This prevents the circular loop: SelectionModel → setSelection → callback → SelectionModel
+        if (this.options.onSelectionChange && !this.isUpdatingFromSubscription) {
             this.options.onSelectionChange(taskIds);
         }
 

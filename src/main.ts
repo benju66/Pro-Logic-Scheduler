@@ -18,6 +18,9 @@ import type { ToastType } from './types';
 import './ui/components/scheduler/styles/scheduler.css';
 import './styles/trade-partners.css';
 
+// Import UI Blocking Diagnostic (run diagnoseUIBlocking() in console)
+import './debug/UIBlockingDiagnostic';
+
 // NOTE: Using clean architecture - no globals, dependency injection only
 
 // Detect if running in Tauri
@@ -160,10 +163,11 @@ async function setupShutdownHandler(): Promise<void> {
         return;
     }
     
-    const { listen } = await import('@tauri-apps/api/event');
+    const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow');
     const { invoke } = await import('@tauri-apps/api/core');
     
-    await listen('shutdown-requested', async () => {
+    const currentWindow = getCurrentWebviewWindow();
+    await currentWindow.listen('shutdown-requested', async () => {
         console.log('[main] Shutdown requested - flushing data...');
         
         // Create a promise that rejects after timeout
