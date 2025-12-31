@@ -271,6 +271,11 @@ export class SchedulerService {
             maxHistory: 50
         });
 
+        // Wire HistoryManager to ProjectController for event recording
+        if (!controller.hasHistoryManager()) {
+            controller.setHistoryManager(this.historyManager);
+        }
+
         // UI services
         this.toastService = new ToastService({
             container: document.body

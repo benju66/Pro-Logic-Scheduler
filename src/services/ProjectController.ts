@@ -17,6 +17,7 @@ import { BehaviorSubject, Subject, filter, firstValueFrom, timeout } from 'rxjs'
 import type { Task, Calendar, CPMResult, ConstraintType, SchedulingMode } from '../types';
 import type { WorkerCommand, WorkerResponse } from '../workers/types';
 import type { PersistenceService } from '../data/PersistenceService';
+import type { HistoryManager, QueuedEvent } from '../data/HistoryManager';
 
 /**
  * ProjectController - Singleton
@@ -62,6 +63,9 @@ export class ProjectController {
     
     /** PersistenceService for event sourcing to SQLite */
     private persistenceService: PersistenceService | null = null;
+    
+    /** HistoryManager for undo/redo functionality */
+    private historyManager: HistoryManager | null = null;
 
     // ========================================================================
     // Constructor & Singleton
@@ -104,6 +108,50 @@ export class ProjectController {
      */
     public hasPersistenceService(): boolean {
         return this.persistenceService !== null;
+    }
+
+    /**
+     * Set the history manager for undo/redo functionality
+     * Called during app initialization
+     */
+    public setHistoryManager(manager: HistoryManager): void {
+        this.historyManager = manager;
+        console.log('[ProjectController] HistoryManager attached');
+    }
+
+    /**
+     * Check if history manager is already attached
+     */
+    public hasHistoryManager(): boolean {
+        return this.historyManager !== null;
+    }
+
+    // ========================================================================
+    // History Recording Helpers
+    // ========================================================================
+
+    /**
+     * Create a QueuedEvent object
+     */
+    private createEvent(type: string, targetId: string | null, payload: Record<string, unknown>): QueuedEvent {
+        return {
+            type,
+            targetId,
+            payload,
+            timestamp: new Date()
+        };
+    }
+
+    /**
+     * Record an action to history (for undo/redo)
+     * @param forwardEvent - Event that performs the action
+     * @param backwardEvent - Event that undoes the action
+     * @param label - Human-readable label for the action
+     */
+    private recordToHistory(forwardEvent: QueuedEvent, backwardEvent: QueuedEvent, label?: string): void {
+        if (this.historyManager) {
+            this.historyManager.recordAction(forwardEvent, backwardEvent, label);
+        }
     }
 
     /**
@@ -247,30 +295,41 @@ export class ProjectController {
         this.isCalculating$.next(true);
         this.send({ type: 'ADD_TASK', payload: task });
 
+        // Build the event payload
+        const eventPayload = {
+            id: task.id,
+            parent_id: task.parentId,
+            sort_key: task.sortKey,
+            row_type: task.rowType || 'task',
+            name: task.name,
+            notes: task.notes || '',
+            duration: task.duration,
+            constraint_type: task.constraintType,
+            constraint_date: task.constraintDate,
+            scheduling_mode: task.schedulingMode || 'Auto',
+            dependencies: task.dependencies || [],
+            progress: task.progress || 0,
+            actual_start: task.actualStart,
+            actual_finish: task.actualFinish,
+            remaining_duration: task.remainingDuration,
+            baseline_start: task.baselineStart,
+            baseline_finish: task.baselineFinish,
+            baseline_duration: task.baselineDuration,
+            is_collapsed: task._collapsed || false,
+        };
+
         // Queue TASK_CREATED event for persistence
         if (this.persistenceService) {
-            this.persistenceService.queueEvent('TASK_CREATED', task.id, {
-                id: task.id,
-                parent_id: task.parentId,
-                sort_key: task.sortKey,
-                row_type: task.rowType || 'task',
-                name: task.name,
-                notes: task.notes || '',
-                duration: task.duration,
-                constraint_type: task.constraintType,
-                constraint_date: task.constraintDate,
-                scheduling_mode: task.schedulingMode || 'Auto',
-                dependencies: task.dependencies || [],
-                progress: task.progress || 0,
-                actual_start: task.actualStart,
-                actual_finish: task.actualFinish,
-                remaining_duration: task.remainingDuration,
-                baseline_start: task.baselineStart,
-                baseline_finish: task.baselineFinish,
-                baseline_duration: task.baselineDuration,
-                is_collapsed: task._collapsed || false,
-            });
+            this.persistenceService.queueEvent('TASK_CREATED', task.id, eventPayload);
         }
+
+        // Record to history for undo/redo
+        // Forward: TASK_CREATED, Backward: TASK_DELETED
+        this.recordToHistory(
+            this.createEvent('TASK_CREATED', task.id, eventPayload),
+            this.createEvent('TASK_DELETED', task.id, {}),
+            `Add ${task.rowType === 'blank' ? 'Row' : 'Task'}`
+        );
     }
 
     /**
@@ -278,10 +337,12 @@ export class ProjectController {
      * Uses optimistic update: local state updated immediately, then worker calculates
      */
     public updateTask(id: string, updates: Partial<Task>): void {
-        // OPTIMISTIC UPDATE: Apply updates to local state immediately
+        // Get current task to capture old values for undo
         const currentTasks = this.tasks$.value;
         const taskIndex = currentTasks.findIndex(t => t.id === id);
+        const oldTask = taskIndex >= 0 ? currentTasks[taskIndex] : null;
         
+        // OPTIMISTIC UPDATE: Apply updates to local state immediately
         if (taskIndex >= 0) {
             const updatedTasks = [...currentTasks];
             updatedTasks[taskIndex] = { ...updatedTasks[taskIndex], ...updates };
@@ -292,19 +353,47 @@ export class ProjectController {
         this.isCalculating$.next(true);
         this.send({ type: 'UPDATE_TASK', payload: { id, updates } });
 
-        // Queue TASK_UPDATED events for persistence (one per field for granular undo/redo)
-        if (this.persistenceService) {
-            for (const [field, value] of Object.entries(updates)) {
-                // Skip calculated fields - they're not persisted
-                const calculatedFields = ['start', 'end', 'level', 'lateStart', 'lateFinish', 
-                                         'totalFloat', 'freeFloat', '_isCritical', '_health'];
-                if (calculatedFields.includes(field)) continue;
+        // Map task property names to DB field names for persistence
+        const propToFieldMap: Record<string, string> = {
+            parentId: 'parent_id',
+            sortKey: 'sort_key',
+            rowType: 'row_type',
+            constraintType: 'constraint_type',
+            constraintDate: 'constraint_date',
+            actualStart: 'actual_start',
+            actualFinish: 'actual_finish',
+            remainingDuration: 'remaining_duration',
+            baselineStart: 'baseline_start',
+            baselineFinish: 'baseline_finish',
+            baselineDuration: 'baseline_duration',
+            _collapsed: 'is_collapsed',
+            schedulingMode: 'scheduling_mode',
+        };
 
+        // Queue TASK_UPDATED events for persistence (one per field for granular undo/redo)
+        for (const [prop, newValue] of Object.entries(updates)) {
+            // Skip calculated fields - they're not persisted
+            const calculatedFields = ['start', 'end', 'level', 'lateStart', 'lateFinish', 
+                                     'totalFloat', 'freeFloat', '_isCritical', '_health'];
+            if (calculatedFields.includes(prop)) continue;
+
+            const field = propToFieldMap[prop] || prop;
+            const oldValue = oldTask ? (oldTask as Record<string, unknown>)[prop] : null;
+
+            if (this.persistenceService) {
                 this.persistenceService.queueEvent('TASK_UPDATED', id, {
                     field,
-                    new_value: value,
+                    new_value: newValue,
                 });
             }
+
+            // Record to history for undo/redo
+            // Forward: TASK_UPDATED with new value, Backward: TASK_UPDATED with old value
+            this.recordToHistory(
+                this.createEvent('TASK_UPDATED', id, { field, new_value: newValue }),
+                this.createEvent('TASK_UPDATED', id, { field, new_value: oldValue }),
+                `Update ${prop}`
+            );
         }
     }
 
@@ -313,9 +402,12 @@ export class ProjectController {
      * Uses optimistic update: local state updated immediately, then worker calculates
      */
     public deleteTask(id: string): void {
+        // Capture task snapshot BEFORE deletion for undo
+        const taskToDelete = this.getTaskById(id);
+        const descendants = this.getDescendants(id);
+        
         // OPTIMISTIC UPDATE: Remove from local state immediately
         // Also remove all descendants to maintain hierarchy integrity
-        const descendants = this.getDescendants(id);
         const idsToRemove = new Set([id, ...descendants.map(d => d.id)]);
         const currentTasks = this.tasks$.value.filter(t => !idsToRemove.has(t.id));
         this.tasks$.next(currentTasks);
@@ -327,6 +419,38 @@ export class ProjectController {
         // Queue TASK_DELETED event for persistence
         if (this.persistenceService) {
             this.persistenceService.queueEvent('TASK_DELETED', id, {});
+        }
+
+        // Record to history for undo/redo
+        // Forward: TASK_DELETED, Backward: TASK_CREATED with full snapshot
+        if (taskToDelete) {
+            const restorePayload = {
+                id: taskToDelete.id,
+                parent_id: taskToDelete.parentId,
+                sort_key: taskToDelete.sortKey,
+                row_type: taskToDelete.rowType || 'task',
+                name: taskToDelete.name,
+                notes: taskToDelete.notes || '',
+                duration: taskToDelete.duration,
+                constraint_type: taskToDelete.constraintType,
+                constraint_date: taskToDelete.constraintDate,
+                scheduling_mode: taskToDelete.schedulingMode || 'Auto',
+                dependencies: taskToDelete.dependencies || [],
+                progress: taskToDelete.progress || 0,
+                actual_start: taskToDelete.actualStart,
+                actual_finish: taskToDelete.actualFinish,
+                remaining_duration: taskToDelete.remainingDuration,
+                baseline_start: taskToDelete.baselineStart,
+                baseline_finish: taskToDelete.baselineFinish,
+                baseline_duration: taskToDelete.baselineDuration,
+                is_collapsed: taskToDelete._collapsed || false,
+            };
+
+            this.recordToHistory(
+                this.createEvent('TASK_DELETED', id, {}),
+                this.createEvent('TASK_CREATED', id, restorePayload),
+                `Delete ${taskToDelete.rowType === 'blank' ? 'Row' : 'Task'}`
+            );
         }
     }
 
@@ -558,19 +682,36 @@ export class ProjectController {
      * Update calendar configuration
      */
     public updateCalendar(calendar: Calendar): void {
+        // Capture old calendar for undo
+        const oldCalendar = this.calendar$.value;
+        
         // Store calendar locally for snapshot access
         this.calendar$.next(calendar);
         
         this.isCalculating$.next(true);
         this.send({ type: 'UPDATE_CALENDAR', payload: calendar });
 
+        const forwardPayload = {
+            new_working_days: calendar.workingDays,
+            new_exceptions: calendar.exceptions,
+        };
+
+        const backwardPayload = {
+            new_working_days: oldCalendar.workingDays,
+            new_exceptions: oldCalendar.exceptions,
+        };
+
         // Queue CALENDAR_UPDATED event for persistence
         if (this.persistenceService) {
-            this.persistenceService.queueEvent('CALENDAR_UPDATED', null, {
-                new_working_days: calendar.workingDays,
-                new_exceptions: calendar.exceptions,
-            });
+            this.persistenceService.queueEvent('CALENDAR_UPDATED', null, forwardPayload);
         }
+
+        // Record to history for undo/redo
+        this.recordToHistory(
+            this.createEvent('CALENDAR_UPDATED', null, forwardPayload),
+            this.createEvent('CALENDAR_UPDATED', null, backwardPayload),
+            'Update Calendar'
+        );
     }
 
     // ========================================================================
@@ -756,20 +897,29 @@ export class ProjectController {
         this.isCalculating$.next(true);
         this.send({ type: 'ADD_TASK', payload: blankRow });
 
+        const eventPayload = {
+            id: blankRow.id,
+            parent_id: blankRow.parentId,
+            sort_key: blankRow.sortKey,
+            row_type: 'blank',
+            name: '',
+            duration: 0,
+            constraint_type: 'asap',
+            dependencies: [],
+            progress: 0,
+        };
+
         // Queue persistence
         if (this.persistenceService) {
-            this.persistenceService.queueEvent('TASK_CREATED', blankRow.id, {
-                id: blankRow.id,
-                parent_id: blankRow.parentId,
-                sort_key: blankRow.sortKey,
-                row_type: 'blank',
-                name: '',
-                duration: 0,
-                constraint_type: 'asap',
-                dependencies: [],
-                progress: 0,
-            });
+            this.persistenceService.queueEvent('TASK_CREATED', blankRow.id, eventPayload);
         }
+
+        // Record to history for undo/redo
+        this.recordToHistory(
+            this.createEvent('TASK_CREATED', blankRow.id, eventPayload),
+            this.createEvent('TASK_DELETED', blankRow.id, {}),
+            'Add Row'
+        );
 
         return blankRow;
     }
@@ -783,6 +933,11 @@ export class ProjectController {
     public wakeUpBlankRow(taskId: string, name: string = 'New Task'): Task | undefined {
         const task = this.getTaskById(taskId);
         if (!task || task.rowType !== 'blank') return undefined;
+
+        // Capture old values for undo
+        const oldRowType = task.rowType;
+        const oldName = task.name;
+        const oldDuration = task.duration;
 
         const updates: Partial<Task> = {
             rowType: 'task',
@@ -807,6 +962,24 @@ export class ProjectController {
             this.persistenceService.queueEvent('TASK_UPDATED', taskId, { field: 'row_type', new_value: 'task' });
             this.persistenceService.queueEvent('TASK_UPDATED', taskId, { field: 'name', new_value: name });
             this.persistenceService.queueEvent('TASK_UPDATED', taskId, { field: 'duration', new_value: 1 });
+        }
+
+        // Record to history as composite action (group all 3 updates for single undo)
+        if (this.historyManager) {
+            this.historyManager.beginComposite('Create Task');
+            this.recordToHistory(
+                this.createEvent('TASK_UPDATED', taskId, { field: 'row_type', new_value: 'task' }),
+                this.createEvent('TASK_UPDATED', taskId, { field: 'row_type', new_value: oldRowType })
+            );
+            this.recordToHistory(
+                this.createEvent('TASK_UPDATED', taskId, { field: 'name', new_value: name }),
+                this.createEvent('TASK_UPDATED', taskId, { field: 'name', new_value: oldName })
+            );
+            this.recordToHistory(
+                this.createEvent('TASK_UPDATED', taskId, { field: 'duration', new_value: 1 }),
+                this.createEvent('TASK_UPDATED', taskId, { field: 'duration', new_value: oldDuration })
+            );
+            this.historyManager.endComposite();
         }
 
         return currentTasks[taskIndex];
@@ -847,15 +1020,31 @@ export class ProjectController {
         this.isCalculating$.next(true);
         this.send({ type: 'UPDATE_TASK', payload: { id: taskId, updates } });
 
+        const forwardPayload = {
+            old_parent_id: oldParentId,
+            new_parent_id: newParentId,
+            old_sort_key: oldSortKey,
+            new_sort_key: newSortKey,
+        };
+
+        const backwardPayload = {
+            old_parent_id: newParentId,
+            new_parent_id: oldParentId,
+            old_sort_key: newSortKey,
+            new_sort_key: oldSortKey,
+        };
+
         // Queue TASK_MOVED event for persistence
         if (this.persistenceService) {
-            this.persistenceService.queueEvent('TASK_MOVED', taskId, {
-                old_parent_id: oldParentId,
-                new_parent_id: newParentId,
-                old_sort_key: oldSortKey,
-                new_sort_key: newSortKey,
-            });
+            this.persistenceService.queueEvent('TASK_MOVED', taskId, forwardPayload);
         }
+
+        // Record to history for undo/redo
+        this.recordToHistory(
+            this.createEvent('TASK_MOVED', taskId, forwardPayload),
+            this.createEvent('TASK_MOVED', taskId, backwardPayload),
+            'Move Task'
+        );
 
         return true;
     }
