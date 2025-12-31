@@ -12,7 +12,7 @@ import { getTaskFieldValue } from '../../../../types';
 import { ICONS } from '../icons';
 import { formatDateForDisplay, parseFlexibleDate, formatDateISO } from '../datepicker/DatePickerConfig';
 import { getEditingStateManager } from '../../../../services/EditingStateManager';
-import type { TaskStore } from '../../../../data/TaskStore';
+import { ProjectController } from '../../../../services/ProjectController';
 
 /**
  * Binding System - Updates pooled DOM elements with task data
@@ -20,7 +20,6 @@ import type { TaskStore } from '../../../../data/TaskStore';
 export class BindingSystem {
     private columnMap: Map<string, GridColumn>;
     private calendar: Calendar | null = null;
-    private taskStore: TaskStore | null = null; // O(1) lookup for fresh task data
     private onDateChange: ((taskId: string, field: string, value: string) => void) | null = null;
     private onOpenDatePicker: ((taskId: string, field: string, anchorEl: HTMLElement, currentValue: string) => void) | null = null;
 
@@ -29,14 +28,6 @@ export class BindingSystem {
         columns.forEach(col => {
             this.columnMap.set(col.field, col);
         });
-    }
-    
-    /**
-     * Set the TaskStore for querying fresh task data
-     * This ensures we always read the latest values from the source of truth
-     */
-    setTaskStore(store: TaskStore): void {
-        this.taskStore = store;
     }
     
     /**
@@ -94,7 +85,7 @@ export class BindingSystem {
         row.element.setAttribute('aria-rowindex', String(index + 1));
         row.element.setAttribute('aria-selected', String(isSelected));
         // Use freshTask for field values (name), task for structure (id)
-        const freshTask = this.taskStore?.getById(task.id) ?? task;
+        const freshTask = ProjectController.getInstance().getTaskById(task.id) ?? task;
         row.element.setAttribute('aria-label', `${freshTask.name}, row ${index + 1}`);
 
         // Bind cells
@@ -225,7 +216,7 @@ export class BindingSystem {
         // Always read field values from TaskStore (source of truth)
         // Use task parameter only for structural fields (id, rowType, etc.)
         // ═══════════════════════════════════════════════════════════════
-        const freshTask = this.taskStore?.getById(task.id) ?? task;
+        const freshTask = ProjectController.getInstance().getTaskById(task.id) ?? task;
 
         // Handle special column: actions FIRST
         if (col.type === 'actions' && col.actions) {
@@ -616,7 +607,7 @@ export class BindingSystem {
         if (ctx.isParent) return;
 
         // Query TaskStore for fresh constraint data
-        const freshTask = this.taskStore?.getById(task.id) ?? task;
+        const freshTask = ProjectController.getInstance().getTaskById(task.id) ?? task;
         const constraintType = freshTask.constraintType || 'asap';
         const constraintDate = freshTask.constraintDate || '';
 

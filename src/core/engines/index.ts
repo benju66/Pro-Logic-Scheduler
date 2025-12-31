@@ -1,9 +1,8 @@
 /**
  * Engine exports
  * 
- * PHASE 7: RustEngine and MockRustEngine have been removed.
- * All calculations now happen in the WASM Worker via ProjectController.
- * NoOpEngine is a compatibility stub for SchedulerService during migration.
+ * PHASE 8: All engine implementations have been removed.
+ * Calculations now happen in the WASM Worker via ProjectController.
+ * The ISchedulingEngine interface is kept for type definitions only.
  */
-export { NoOpEngine } from './NoOpEngine';
 export type { ISchedulingEngine, TaskHierarchyContext } from '../ISchedulingEngine';

@@ -22,8 +22,7 @@
 import { DateUtils } from '../core/DateUtils';
 import { LINK_TYPES, CONSTRAINT_TYPES } from '../core/Constants';
 import { OperationQueue } from '../core/OperationQueue';
-import { TaskStore } from '../data/TaskStore';
-import { CalendarStore } from '../data/CalendarStore';
+// NOTE: TaskStore and CalendarStore removed - all data flows through ProjectController
 import { TradePartnerStore, getTradePartnerStore } from '../data/TradePartnerStore';
 import { HistoryManager } from '../data/HistoryManager';
 import { PersistenceService } from '../data/PersistenceService';
@@ -101,8 +100,7 @@ export class SchedulerService {
     private isTauri: boolean;
 
     // Data stores
-    private taskStore!: TaskStore;
-    private calendarStore!: CalendarStore;
+    // NOTE: taskStore and calendarStore removed - data flows through ProjectController
     private tradePartnerStore!: TradePartnerStore;
     private historyManager!: HistoryManager;
 
@@ -241,21 +239,13 @@ export class SchedulerService {
             }
         }
 
-        // 2. Initialize stores (TaskStore/CalendarStore/TradePartnerStore) normally
-        this.taskStore = new TaskStore({
-            onChange: () => this._onTasksChanged()
-        });
-
-        this.calendarStore = new CalendarStore({
-            onChange: () => this._onCalendarChanged()
-        });
-
+        // 2. Initialize stores (TradePartnerStore only - TaskStore/CalendarStore removed)
+        // NOTE: Task and calendar data now flows through ProjectController
         this.tradePartnerStore = getTradePartnerStore();
 
-        // 3. Inject persistence into stores (if available)
+        // 3. Inject persistence into ProjectController (if available)
         if (this.persistenceService) {
-            this.taskStore.setPersistenceService(this.persistenceService);
-            this.calendarStore.setPersistenceService(this.persistenceService);
+            ProjectController.getInstance().setPersistenceService(this.persistenceService);
         }
 
         // 4. Initialize DataLoader and SnapshotService (if Tauri environment)
@@ -279,16 +269,7 @@ export class SchedulerService {
             maxHistory: 50
         });
 
-        // 6. Inject history manager into stores (must be after both are created)
-        if (this.historyManager) {
-            this.taskStore.setHistoryManager(this.historyManager);
-            this.calendarStore.setHistoryManager(this.historyManager);
-        }
-
-        // 6.5. Inject ProjectController into TaskStore for mutation sync
-        // This ensures WASM worker stays in sync with TaskStore mutations
-        const controller = ProjectController.getInstance();
-        this.taskStore.setProjectController(controller);
+        // 6. History manager configured (stores removed - history tracked via HistoryManager directly)
         
         // 7. Wire up snapshot service (if available)
         if (this.snapshotService && this.persistenceService) {
@@ -420,12 +401,7 @@ export class SchedulerService {
         };
         viewport.initGrid(gridOptions);
 
-        // Wire TaskStore to BindingSystem for fresh data queries
-        // This ensures BindingSystem always reads latest values from TaskStore
-        const gridRenderer = (viewport as any).gridRenderer as GridRenderer | null;
-        if (gridRenderer) {
-            gridRenderer.setTaskStore(this.taskStore);
-        }
+        // NOTE: TaskStore wiring removed - BindingSystem now uses ProjectController directly
 
         // Initialize Gantt renderer
         // Note: viewport will create its own gantt pane, but we need to pass a container
