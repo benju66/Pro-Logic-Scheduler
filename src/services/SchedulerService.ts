@@ -268,6 +268,23 @@ export class SchedulerService {
         return this.anchorId;
     }
 
+    /**
+     * Get focused column (read-only shim)
+     * @internal For migration - will eventually read from SelectionModel only
+     */
+    private _sel_getFocusedColumn(): string | null {
+        return this.focusedColumn;
+    }
+
+    /**
+     * Set focused column (shim - updates both local and SelectionModel)
+     * @internal For migration - will eventually delegate to SelectionModel only
+     */
+    private _sel_setFocusedColumn(field: string | null): void {
+        this.focusedColumn = field;
+        SelectionModel.getInstance().setFocusedField(field);
+    }
+
     // =========================================================================
     // END SELECTION SHIM HELPERS
     // =========================================================================
@@ -2894,57 +2911,8 @@ export class SchedulerService {
     // KEYBOARD HANDLERS
     // =========================================================================
 
-    /**
-     * Handle arrow navigation
-     * @private
-     * @param key - 'ArrowUp' or 'ArrowDown'
-     * @param shiftKey - Shift key pressed
-     * @param ctrlKey - Ctrl key pressed
-     */
-    private _handleArrowNavigation(key: 'ArrowUp' | 'ArrowDown', shiftKey: boolean, _ctrlKey: boolean): void {
-        const visibleTasks = ProjectController.getInstance().getVisibleTasks((id) => {
-            const task = ProjectController.getInstance().getTaskById(id);
-            return task?._collapsed || false;
-        });
-        
-        if (visibleTasks.length === 0) return;
-
-        let currentIndex = -1;
-        const focused = this._sel_getFocused();
-        if (focused) {
-            currentIndex = visibleTasks.findIndex(t => t.id === focused);
-        }
-
-        let newIndex: number;
-        if (key === 'ArrowUp') {
-            newIndex = currentIndex > 0 ? currentIndex - 1 : 0;
-        } else {
-            newIndex = currentIndex < visibleTasks.length - 1 ? currentIndex + 1 : visibleTasks.length - 1;
-        }
-
-        const newTaskId = visibleTasks[newIndex].id;
-
-        if (shiftKey && this._sel_getAnchor()) {
-            // Extend selection
-            const anchorIndex = visibleTasks.findIndex(t => t.id === this._sel_getAnchor());
-            const start = Math.min(anchorIndex, newIndex);
-            const end = Math.max(anchorIndex, newIndex);
-            
-            const rangeIds = visibleTasks.slice(start, end + 1).map(t => t.id);
-            this._sel_set(rangeIds, newTaskId);
-        } else if (!shiftKey) {
-            // Single selection
-            this._sel_selectSingle(newTaskId);
-        }
-
-        this._sel_setFocused(newTaskId);
-        this._updateSelection();
-
-        // Scroll to task
-        if (this.grid) {
-            this.grid.scrollToTask(newTaskId);
-        }
-    }
+    // STRANGLER FIG: _handleArrowNavigation removed - dead code
+    // Navigation now handled exclusively by _handleCellNavigation
 
     /**
      * Handle arrow cell navigation (Excel-style)
@@ -2976,15 +2944,17 @@ export class SchedulerService {
         if (visibleTasks.length === 0) return;
         
         // Initialize focused column if not set
-        if (!this.focusedColumn) {
-            this.focusedColumn = editableColumns[0]; // Default to first editable column (name)
+        const currentFocusedColumn = this._sel_getFocusedColumn();
+        if (!currentFocusedColumn) {
+            this._sel_setFocusedColumn(editableColumns[0]); // Default to first editable column (name)
         }
         
         const focused = this._sel_getFocused();
         let currentRowIndex = focused 
             ? visibleTasks.findIndex(t => t.id === focused)
             : 0;
-        let currentColIndex = this.focusedColumn ? editableColumns.indexOf(this.focusedColumn as typeof editableColumns[number]) : -1;
+        const focusedCol = this._sel_getFocusedColumn();
+        let currentColIndex = focusedCol ? editableColumns.indexOf(focusedCol as typeof editableColumns[number]) : -1;
         if (currentColIndex === -1) currentColIndex = 0;
         
         let newRowIndex = currentRowIndex;
@@ -4817,8 +4787,9 @@ export class SchedulerService {
             
             // Re-highlight the cell visually
             const currentFocusedId = this._sel_getFocused();
-            if (currentFocusedId && this.focusedColumn && this.grid) {
-                this.grid.highlightCell(currentFocusedId, this.focusedColumn);
+            const currentFocusedColumn = this._sel_getFocusedColumn();
+            if (currentFocusedId && currentFocusedColumn && this.grid) {
+                this.grid.highlightCell(currentFocusedId, currentFocusedColumn);
             }
             
             // Focus the grid container for keyboard navigation
@@ -4862,20 +4833,21 @@ export class SchedulerService {
      */
     enterEditMode(): void {
         const focusedId = this._sel_getFocused();
-        if (!focusedId || !this.focusedColumn) return;
+        const focusedColumn = this._sel_getFocusedColumn();
+        if (!focusedId || !focusedColumn) return;
         
         const editingManager = getEditingStateManager();
         const task = ProjectController.getInstance().getTaskById(focusedId);
-        const originalValue = task ? getTaskFieldValue(task, this.focusedColumn as GridColumn['field']) : undefined;
+        const originalValue = task ? getTaskFieldValue(task, focusedColumn as GridColumn['field']) : undefined;
         
         editingManager.enterEditMode(
-            { taskId: focusedId, field: this.focusedColumn },
+            { taskId: focusedId, field: focusedColumn },
             'f2',
             originalValue
         );
         
         if (this.grid) {
-            this.grid.focusCell(focusedId, this.focusedColumn);
+            this.grid.focusCell(focusedId, focusedColumn);
         }
     }
 
