@@ -23,12 +23,13 @@ export class RowNumberRenderer extends TextDisplayRenderer {
     protected renderHtml(ctx: ColumnContext, _column: ColumnDefinition): string {
         const task = ctx.task;
         
-        // Use visual row number (skips blank/phantom rows)
-        const rowNum = this.services.getVisualRowNumber(task);
-        
-        if (rowNum === null || rowNum === undefined) {
-            return ''; // Blank and phantom rows show no number
+        // Skip blank and phantom rows
+        if (task.rowType === 'blank' || task.rowType === 'phantom') {
+            return '';
         }
+        
+        // Use visual row number if available, otherwise use index+1
+        const rowNum = this.services.getVisualRowNumber(task) ?? (ctx.index + 1);
         
         return `<span style="color: #94a3b8; font-size: 11px;">${rowNum}</span>`;
     }
@@ -37,7 +38,10 @@ export class RowNumberRenderer extends TextDisplayRenderer {
      * Get value as string
      */
     getValue(task: Task, _column: ColumnDefinition): string {
+        if (task.rowType === 'blank' || task.rowType === 'phantom') {
+            return '';
+        }
         const rowNum = this.services.getVisualRowNumber(task);
-        return rowNum !== null ? String(rowNum) : '';
+        return rowNum !== null && rowNum !== undefined ? String(rowNum) : '';
     }
 }
