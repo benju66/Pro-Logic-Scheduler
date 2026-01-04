@@ -22,6 +22,7 @@
 import { DateUtils } from '../core/DateUtils';
 import { LINK_TYPES, CONSTRAINT_TYPES } from '../core/Constants';
 import { OperationQueue } from '../core/OperationQueue';
+import { ColumnRegistry } from '../core/columns';
 // NOTE: TaskStore and CalendarStore removed - all data flows through ProjectController
 import { TradePartnerStore, getTradePartnerStore } from '../data/TradePartnerStore';
 import { HistoryManager } from '../data/HistoryManager';
@@ -38,7 +39,7 @@ import { AppInitializer } from './AppInitializer';
 import { getEditingStateManager, type EditingStateChangeEvent } from './EditingStateManager';
 import { getTaskFieldValue } from '../types';
 import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport';
-import { GridRenderer, PHANTOM_ROW_ID } from '../ui/components/scheduler/GridRenderer';
+import { GridRenderer } from '../ui/components/scheduler/GridRenderer';
 import { GanttRenderer } from '../ui/components/scheduler/GanttRenderer';
 import { SideDrawer } from '../ui/components/SideDrawer';
 import type { 
@@ -62,11 +63,8 @@ import type {
     LinkType,
     ConstraintType,
     ColumnPreferences,
-    CPMResult,
     Dependency
 } from '../types';
-import type { ISchedulingEngine, TaskHierarchyContext } from '../core/ISchedulingEngine';
-import { debounce } from '../utils/debounce';
 
 /**
  * Main scheduler service - orchestrates the entire application
@@ -124,14 +122,11 @@ export class SchedulerService {
     private calendarModal: CalendarModal | null = null;
     private columnSettingsModal: ColumnSettingsModal | null = null;
 
-    // Selection state (managed here, not in store - UI concern)
-    public selectedIds: Set<string> = new Set();  // Public for access from UIEventManager
-    private selectionOrder: string[] = [];  // Track selection order for linking
-    private focusedId: string | null = null;
-    private focusedColumn: string | null = null;  // Track which column is focused
-    // REMOVE: private isEditingCell: boolean = false;
-    // State now managed by EditingStateManager
-    private anchorId: string | null = null;
+    // Selection state now fully managed by SelectionModel
+    // Legacy public accessor for backward compatibility (reads from SelectionModel)
+    public get selectedIds(): Set<string> {
+        return SelectionModel.getInstance().getSelectedIdSet();
+    }
     
     private _unsubscribeEditing: (() => void) | null = null;
 
@@ -146,147 +141,113 @@ export class SchedulerService {
     private _dataChangeCallbacks: Array<() => void> = [];
 
     // =========================================================================
-    // SELECTION SHIM HELPERS (Strangler Fig Migration)
-    // These methods update BOTH local state and SelectionModel during transition.
-    // Once migration is complete, local state will be removed and these will
-    // delegate entirely to SelectionModel.
+    // SELECTION HELPERS (Delegating to SelectionModel)
     // =========================================================================
 
     /**
-     * Clear all selection (shim - updates both local and SelectionModel)
-     * @internal For migration - will eventually delegate to SelectionModel only
+     * Clear all selection
      */
     private _sel_clear(): void {
-        this.selectedIds.clear();
-        this.selectionOrder = [];
         SelectionModel.getInstance().clear();
     }
 
     /**
-     * Add task to selection (shim - updates both local and SelectionModel)
-     * @internal For migration - will eventually delegate to SelectionModel only
+     * Add task to selection
      */
     private _sel_add(id: string): void {
-        this.selectedIds.add(id);
-        if (!this.selectionOrder.includes(id)) {
-            this.selectionOrder.push(id);
-        }
         SelectionModel.getInstance().addToSelection([id]);
     }
 
     /**
-     * Remove task from selection (shim - updates both local and SelectionModel)
-     * @internal For migration - will eventually delegate to SelectionModel only
+     * Remove task from selection
      */
     private _sel_delete(id: string): void {
-        this.selectedIds.delete(id);
-        this.selectionOrder = this.selectionOrder.filter(i => i !== id);
         SelectionModel.getInstance().removeFromSelection([id]);
     }
 
     /**
-     * Replace entire selection (shim - updates both local and SelectionModel)
-     * @internal For migration - will eventually delegate to SelectionModel only
+     * Replace entire selection
      */
     private _sel_set(ids: string[], focusId?: string | null): void {
-        this.selectedIds = new Set(ids);
-        this.selectionOrder = [...ids];
         const focus = focusId ?? (ids.length > 0 ? ids[ids.length - 1] : null);
-        SelectionModel.getInstance().setSelection(this.selectedIds, focus);
+        SelectionModel.getInstance().setSelection(new Set(ids), focus, ids);
     }
 
     /**
-     * Set focused task (shim - updates both local and SelectionModel)
-     * @internal For migration - will eventually delegate to SelectionModel only
+     * Set focused task
      */
     private _sel_setFocused(id: string | null, field?: string): void {
-        this.focusedId = id;
-        if (field !== undefined) {
-            this.focusedColumn = field;
-        }
         SelectionModel.getInstance().setFocus(id, field ?? undefined);
     }
 
     /**
-     * Set anchor for range selection (shim - updates both local and SelectionModel)
-     * @internal For migration - will eventually delegate to SelectionModel only
+     * Set anchor for range selection
+     * Note: SelectionModel manages anchor internally via select() calls
      */
-    private _sel_setAnchor(id: string | null): void {
-        this.anchorId = id;
+    private _sel_setAnchor(_id: string | null): void {
         // SelectionModel handles anchor internally via select() calls
+        // This is a no-op for now but kept for API compatibility
     }
 
     /**
-     * Get selection count (reads from local state during migration)
-     * @internal For migration - will eventually read from SelectionModel only
+     * Get selection count
      */
     private _sel_count(): number {
-        return this.selectedIds.size;
+        return SelectionModel.getInstance().getSelectionCount();
     }
 
     /**
-     * Check if task is selected (reads from local state during migration)
-     * @internal For migration - will eventually read from SelectionModel only
+     * Check if task is selected
      */
     private _sel_has(id: string): boolean {
-        return this.selectedIds.has(id);
+        return SelectionModel.getInstance().isSelected(id);
     }
 
     /**
-     * Get selected IDs as array (reads from local state during migration)
-     * @internal For migration - will eventually read from SelectionModel only
+     * Get selected IDs as array
      */
     private _sel_toArray(): string[] {
-        return Array.from(this.selectedIds);
+        return SelectionModel.getInstance().getSelectedIds();
     }
 
     /**
      * Select a single task (convenience method - clear, add, focus, anchor)
      * This is the most common selection pattern in the codebase.
-     * @internal For migration - will eventually delegate to SelectionModel only
      */
     private _sel_selectSingle(id: string): void {
-        this._sel_clear();
-        this._sel_add(id);
-        this._sel_setFocused(id);
-        this._sel_setAnchor(id);
+        SelectionModel.getInstance().setSelection(new Set([id]), id, [id]);
     }
 
     /**
-     * Get focused task ID (read-only shim)
-     * @internal For migration - will eventually read from SelectionModel only
+     * Get focused task ID
      */
     private _sel_getFocused(): string | null {
-        return this.focusedId;
+        return SelectionModel.getInstance().getFocusedId();
     }
 
     /**
-     * Get anchor ID (read-only shim)
-     * @internal For migration - will eventually read from SelectionModel only
+     * Get anchor ID
      */
     private _sel_getAnchor(): string | null {
-        return this.anchorId;
+        return SelectionModel.getInstance().getAnchorId();
     }
 
     /**
-     * Get focused column (read-only shim)
-     * @internal For migration - will eventually read from SelectionModel only
+     * Get focused column
      */
     private _sel_getFocusedColumn(): string | null {
-        return this.focusedColumn;
+        return SelectionModel.getInstance().getFocusedField();
     }
 
     /**
-     * Set focused column (shim - updates both local and SelectionModel)
-     * @internal For migration - will eventually delegate to SelectionModel only
+     * Set focused column
      */
     private _sel_setFocusedColumn(field: string | null): void {
-        this.focusedColumn = field;
         SelectionModel.getInstance().setFocusedField(field);
     }
 
     // =========================================================================
-    // END SELECTION SHIM HELPERS
+    // END SELECTION HELPERS
     // =========================================================================
 
     // View state
@@ -306,30 +267,12 @@ export class SchedulerService {
     // Performance tracking
     private _lastCalcTime: number = 0;
     private _renderScheduled: boolean = false;
-    private _isRecalculating: boolean = false;            // Prevent infinite recursion
-    private _isSyncingHeader: boolean = false;            // Prevent scroll sync loops
 
     // Operation queue for serializing task operations
     private operationQueue: OperationQueue = new OperationQueue();
 
-    // Scheduling engine (JavaScript or Rust)
-    private engine: ISchedulingEngine | null = null;
-
     // Initialization flag
     public isInitialized: boolean = false;  // Public for access from UIEventManager
-
-    /**
-     * Debounced recalculation for date inputs
-     * Prevents lag when typing by waiting until user stops typing
-     * @private
-     */
-    private _debouncedRecalc: ReturnType<typeof debounce> | null = null;
-
-    /**
-     * Pending date change to apply after debounce
-     * @private
-     */
-    private _pendingDateChange: { taskId: string; field: string; value: string } | null = null;
 
     /**
      * Create a new SchedulerService instance
@@ -341,20 +284,6 @@ export class SchedulerService {
         // Use isTauri from options (provided by AppInitializer)
         // Desktop-only architecture - must be Tauri environment
         this.isTauri = options.isTauri !== undefined ? options.isTauri : true;
-
-        // Initialize debounced recalculation (300ms delay for responsive feel)
-        this._debouncedRecalc = debounce(() => {
-            if (this._pendingDateChange) {
-                const { taskId, field, value } = this._pendingDateChange;
-                this._pendingDateChange = null;
-                
-                // Apply the change and recalculate
-                // Note: This is old debounced code, but we'll await it for safety
-                this._applyDateChangeImmediate(taskId, field, value).catch(error => {
-                    console.warn('[SchedulerService] Failed to apply pending date change:', error);
-                });
-            }
-        }, 300);
 
         // Initialize services (async - will be awaited in init())
         // Store the promise to avoid race conditions
@@ -458,7 +387,7 @@ export class SchedulerService {
             await this.initPromise;
         }
         
-        const { gridContainer, ganttContainer, drawerContainer, modalContainer } = this.options;
+        const { gridContainer, ganttContainer, modalContainer } = this.options;
 
         if (!gridContainer || !ganttContainer) {
             throw new Error('gridContainer and ganttContainer are required');
@@ -584,7 +513,7 @@ export class SchedulerService {
         this.columnSettingsModal = new ColumnSettingsModal({
             container: modalsContainer,
             onSave: (preferences) => this.updateColumnPreferences(preferences),
-            getColumns: () => this._getBaseColumnDefinitions(),
+            getColumns: () => ColumnRegistry.getInstance().getGridColumns(),
             getPreferences: () => this._getColumnPreferences(),
         });
 
@@ -714,25 +643,15 @@ export class SchedulerService {
 
     /**
      * Handle selection change
-     * Now syncs with SelectionModel for unified state
+     * Updates SelectionModel (single source of truth for selection)
      */
     private _handleSelectionChange(selectedIds: string[]): void {
         const selectedSet = new Set(selectedIds);
-        
-        // Maintain selection order: remove deselected, add newly selected
-        this.selectionOrder = this.selectionOrder.filter(id => selectedSet.has(id));
-        for (const id of selectedIds) {
-            if (!this.selectionOrder.includes(id)) {
-                this.selectionOrder.push(id);
-            }
-        }
-        
-        this.selectedIds = selectedSet;
-        
-        // Sync with SelectionModel (the single source of truth for selection)
-        const selectionModel = SelectionModel.getInstance();
         const primaryId = selectedIds.length > 0 ? selectedIds[selectedIds.length - 1] : null;
-        selectionModel.setSelection(selectedSet, primaryId);
+        
+        // Update SelectionModel (the single source of truth)
+        // SelectionModel now tracks selection order internally
+        SelectionModel.getInstance().setSelection(selectedSet, primaryId, selectedIds);
         
         // === Notify registered callbacks ===
         // IMPORTANT: This is the ONLY place callbacks are triggered.
@@ -863,390 +782,18 @@ export class SchedulerService {
     }
 
     /**
-     * Get base column definitions (without preferences applied)
-     * Conditionally includes actual/variance columns when baseline exists
-     * @private
-     * @returns Base column definitions
-     */
-    private _getBaseColumnDefinitions(): GridColumn[] {
-        const hasBaseline = this.hasBaseline();
-        const columns: GridColumn[] = [
-            {
-                id: 'drag',
-                label: '',
-                field: 'drag',
-                type: 'drag',
-                width: 28,
-                align: 'center',
-                editable: false,
-                resizable: false,
-                minWidth: 20,
-            },
-            {
-                id: 'checkbox',
-                label: '',
-                field: 'checkbox',
-                type: 'checkbox',
-                width: 30,
-                align: 'center',
-                editable: false,
-                resizable: false,
-                minWidth: 25,
-            },
-            {
-                id: 'rowNum',
-                label: '#',
-                field: 'rowNum',
-                type: 'readonly',
-                width: 35,
-                align: 'center',
-                editable: false,
-                minWidth: 30,
-                renderer: (task, _meta) => {
-                    // Use logical row numbering (skips blank/phantom rows)
-                    if (task._visualRowNumber == null) {
-                        return ''; // Blank and phantom rows show no number
-                    }
-                    return `<span style="color: #94a3b8; font-size: 11px;">${task._visualRowNumber}</span>`;
-                },
-            },
-            {
-                id: 'name',
-                label: 'Task Name',
-                field: 'name',
-                type: 'text',
-                width: 220,
-                editable: true,
-                minWidth: 100,
-            },
-            {
-                id: 'duration',
-                label: 'Duration',
-                field: 'duration',
-                type: 'number',
-                width: 50,
-                align: 'center',
-                editable: true,
-                readonlyForParent: true,
-                minWidth: 40,
-            },
-            {
-                id: 'start',
-                label: 'Start',
-                field: 'start',
-                type: 'date',
-                width: 100,
-                editable: true,
-                showConstraintIcon: true,
-                readonlyForParent: true,
-                minWidth: 80,
-            },
-            {
-                id: 'end',
-                label: 'End',
-                field: 'end',
-                type: 'date',
-                width: 100,
-                editable: true,
-                showConstraintIcon: true,
-                readonlyForParent: true,
-                minWidth: 80,
-            },
-            {
-                id: 'tradePartners',
-                label: 'Trade Partners',
-                field: 'tradePartnerIds' as keyof Task,
-                type: 'readonly',
-                width: 180,
-                editable: false,
-                align: 'left',
-                minWidth: 120,
-                renderer: (task: Task) => {
-                    const partnerIds = task.tradePartnerIds || [];
-                    if (partnerIds.length === 0) return '';
-                    
-                    return partnerIds
-                        .map(id => {
-                            const partner = this.tradePartnerStore.get(id);
-                            if (!partner) return '';
-                            // Return HTML for chips - will be set as innerHTML
-                            const shortName = partner.name.length > 12 
-                                ? partner.name.substring(0, 10) + '...' 
-                                : partner.name;
-                            return `<span class="trade-chip" data-partner-id="${id}" 
-                                    style="background-color:${partner.color}; color: white; 
-                                    padding: 2px 8px; border-radius: 12px; font-size: 11px;
-                                    margin-right: 4px; cursor: pointer; display: inline-block;
-                                    white-space: nowrap; max-width: 100px; overflow: hidden;
-                                    text-overflow: ellipsis;" title="${partner.name}">${shortName}</span>`;
-                        })
-                        .join('');
-                },
-            },
-            {
-                id: 'constraintType',
-                label: 'Constraint',
-                field: 'constraintType',
-                type: 'select',
-                width: 80,
-                editable: true,
-                options: ['asap', 'snet', 'snlt', 'fnet', 'fnlt', 'mfo'],
-                readonlyForParent: true,
-                minWidth: 50,
-            },
-            {
-                id: 'schedulingMode',
-                label: 'Mode',
-                field: 'schedulingMode',
-                type: 'select',
-                width: 90,
-                editable: true,
-                options: ['Auto', 'Manual'],
-                readonlyForParent: true,
-                align: 'center',
-                resizable: true,
-                minWidth: 80,
-                // No renderer - BindingSystem handles icon + select separately
-            },
-            {
-                id: 'health',
-                label: 'Health',
-                field: '_health' as keyof Task,
-                type: 'readonly',
-                width: 80,
-                align: 'center',
-                editable: false,
-                minWidth: 60,
-                renderer: (task) => {
-                    if (!task._health) return '<span style="color: #94a3b8;">-</span>';
-                    const health = task._health;
-                    const statusClass = `health-${health.status}`;
-                    return `<span class="health-indicator-inline ${statusClass}" title="${health.summary}">${health.icon}</span>`;
-                },
-            },
-            {
-                id: 'actions',
-                label: 'Actions',
-                field: 'actions',
-                type: 'actions',
-                width: 40, // v3.0: Increased from 30px for better click target
-                editable: false,
-                minWidth: 36,
-                resizable: true,
-                align: 'center',
-                // v3.0: SINGLE action only - no more inline buttons
-                actions: [
-                    {
-                        id: 'row-menu',
-                        name: 'row-menu',
-                        title: 'Row Menu',
-                        icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                            <circle cx="12" cy="5" r="2"/>
-                            <circle cx="12" cy="12" r="2"/>
-                            <circle cx="12" cy="19" r="2"/>
-                        </svg>`,
-                        color: '#64748b',
-                    },
-                ],
-            },
-        ];
-
-        // Add baseline/actual/variance columns if baseline exists
-        if (hasBaseline) {
-            // Baseline Start column (readonly reference)
-            columns.push({
-                id: 'baselineStart',
-                label: 'Baseline Start',
-                field: 'baselineStart',
-                type: 'date',
-                width: 110,
-                editable: false,
-                readonlyForParent: true,
-                minWidth: 80,
-                headerClass: 'baseline-column-header',
-                cellClass: 'baseline-column',
-                visible: true,
-            });
-
-            // Actual Start column
-            columns.push({
-                id: 'actualStart',
-                label: 'Actual Start',
-                field: 'actualStart',
-                type: 'date',
-                width: 110,
-                editable: true,
-                readonlyForParent: true,
-                minWidth: 80,
-                headerClass: 'actual-column-header',
-                cellClass: 'actual-column',
-                visible: true,
-            });
-
-            // Start Variance column
-            columns.push({
-                id: 'startVariance',
-                label: 'Start Var',
-                field: 'startVariance',
-                type: 'variance',
-                width: 80,
-                align: 'center',
-                editable: false,
-                readonlyForParent: true,
-                minWidth: 60,
-                visible: true,
-                renderer: (task) => {
-                    const variance = this._calculateVariance(task);
-                    if (variance.start === null) return '<span style="color: #94a3b8;">-</span>';
-                    
-                    const value = variance.start;
-                    const absValue = Math.abs(value);
-                    const isPositive = value > 0;
-                    const isNegative = value < 0;
-                    
-                    let className = 'variance-on-time';
-                    let prefix = '';
-                    
-                    if (isPositive) {
-                        className = 'variance-ahead';
-                        prefix = '+';
-                    } else if (isNegative) {
-                        className = 'variance-behind';
-                        prefix = '';
-                    }
-                    
-                    return `<span class="${className}" title="${isPositive ? 'Ahead' : isNegative ? 'Behind' : 'On time'} by ${absValue} day${absValue !== 1 ? 's' : ''}">${prefix}${value}</span>`;
-                },
-            });
-
-            // Baseline Finish column (readonly reference)
-            columns.push({
-                id: 'baselineFinish',
-                label: 'Baseline Finish',
-                field: 'baselineFinish',
-                type: 'date',
-                width: 110,
-                editable: false,
-                readonlyForParent: true,
-                minWidth: 80,
-                headerClass: 'baseline-column-header',
-                cellClass: 'baseline-column',
-                visible: true,
-            });
-
-            // Actual Finish column
-            columns.push({
-                id: 'actualFinish',
-                label: 'Actual Finish',
-                field: 'actualFinish',
-                type: 'date',
-                width: 110,
-                editable: true,
-                readonlyForParent: true,
-                minWidth: 80,
-                headerClass: 'actual-column-header',
-                cellClass: 'actual-column',
-                visible: true,
-            });
-
-            // Finish Variance column
-            columns.push({
-                id: 'finishVariance',
-                label: 'Finish Var',
-                field: 'finishVariance',
-                type: 'variance',
-                width: 80,
-                align: 'center',
-                editable: false,
-                readonlyForParent: true,
-                minWidth: 60,
-                visible: true,
-                renderer: (task) => {
-                    const variance = this._calculateVariance(task);
-                    if (variance.finish === null) return '<span style="color: #94a3b8;">-</span>';
-                    
-                    const value = variance.finish;
-                    const absValue = Math.abs(value);
-                    const isPositive = value > 0;
-                    const isNegative = value < 0;
-                    
-                    let className = 'variance-on-time';
-                    let prefix = '';
-                    
-                    if (isPositive) {
-                        className = 'variance-ahead';
-                        prefix = '+';
-                    } else if (isNegative) {
-                        className = 'variance-behind';
-                        prefix = '';
-                    }
-                    
-                    return `<span class="${className}" title="${isPositive ? 'Ahead' : isNegative ? 'Behind' : 'On time'} by ${absValue} day${absValue !== 1 ? 's' : ''}">${prefix}${value}</span>`;
-                },
-            });
-        }
-
-        return columns;
-    }
-
-    /**
      * Get column definitions with preferences applied
+     * STRANGLER FIG: Now uses ColumnRegistry instead of inline definitions
      * @private
      */
     private _getColumnDefinitions(): GridColumn[] {
-        const baseColumns = this._getBaseColumnDefinitions();
-        return this._applyColumnPreferences(baseColumns);
+        const registry = ColumnRegistry.getInstance();
+        const prefs = this._getColumnPreferences();
+        return registry.getGridColumns(prefs);
     }
 
-    /**
-     * Apply column preferences (visibility, order, pinning) to base columns
-     * @private
-     */
-    private _applyColumnPreferences(columns: GridColumn[]): GridColumn[] {
-        const prefs = this._getColumnPreferences();
-        
-        // Filter by visibility (merge with dynamic visibility)
-        const visible = columns.filter(col => {
-            const prefVisible = prefs.visible[col.id] !== false;
-            // Also respect existing col.visible property (for baseline columns)
-            if (col.visible !== undefined) {
-                const dynamicVisible = typeof col.visible === 'function' 
-                    ? col.visible() 
-                    : col.visible;
-                return prefVisible && dynamicVisible;
-            }
-            return prefVisible;
-        });
-        
-        // Sort by order preference
-        const ordered = visible.sort((a, b) => {
-            const aIndex = prefs.order.indexOf(a.id);
-            const bIndex = prefs.order.indexOf(b.id);
-            
-            // If not in preferences, maintain original order (new columns)
-            if (aIndex === -1 && bIndex === -1) return 0;
-            if (aIndex === -1) return 1; // New columns go to end
-            if (bIndex === -1) return -1;
-            
-            return aIndex - bIndex;
-        });
-        
-        // Apply pinned state via classes and calculate sticky left offset
-        return ordered.map((col, index) => {
-            const newCol = { ...col };
-            if (prefs.pinned.includes(col.id)) {
-                newCol.headerClass = (newCol.headerClass || '') + (newCol.headerClass ? ' ' : '') + 'pinned';
-                newCol.cellClass = (newCol.cellClass || '') + (newCol.cellClass ? ' ' : '') + 'pinned';
-                
-                // Calculate left offset for sticky positioning
-                const pinnedIndex = ordered.slice(0, index).filter(c => prefs.pinned.includes(c.id)).length;
-                const leftOffset = this._calculateStickyLeft(pinnedIndex, ordered);
-                // Store in a custom property that VirtualScrollGrid can use
-                (newCol as any).stickyLeft = leftOffset;
-            }
-            return newCol;
-        });
-    }
+    // STRANGLER FIG: _getBaseColumnDefinitions() REMOVED (~320 lines) - now uses ColumnRegistry
+    // STRANGLER FIG: _applyColumnPreferences() REMOVED (~50 lines) - handled by ColumnRegistry.getGridColumns()
 
     /**
      * Get column preferences from localStorage
@@ -1273,15 +820,11 @@ export class SchedulerService {
 
     /**
      * Get default column preferences
+     * STRANGLER FIG: Now uses ColumnRegistry
      * @private
      */
     private _getDefaultColumnPreferences(): ColumnPreferences {
-        const baseColumns = this._getBaseColumnDefinitions();
-        return {
-            visible: Object.fromEntries(baseColumns.map(col => [col.id, true])),
-            order: baseColumns.map(col => col.id),
-            pinned: []
-        };
+        return ColumnRegistry.getInstance().getDefaultPreferences();
     }
 
     /**
@@ -1539,22 +1082,6 @@ export class SchedulerService {
         console.log('[SchedulerService] ✅ CSS variables initialized for', columns.length, 'columns');
     }
 
-    /**
-     * Get minimum widths for columns (for resizing)
-     * @private
-     * @returns Record of field -> minWidth
-     */
-    private _getColumnMinWidths(): Record<string, number> {
-        const columns = this._getColumnDefinitions();
-        const minWidths: Record<string, number> = {};
-        
-        columns.forEach(col => {
-            minWidths[col.field] = col.minWidth ?? Math.max(20, col.width * 0.5);
-        });
-        
-        return minWidths;
-    }
-
     // =========================================================================
     // BASELINE MANAGEMENT
     // =========================================================================
@@ -1579,6 +1106,14 @@ export class SchedulerService {
         );
         
         this._hasBaseline = hasBaselineData;
+        
+        // STRANGLER FIG: Sync baseline column visibility with registry
+        if (hasBaselineData) {
+            const registry = ColumnRegistry.getInstance();
+            const baselineColumnIds = ['baselineStart', 'actualStart', 'startVariance', 'baselineFinish', 'actualFinish', 'finishVariance'];
+            registry.setColumnsVisibility(baselineColumnIds, true);
+        }
+        
         return hasBaselineData;
     }
 
@@ -1603,6 +1138,11 @@ export class SchedulerService {
         });
         
         this._hasBaseline = baselineCount > 0;
+        
+        // STRANGLER FIG: Set baseline column visibility via ColumnRegistry
+        const registry = ColumnRegistry.getInstance();
+        const baselineColumnIds = ['baselineStart', 'actualStart', 'startVariance', 'baselineFinish', 'actualFinish', 'finishVariance'];
+        registry.setColumnsVisibility(baselineColumnIds, this._hasBaseline);
         
         // Rebuild grid columns to show actual/variance columns
         this._rebuildGridColumns();
@@ -1636,6 +1176,11 @@ export class SchedulerService {
         });
         
         this._hasBaseline = false;
+        
+        // STRANGLER FIG: Hide baseline columns via ColumnRegistry
+        const registry = ColumnRegistry.getInstance();
+        const baselineColumnIds = ['baselineStart', 'actualStart', 'startVariance', 'baselineFinish', 'actualFinish', 'finishVariance'];
+        registry.setColumnsVisibility(baselineColumnIds, false);
         
         // Rebuild grid columns to hide actual/variance columns
         this._rebuildGridColumns();
@@ -1888,7 +1433,7 @@ export class SchedulerService {
      * @param taskId - Task ID
      * @param e - Double-click event
      */
-    private _handleRowDoubleClick(taskId: string, e: MouseEvent): void {
+    private _handleRowDoubleClick(taskId: string, _e: MouseEvent): void {
         this.openDrawer(taskId);
     }
 
@@ -2542,7 +2087,7 @@ export class SchedulerService {
      * @param tradePartnerId - Trade Partner ID
      * @param e - Click event
      */
-    private _handleTradePartnerClick(taskId: string, tradePartnerId: string, e: MouseEvent): void {
+    private _handleTradePartnerClick(_taskId: string, tradePartnerId: string, e: MouseEvent): void {
         e.stopPropagation(); // Prevent row click from firing
         
         // For now, just show a toast - Phase 12 will add details panel
@@ -2578,11 +2123,6 @@ export class SchedulerService {
             return;
         }
         
-        if (action === 'maybe-revert') {
-            this.maybeRevertToBlank(taskId);
-            return;
-        }
-        
         switch (action) {
             case 'indent':
                 this.indent(taskId);
@@ -2612,10 +2152,10 @@ export class SchedulerService {
      * @param field - Field name
      * @param value - New value
      */
-    private _handleDrawerUpdate(taskId: string, field: string, value: unknown): void {
+    private async _handleDrawerUpdate(taskId: string, field: string, value: unknown): Promise<void> {
         this.saveCheckpoint();
         
-        const result = this._applyTaskEdit(taskId, field, value);
+        const result = await this._applyTaskEdit(taskId, field, value);
         
         if (!result.success) {
             return;
@@ -3207,169 +2747,6 @@ export class SchedulerService {
     // SCROLL SYNCHRONIZATION
     // =========================================================================
 
-    /**
-     * Sync scroll from grid to Gantt
-     * @private
-     * @param scrollTop - Scroll position
-     */
-    /**
-     * Calculate the total width of pinned columns
-     * @private
-     * @returns Total width in pixels
-     */
-    private _calculatePinnedColumnsWidth(): number {
-        const columns = this._getColumnDefinitions();
-        const prefs = this._getColumnPreferences();
-        const pinnedIndex = prefs.pinned.length;
-        
-        if (pinnedIndex === 0) return 0;
-        
-        const pinnedColumns = columns.filter(c => prefs.pinned.includes(c.id)).slice(0, pinnedIndex);
-        if (pinnedColumns.length === 0) return 0;
-        
-        // Calculate total width by summing column widths
-        const gridPane = document.getElementById('grid-pane');
-        if (!gridPane) return 0;
-        
-        let totalWidth = 0;
-        pinnedColumns.forEach(col => {
-            const varName = `--w-${col.field}`;
-            const computedStyle = getComputedStyle(gridPane);
-            const widthValue = computedStyle.getPropertyValue(varName).trim();
-            if (widthValue) {
-                totalWidth += parseFloat(widthValue) || col.width || 100;
-            } else {
-                totalWidth += col.width || 100;
-            }
-        });
-        
-        return totalWidth;
-    }
-
-    /**
-     * Sync header horizontal scroll with grid body
-     * @private
-     */
-    private _syncHeaderScroll(scrollLeft: number): void {
-        const header = document.getElementById('grid-header');
-        if (!header) return;
-        
-        // Calculate pinned width
-        const pinnedWidth = this._calculatePinnedColumnsWidth();
-        
-        // Adjust scroll position for pinned columns
-        // When grid scrolls, header should scroll by the same amount minus pinned width
-        const adjustedScrollLeft = Math.max(0, scrollLeft - pinnedWidth);
-        
-        if (Math.abs(header.scrollLeft - adjustedScrollLeft) > 1) {
-            // Prevent scroll event from triggering sync back to grid
-            this._isSyncingHeader = true;
-            header.scrollLeft = adjustedScrollLeft;
-            // Reset flag after a short delay to allow scroll event to process
-            requestAnimationFrame(() => {
-                this._isSyncingHeader = false;
-            });
-        }
-    }
-
-    /**
-     * Robustly scroll to task and focus cell
-     * Waits for task to be available in viewport data before scrolling
-     * @private
-     * @param taskId - Task ID to scroll to
-     * @param field - Field to focus (default: 'name')
-     * @param maxRetries - Maximum retry attempts (default: 10)
-     * @param retryDelay - Delay between retries in ms (default: 50)
-     */
-    private _scrollToTaskAndFocus(taskId: string, field: string = 'name', maxRetries: number = 10, retryDelay: number = 50): void {
-        if (!this.grid) {
-            console.warn('[SchedulerService] Cannot scroll to task - grid not available');
-            return;
-        }
-
-        // Verify task exists in store first
-        const task = ProjectController.getInstance().getTaskById(taskId);
-        if (!task) {
-            console.warn('[SchedulerService] Cannot scroll to task - task not found in store:', taskId);
-            return;
-        }
-
-        // Check if task's parent is collapsed (task won't be visible)
-        if (task.parentId) {
-            const parent = ProjectController.getInstance().getTaskById(task.parentId);
-            if (parent?._collapsed) {
-                console.log('[SchedulerService] Task parent is collapsed - task will not be visible until parent is expanded:', taskId);
-                // Still try to scroll - the viewport might handle this
-            }
-        }
-
-        let attempts = 0;
-        const checkAndScroll = (): void => {
-            attempts++;
-            
-            // Get current visible tasks from viewport
-            const visibleTasks = ProjectController.getInstance().getVisibleTasks((id) => {
-                const t = ProjectController.getInstance().getTaskById(id);
-                return t?._collapsed || false;
-            });
-            
-            // Check if task exists in visible tasks
-            const taskIndex = visibleTasks.findIndex(t => t.id === taskId);
-            const taskExists = taskIndex !== -1;
-            
-            if (taskExists) {
-                // Task is in visible list - safe to scroll
-                if (!this.grid) {
-                    console.warn('[SchedulerService] Grid not available for scrolling');
-                    return;
-                }
-                
-                try {
-                    this.grid.scrollToTask(taskId);
-                    
-                    // Focus cell after scroll completes
-                    requestAnimationFrame(() => {
-                        setTimeout(() => {
-                            if (this.grid) {
-                                this.grid.focusCell(taskId, field);
-                            }
-                        }, 100);
-                    });
-                } catch (error) {
-                    console.error('[SchedulerService] Error scrolling to task:', error);
-                }
-                return; // Success - exit
-            }
-            
-            // Task not found yet
-            if (attempts >= maxRetries) {
-                console.warn(`[SchedulerService] Failed to scroll to task after ${maxRetries} attempts:`, taskId);
-                console.warn('[SchedulerService] Task exists in store but not in visible tasks. Parent may be collapsed.');
-                
-                // Last attempt: try scrolling anyway (might work if viewport handles it)
-                if (this.grid) {
-                    try {
-                        this.grid.scrollToTask(taskId);
-                    } catch (error) {
-                        console.error('[SchedulerService] Final scroll attempt failed:', error);
-                    }
-                }
-                return;
-            }
-            
-            // Retry after delay
-            setTimeout(checkAndScroll, retryDelay);
-        };
-        
-        // Start checking after initial render cycle completes
-        // Use double RAF to ensure render() has processed
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                checkAndScroll();
-            });
-        });
-    }
-
     // =========================================================================
     // TASK OPERATIONS
     // =========================================================================
@@ -3737,7 +3114,7 @@ export class SchedulerService {
      * Show context menu for a row
      * @private
      */
-    private _showRowContextMenu(taskId: string, isBlank: boolean, anchorEl: HTMLElement, event: MouseEvent): void {
+    private _showRowContextMenu(taskId: string, isBlank: boolean, anchorEl: HTMLElement, _event: MouseEvent): void {
         const menu = this._getContextMenu();
         
         const items: ContextMenuItem[] = [
@@ -3946,7 +3323,13 @@ export class SchedulerService {
      */
     openProperties(taskId: string): void {
         // Trigger right sidebar with details panel
-        this._notifyOpenPanel('details');
+        this._openPanelCallbacks.forEach(cb => {
+            try {
+                cb('details');
+            } catch (e) {
+                console.error('[SchedulerService] Panel open callback error:', e);
+            }
+        });
         
         // Ensure task is selected
         this._sel_selectSingle(taskId);
@@ -4002,7 +3385,7 @@ export class SchedulerService {
                 const newSortKey = OrderingService.generateAppendKey(
                     ProjectController.getInstance().getLastSortKey(newParentId)
                 );
-                ProjectController.getInstance().moveTask(task.id, newParentId, newSortKey, 'Indent Task');
+                ProjectController.getInstance().moveTask(task.id, newParentId, newSortKey);
                 indentedCount++;
             }
         }
@@ -4108,7 +3491,7 @@ export class SchedulerService {
             if (editingManager.isEditingTask(taskId)) {
                 editingManager.exitEditMode('task-deleted');
             }
-            ProjectController.getInstance().deleteTask(taskId, true);
+            ProjectController.getInstance().deleteTask(taskId);
             this._sel_delete(taskId);
             // NOTE: Removed engine sync - ProjectController handles via Worker
         }
@@ -4129,7 +3512,7 @@ export class SchedulerService {
      * Simple confirmation dialog
      * @private
      */
-    private _confirmAction(message: string, actionLabel: string): Promise<boolean> {
+    private _confirmAction(message: string, _actionLabel: string): Promise<boolean> {
         return new Promise(resolve => {
             // For now, use browser confirm - can be replaced with custom modal
             const result = confirm(message);
@@ -4261,105 +3644,12 @@ export class SchedulerService {
     }
 
     /**
-     * Roll up parent task dates from children (safeguard)
-     * 
-     * This is a safeguard to ensure parent dates are always correct.
-     * Rust CPM should calculate parent dates correctly, but this ensures
-     * they're correct even if there are edge cases or timing issues.
-     * 
-     * Calculates parent dates as:
-     * - Start = Min(child start dates)
-     * - End = Max(child end dates)  
-     * - Duration = work days from Start to End
-     * 
-     * Processes deepest parents first to handle nested hierarchies correctly.
-     * Only updates parent tasks that are in Auto mode (Manual parents shouldn't exist).
-     * @private
-     */
-    private _rollupParentDatesSafeguard(): void {
-        const allTasks = ProjectController.getInstance().getTasks();
-        const calendar = ProjectController.getInstance().getCalendar();
-        
-        // Find all parent tasks (tasks that have children)
-        const parentIds = new Set<string>();
-        allTasks.forEach(task => {
-            if (task.parentId) {
-                parentIds.add(task.parentId);
-            }
-        });
-        
-        if (parentIds.size === 0) return;
-        
-        // Get parent tasks and sort by depth (deepest first)
-        // This ensures child-parents are processed before grandparents
-        const parents = allTasks.filter(t => parentIds.has(t.id));
-        const sortedParents = [...parents].sort((a, b) => 
-            ProjectController.getInstance().getDepth(b.id) - ProjectController.getInstance().getDepth(a.id)
-        );
-
-        sortedParents.forEach(parent => {
-            // Skip Manual mode parents (they shouldn't exist, but be safe)
-            if (parent.schedulingMode === 'Manual') {
-                return;
-            }
-
-            // Skip blank rows
-            if (parent.rowType === 'blank') {
-                return;
-            }
-
-            // Get direct children of this parent (exclude blank rows)
-            const children = ProjectController.getInstance().getChildren(parent.id).filter(
-                child => !child.rowType || child.rowType === 'task'
-            );
-            
-            if (children.length === 0) return;
-
-            // Collect valid start and end dates from children
-            const childStarts: string[] = [];
-            const childEnds: string[] = [];
-            
-            children.forEach(child => {
-                if (child.start && child.start.length > 0) {
-                    childStarts.push(child.start);
-                }
-                if (child.end && child.end.length > 0) {
-                    childEnds.push(child.end);
-                }
-            });
-
-            if (childStarts.length === 0 || childEnds.length === 0) return;
-
-            // Sort to find min start and max end
-            childStarts.sort();
-            childEnds.sort();
-            
-            const newStart = childStarts[0];
-            const newEnd = childEnds[childEnds.length - 1];
-            const newDuration = DateUtils.calcWorkDays(newStart, newEnd, calendar);
-            
-            // Only update if dates have changed (avoid unnecessary updates)
-            if (parent.start !== newStart || parent.end !== newEnd || parent.duration !== newDuration) {
-                // CRITICAL: Direct assignment instead of TaskStore.update() to avoid persistence issues
-                // Parent dates are calculated/rolled up from children, so they shouldn't trigger
-                // TASK_UPDATED events. Direct assignment ensures:
-                // 1. No foreign key constraint errors (parent might not be persisted yet)
-                // 2. No unnecessary persistence events (dates are recalculated on every CPM run)
-                // 3. Faster performance (no event queue overhead)
-                // Notifications are already disabled by _applyCalculationResult(), so this is safe.
-                parent.start = newStart;
-                parent.end = newEnd;
-                parent.duration = newDuration;
-            }
-        });
-    }
-
-    /**
      * Get column definitions for Settings Modal
+     * STRANGLER FIG: Now uses ColumnRegistry
      * v3.0: Used by Columns tab in Settings
      */
     getColumnDefinitionsForSettings(): GridColumn[] {
-        return this._getBaseColumnDefinitions();
+        return ColumnRegistry.getInstance().getGridColumns();
     }
 
     /**
@@ -4871,7 +4161,7 @@ export class SchedulerService {
      * @returns Array of task IDs in the order they were selected
      */
     getSelectionInOrder(): string[] {
-        return [...this.selectionOrder];
+        return SelectionModel.getInstance().getSelectionInOrder();
     }
 
     /**
@@ -5065,19 +4355,8 @@ export class SchedulerService {
         // 2. saveCheckpoint() for undo
         this.saveCheckpoint();
 
-        // 3. Determine insert location (after focusedId, or at end)
-        const flatList = this._getFlatList();
-        let insertIndex = flatList.length;
+        // 3. Determine target parentId (same parent as focused task, or null)
         const currentFocusedId = this._sel_getFocused();
-        
-        if (currentFocusedId) {
-            const focusedIndex = flatList.findIndex(t => t.id === currentFocusedId);
-            if (focusedIndex !== -1) {
-                insertIndex = focusedIndex + 1;
-            }
-        }
-
-        // 4. Determine target parentId (same parent as focused task, or null)
         let targetParentId: string | null = null;
         if (currentFocusedId) {
             const focusedTask = ProjectController.getInstance().getTaskById(currentFocusedId);
@@ -6256,20 +5535,6 @@ export class SchedulerService {
         this.toastService?.success(`Generated ${count} tasks`);
     }
 
-    /**
-     * Generate random task name for mock data
-     * @private
-     * @returns Random task name
-     */
-    private _randomTaskName(): string {
-        const prefixes = ['Install', 'Frame', 'Pour', 'Paint', 'Finish', 'Inspect', 'Test', 'Review'];
-        const suffixes = ['Foundation', 'Walls', 'Roof', 'Windows', 'Doors', 'Electrical', 'Plumbing', 'HVAC'];
-        return `${prefixes[Math.floor(Math.random() * prefixes.length)]} ${suffixes[Math.floor(Math.random() * suffixes.length)]}`;
-    }
-
-    /**
-     * Clean up resources
-     */
     // =========================================================================
     // TRADE PARTNER OPERATIONS
     // =========================================================================
@@ -6294,7 +5559,7 @@ export class SchedulerService {
      * @param taskId - Task ID
      * @param mode - 'Auto' or 'Manual'
      */
-    public setSchedulingMode(taskId: string, mode: 'Auto' | 'Manual'): void {
+    public async setSchedulingMode(taskId: string, mode: 'Auto' | 'Manual'): Promise<void> {
         const task = ProjectController.getInstance().getTaskById(taskId);
         if (!task) {
             console.warn('[SchedulerService] Task not found:', taskId);
@@ -6303,7 +5568,7 @@ export class SchedulerService {
         
         this.saveCheckpoint();
         
-        const result = this._applyTaskEdit(taskId, 'schedulingMode', mode);
+        const result = await this._applyTaskEdit(taskId, 'schedulingMode', mode);
         
         if (result.success && result.needsRecalc) {
             this.recalculateAll();

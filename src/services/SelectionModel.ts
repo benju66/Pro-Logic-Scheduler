@@ -22,6 +22,8 @@ import { BehaviorSubject } from 'rxjs';
 export interface SelectionState {
     /** Currently selected task IDs */
     selectedIds: Set<string>;
+    /** Selection order - tracks the order tasks were selected (for linking) */
+    selectionOrder: string[];
     /** Currently focused task ID (keyboard navigation target) */
     focusedId: string | null;
     /** Anchor ID for shift-click range selection */
@@ -42,6 +44,7 @@ export class SelectionModel {
     // State exposed as observable for UI binding
     public readonly state$ = new BehaviorSubject<SelectionState>({
         selectedIds: new Set(),
+        selectionOrder: [],
         focusedId: null,
         anchorId: null,
         focusedField: null
@@ -83,25 +86,40 @@ export class SelectionModel {
     ): void {
         const current = this.state$.value;
         let newSet: Set<string>;
+        let newOrder: string[];
 
         if (range && current.anchorId && taskOrder) {
             // Range selection: select all tasks between anchor and clicked task
             newSet = this.selectRange(current.anchorId, id, taskOrder, multi ? current.selectedIds : new Set());
+            // For range, preserve existing order and add new items in task order
+            newOrder = [...current.selectionOrder];
+            newSet.forEach(taskId => {
+                if (!newOrder.includes(taskId)) {
+                    newOrder.push(taskId);
+                }
+            });
         } else if (multi) {
             // Multi-selection: toggle the clicked task
             newSet = new Set(current.selectedIds);
+            newOrder = [...current.selectionOrder];
             if (newSet.has(id)) {
                 newSet.delete(id);
+                newOrder = newOrder.filter(i => i !== id);
             } else {
                 newSet.add(id);
+                if (!newOrder.includes(id)) {
+                    newOrder.push(id);
+                }
             }
         } else {
             // Single selection: replace selection with just this task
             newSet = new Set([id]);
+            newOrder = [id];
         }
 
         this.state$.next({
             selectedIds: newSet,
+            selectionOrder: newOrder,
             focusedId: id,
             anchorId: range ? current.anchorId : id, // Keep anchor on range, update on new selection
             focusedField: current.focusedField
@@ -143,7 +161,8 @@ export class SelectionModel {
         const current = this.state$.value;
         this.state$.next({
             ...current,
-            selectedIds: new Set(taskIds)
+            selectedIds: new Set(taskIds),
+            selectionOrder: [...taskIds]
         });
     }
 
@@ -153,6 +172,7 @@ export class SelectionModel {
     public clear(): void {
         this.state$.next({
             selectedIds: new Set(),
+            selectionOrder: [],
             focusedId: null,
             anchorId: null,
             focusedField: null
@@ -163,12 +183,16 @@ export class SelectionModel {
      * Set selection directly (for sync with legacy SchedulerService)
      * @param selectedIds - Set of selected task IDs
      * @param focusedId - Optional focused task ID
+     * @param selectionOrder - Optional selection order array
      */
-    public setSelection(selectedIds: Set<string>, focusedId: string | null = null): void {
+    public setSelection(selectedIds: Set<string>, focusedId: string | null = null, selectionOrder?: string[]): void {
         const current = this.state$.value;
+        // If no order provided, derive from selectedIds (order not preserved)
+        const newOrder = selectionOrder ?? Array.from(selectedIds);
         this.state$.next({
             ...current,
             selectedIds: new Set(selectedIds), // Defensive copy
+            selectionOrder: newOrder,
             focusedId: focusedId ?? current.focusedId,
             anchorId: focusedId ?? current.anchorId
         });
@@ -203,11 +227,19 @@ export class SelectionModel {
     public addToSelection(ids: string[]): void {
         const current = this.state$.value;
         const newSet = new Set(current.selectedIds);
-        ids.forEach(id => newSet.add(id));
+        const newOrder = [...current.selectionOrder];
+        
+        ids.forEach(id => {
+            newSet.add(id);
+            if (!newOrder.includes(id)) {
+                newOrder.push(id);
+            }
+        });
         
         this.state$.next({
             ...current,
-            selectedIds: newSet
+            selectedIds: newSet,
+            selectionOrder: newOrder
         });
     }
 
@@ -217,7 +249,9 @@ export class SelectionModel {
     public removeFromSelection(ids: string[]): void {
         const current = this.state$.value;
         const newSet = new Set(current.selectedIds);
+        const idsToRemove = new Set(ids);
         ids.forEach(id => newSet.delete(id));
+        const newOrder = current.selectionOrder.filter(id => !idsToRemove.has(id));
 
         // If focused task was removed, clear focus
         const newFocusedId = current.focusedId && newSet.has(current.focusedId) 
@@ -227,6 +261,7 @@ export class SelectionModel {
         this.state$.next({
             ...current,
             selectedIds: newSet,
+            selectionOrder: newOrder,
             focusedId: newFocusedId
         });
     }
@@ -268,6 +303,13 @@ export class SelectionModel {
      */
     public getAnchorId(): string | null {
         return this.state$.value.anchorId;
+    }
+
+    /**
+     * Get selection in order (for linking tasks in selection order)
+     */
+    public getSelectionInOrder(): string[] {
+        return [...this.state$.value.selectionOrder];
     }
 
     /**

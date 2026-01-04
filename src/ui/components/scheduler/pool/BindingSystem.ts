@@ -4,6 +4,9 @@
  * 
  * Updates DOM content on pooled elements using ONLY fast DOM operations.
  * Updates accessibility attributes.
+ * 
+ * STRANGLER FIG: When USE_COLUMN_REGISTRY flag is enabled, delegates
+ * cell binding to the new ColumnRegistry system.
  */
 
 import type { Task, GridColumn, Calendar } from '../../../../types';
@@ -13,6 +16,8 @@ import { ICONS } from '../icons';
 import { formatDateForDisplay, parseFlexibleDate, formatDateISO } from '../datepicker/DatePickerConfig';
 import { getEditingStateManager } from '../../../../services/EditingStateManager';
 import { ProjectController } from '../../../../services/ProjectController';
+import { FeatureFlags } from '../../../../core/FeatureFlags';
+import { ColumnRegistry, type ColumnContext, type ColumnType } from '../../../../core/columns';
 
 /**
  * Binding System - Updates pooled DOM elements with task data
@@ -207,213 +212,21 @@ export class BindingSystem {
 
     /**
      * Bind data to a specific cell
+     * 
+     * Uses the new ColumnRegistry system (enabled by default).
+     * Falls back to _bindCellLegacy for unregistered column types.
      */
     private _bindCell(cell: PooledCell, col: GridColumn, task: Task, ctx: BindingContext): void {
-        const { isParent, isCollapsed, depth } = ctx;
-
         // ═══════════════════════════════════════════════════════════════
-        // QUERY TASKSTORE FOR FRESH DATA
-        // Always read field values from TaskStore (source of truth)
-        // Use task parameter only for structural fields (id, rowType, etc.)
+        // NEW ARCHITECTURE: Always use ColumnRegistry
+        // Falls back to _bindCellLegacy if renderer not found
         // ═══════════════════════════════════════════════════════════════
-        const freshTask = ProjectController.getInstance().getTaskById(task.id) ?? task;
-
-        // Handle special column: actions FIRST
-        if (col.type === 'actions' && col.actions) {
-            this._bindActionsCell(cell, col, task, ctx);
-            return;
-        }
-
-        // Special handling for schedulingMode (skip renderer, handle icon + select separately)
-        if (col.field === 'schedulingMode') {
-            this._bindSchedulingModeCell(cell, col, freshTask, ctx);
-            return;
-        }
-
-        // Handle custom renderer (check before standard binding)
-        // Pass freshTask to ensure renderers get latest data
-        if (col.renderer) {
-            const rendered = col.renderer(freshTask, {
-                isParent,
-                depth,
-                isCollapsed,
-                index: ctx.index,
-            });
-            
-            if (cell.text) {
-                // Check if rendered content contains HTML
-                if (rendered.includes('<')) {
-                    cell.text.innerHTML = rendered;
-                } else {
-                    cell.text.textContent = rendered;
-                }
-            } else if (cell.container) {
-                // Fallback to container if text node doesn't exist
-                if (rendered.includes('<')) {
-                    cell.container.innerHTML = rendered;
-                } else {
-                    cell.container.textContent = rendered;
-                }
-            }
-            return;
-        }
-
-        // Use freshTask for field value reads (always up-to-date)
-        const value = getTaskFieldValue(freshTask, col.field);
-
-        // Handle different cell types
-        if (cell.checkbox) {
-            // Checkbox reflects selection state
-            cell.checkbox.checked = ctx.isSelected;
-        } else if (cell.input) {
-            // Input/select element
-            if (cell.input instanceof HTMLInputElement || cell.input instanceof HTMLSelectElement) {
-                
-                // ═══════════════════════════════════════════════════════════════
-                // EDITING GUARD: Query EditingStateManager directly
-                // This is the SINGLE SOURCE OF TRUTH for editing state
-                // Handles both user-initiated and programmatic edits
-                // ═══════════════════════════════════════════════════════════════
-                const editingManager = getEditingStateManager();
-                const isBeingEdited = editingManager.isEditingCell(task.id, col.field);
-                
-                if (!isBeingEdited) {
-                    // Safe to update - cell is not being edited
-                    if (col.type === 'date' && value) {
-                        const displayValue = formatDateForDisplay(String(value));
-                        cell.input.value = displayValue;
-                        (cell.input as HTMLInputElement).dataset.isoValue = String(value);
-                    } else {
-                cell.input.value = value ? String(value) : '';
-                    }
-                }
-                // If being edited, preserve DOM value (user's current input)
-
-                // Handle readonly state (always apply, even if editing)
-                const isReadonly = col.editable === false || (col.readonlyForParent && isParent);
-                if (isReadonly) {
-                    cell.input.classList.add('cell-readonly');
-                    cell.input.disabled = true;
-                } else {
-                    cell.input.classList.remove('cell-readonly');
-                    cell.input.disabled = false;
-                }
-            }
-        } else if (cell.text) {
-            // Text display cells - safe to always update
-            cell.text.textContent = value ? String(value) : '';
-        }
-
-        // Apply cell class if specified
-        // CRITICAL: Always start with base class and explicitly remove highlight
-        // This ensures recycled cells don't retain old highlights
-        if (col.cellClass) {
-            const classes = col.cellClass.split(' ');
-            cell.container.className = `vsg-cell ${classes.join(' ')}`;
+        if (FeatureFlags.get('USE_COLUMN_REGISTRY')) {
+            this._bindCellWithRegistry(cell, col, task, ctx);
         } else {
-            // Ensure base class is set even if no cellClass specified
-            cell.container.className = 'vsg-cell';
+            // Legacy fallback (feature flag disabled)
+            this._bindCellLegacy(cell, col, task, ctx);
         }
-        
-        // Explicitly remove highlight class (will be re-applied by GridRenderer if this cell is focused)
-        cell.container.classList.remove('vsg-cell-selected');
-
-        // Handle special column: name with indent and collapse
-        if (col.field === 'name') {
-            this._bindNameCell(cell, ctx);
-        }
-
-        // Handle date inputs - text input with MM/DD/YYYY display format
-        if (col.type === 'date' && cell.input) {
-            const input = cell.input as HTMLInputElement;
-            const field = col.field;
-            
-            cell.container.style.position = 'relative';
-            const hasConstraintIcon = col.showConstraintIcon && (col.field === 'start' || col.field === 'end');
-            
-            // ═══════════════════════════════════════════════════════════════
-            // EDITING GUARD: Query EditingStateManager directly for date inputs
-            // ═══════════════════════════════════════════════════════════════
-            const editingManager = getEditingStateManager();
-            const isBeingEdited = editingManager.isEditingCell(ctx.task.id, col.field);
-            
-            if (!isBeingEdited) {
-                // Get the stored value (YYYY-MM-DD format) from freshTask
-                const storedValue = getTaskFieldValue(freshTask, col.field);
-            
-            // Display in MM/DD/YYYY format
-            if (storedValue) {
-                input.value = formatDateForDisplay(String(storedValue));
-            } else {
-                input.value = '';
-            }
-            
-            // Store the ISO value as a data attribute for retrieval
-            input.dataset.isoValue = storedValue ? String(storedValue) : '';
-            }
-            // If being edited, preserve DOM value (user's current input)
-            
-            // Handle readonly state
-            const isReadonly = col.editable === false || (col.readonlyForParent && ctx.isParent);
-            input.disabled = isReadonly;
-            if (isReadonly) {
-                input.classList.add('cell-readonly');
-            } else {
-                input.classList.remove('cell-readonly');
-            }
-            
-            // Add constraint icon if needed
-            if (hasConstraintIcon) {
-                this._bindConstraintIcon(cell, col, freshTask, ctx);
-            }
-            
-            // Add calendar icon that opens shared popup
-            this._bindCalendarIcon(cell, col, ctx, hasConstraintIcon);
-            
-            // Reserve padding space for icons
-            const iconSize = 12;
-            const iconGap = 4;
-            const iconMargin = 4;
-            const totalPadding = hasConstraintIcon 
-                ? iconMargin + iconSize + iconGap + iconSize + iconGap
-                : iconMargin + iconSize + iconGap;
-            input.style.paddingRight = `${totalPadding}px`;
-            
-            // Add focus class to cell for styling (fallback for browsers without :has())
-            // Remove existing listeners to prevent duplicates (pooled elements get reused)
-            const existingFocusHandler = (input as any)._focusHandler;
-            const existingBlurHandler = (input as any)._blurHandler;
-            if (existingFocusHandler) {
-                input.removeEventListener('focus', existingFocusHandler);
-            }
-            if (existingBlurHandler) {
-                input.removeEventListener('blur', existingBlurHandler);
-            }
-            
-            // Create new handlers
-            const focusHandler = () => {
-                cell.container.classList.add('date-cell-focused');
-            };
-            const blurHandler = () => {
-                cell.container.classList.remove('date-cell-focused');
-            };
-            
-            // Store references for cleanup
-            (input as any)._focusHandler = focusHandler;
-            (input as any)._blurHandler = blurHandler;
-            
-            input.addEventListener('focus', focusHandler);
-            input.addEventListener('blur', blurHandler);
-            
-            return; // Early return - we've handled this cell completely
-        }
-
-        // Handle constraint icons on non-date cells
-        if (col.showConstraintIcon && (col.field === 'start' || col.field === 'end') && col.type !== 'date') {
-            cell.container.style.position = 'relative';
-            this._bindConstraintIcon(cell, col, freshTask, ctx);
-        }
-
     }
 
     /**
@@ -752,6 +565,167 @@ export class BindingSystem {
         // v3.0: Hide ALL other buttons in pool (cleanup from old implementation)
         for (let i = 1; i < cell.actionButtons.length; i++) {
             cell.actionButtons[i].style.display = 'none';
+        }
+    }
+
+    // =========================================================================
+    // STRANGLER FIG: New Column Registry Integration
+    // =========================================================================
+
+    /**
+     * Bind cell using new ColumnRegistry system
+     * Called when USE_COLUMN_REGISTRY feature flag is enabled
+     */
+    private _bindCellWithRegistry(cell: PooledCell, col: GridColumn, task: Task, ctx: BindingContext): void {
+        const registry = ColumnRegistry.getInstance();
+        
+        // Get fresh task data
+        const freshTask = ProjectController.getInstance().getTaskById(task.id) ?? task;
+        
+        // Build ColumnContext for the renderer
+        const columnContext: ColumnContext = {
+            task: freshTask,
+            index: ctx.index,
+            isParent: ctx.isParent,
+            isCollapsed: ctx.isCollapsed,
+            isCritical: ctx.isCritical,
+            depth: ctx.depth,
+            isSelected: ctx.isSelected,
+        };
+        
+        // Get renderer for this column type
+        const renderer = registry.getRenderer(col.type as ColumnType);
+        
+        if (renderer) {
+            // Get column definition from registry (or convert GridColumn)
+            const columnDef = registry.getColumn(col.id) || this._gridColumnToDefinition(col);
+            
+            // Use new renderer
+            renderer.render(cell, columnContext, columnDef);
+        } else {
+            // Fallback to legacy binding for unregistered types
+            console.warn(`[BindingSystem] No renderer registered for type: ${col.type}, falling back to legacy`);
+            this._bindCellLegacy(cell, col, task, ctx);
+        }
+    }
+    
+    /**
+     * Convert GridColumn to ColumnDefinition
+     * Used as fallback when column not in registry
+     */
+    private _gridColumnToDefinition(col: GridColumn): import('../../../../core/columns').ColumnDefinition {
+        return {
+            id: col.id,
+            field: col.field,
+            label: col.label,
+            type: col.type as ColumnType,
+            width: col.width,
+            minWidth: col.minWidth,
+            align: col.align,
+            editable: col.editable,
+            readonlyForParent: col.readonlyForParent,
+            resizable: col.resizable,
+            visible: typeof col.visible === 'function' ? col.visible() : col.visible,
+            headerClass: col.headerClass,
+            cellClass: col.cellClass,
+            options: col.options,
+            showConstraintIcon: col.showConstraintIcon,
+            actions: col.actions,
+        };
+    }
+    
+    /**
+     * Legacy cell binding (original logic)
+     * Used as fallback when renderer not available
+     */
+    private _bindCellLegacy(cell: PooledCell, col: GridColumn, task: Task, ctx: BindingContext): void {
+        const { isParent, isCollapsed, depth } = ctx;
+        const freshTask = ProjectController.getInstance().getTaskById(task.id) ?? task;
+
+        // Handle special column: actions FIRST
+        if (col.type === 'actions' && col.actions) {
+            this._bindActionsCell(cell, col, task, ctx);
+            return;
+        }
+
+        // Special handling for schedulingMode
+        if (col.field === 'schedulingMode') {
+            this._bindSchedulingModeCell(cell, col, freshTask, ctx);
+            return;
+        }
+
+        // Handle custom renderer
+        if (col.renderer) {
+            const rendered = col.renderer(freshTask, {
+                isParent,
+                depth,
+                isCollapsed,
+                index: ctx.index,
+            });
+            
+            if (cell.text) {
+                if (rendered.includes('<')) {
+                    cell.text.innerHTML = rendered;
+                } else {
+                    cell.text.textContent = rendered;
+                }
+            } else if (cell.container) {
+                if (rendered.includes('<')) {
+                    cell.container.innerHTML = rendered;
+                } else {
+                    cell.container.textContent = rendered;
+                }
+            }
+            return;
+        }
+
+        // Use freshTask for field value reads
+        const value = getTaskFieldValue(freshTask, col.field);
+
+        // Handle different cell types
+        if (cell.checkbox) {
+            cell.checkbox.checked = ctx.isSelected;
+        } else if (cell.input) {
+            if (cell.input instanceof HTMLInputElement || cell.input instanceof HTMLSelectElement) {
+                const editingManager = getEditingStateManager();
+                const isBeingEdited = editingManager.isEditingCell(task.id, col.field);
+                
+                if (!isBeingEdited) {
+                    if (col.type === 'date' && value) {
+                        const displayValue = formatDateForDisplay(String(value));
+                        cell.input.value = displayValue;
+                        (cell.input as HTMLInputElement).dataset.isoValue = String(value);
+                    } else {
+                        cell.input.value = value ? String(value) : '';
+                    }
+                }
+
+                const isReadonly = col.editable === false || (col.readonlyForParent && isParent);
+                if (isReadonly) {
+                    cell.input.classList.add('cell-readonly');
+                    cell.input.disabled = true;
+                } else {
+                    cell.input.classList.remove('cell-readonly');
+                    cell.input.disabled = false;
+                }
+            }
+        } else if (cell.text) {
+            cell.text.textContent = value ? String(value) : '';
+        }
+
+        // Apply cell class
+        if (col.cellClass) {
+            const classes = col.cellClass.split(' ');
+            cell.container.className = `vsg-cell ${classes.join(' ')}`;
+        } else {
+            cell.container.className = 'vsg-cell';
+        }
+        
+        cell.container.classList.remove('vsg-cell-selected');
+
+        // Handle name column
+        if (col.field === 'name') {
+            this._bindNameCell(cell, ctx);
         }
     }
 

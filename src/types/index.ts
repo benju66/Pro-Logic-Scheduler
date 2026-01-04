@@ -323,7 +323,7 @@ export interface GridColumn {
   /** Is column editable? */
   editable: boolean;
   /** Column type for rendering/editing */
-  type: 'text' | 'number' | 'date' | 'select' | 'checkbox' | 'readonly' | 'actions' | 'drag' | 'health' | 'variance';
+  type: 'text' | 'number' | 'date' | 'select' | 'checkbox' | 'readonly' | 'actions' | 'drag' | 'health' | 'variance' | 'tradePartners' | 'schedulingMode' | 'rowNumber' | 'name';
   /** Options for select type */
   options?: string[];
   /** Field name on Task object (or computed field name) */

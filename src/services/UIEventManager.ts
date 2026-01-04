@@ -9,6 +9,7 @@
 import type { SchedulerService } from './SchedulerService';
 import type { ToastService } from '../ui/services/ToastService';
 import type { ToastType } from '../types';
+import { SelectionModel } from './SelectionModel';
 
 /**
  * UI event manager options
@@ -676,7 +677,7 @@ export class UIEventManager {
     
     if (scheduler) {
       scheduler.tasks = [];
-      scheduler.selectedIds.clear();
+      SelectionModel.getInstance().clear();
       scheduler.saveData();
       scheduler.render();
     }

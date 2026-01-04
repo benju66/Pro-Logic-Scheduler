@@ -20,6 +20,9 @@ import { ActivityBar } from '../ui/components/ActivityBar';
 import { SettingsModal } from '../ui/components/SettingsModal';
 import { RightSidebarManager } from '../ui/components/RightSidebarManager';
 import type { SchedulerServiceOptions, Calendar, TradePartner } from '../types';
+import { initializeColumnSystem, configureServices } from '../core/columns';
+import { getEditingStateManager } from './EditingStateManager';
+import { getTradePartnerStore } from '../data/TradePartnerStore';
 
 /**
  * App initializer options
@@ -112,6 +115,9 @@ export class AppInitializer {
       // 3. DataLoader (load from SQLite)
       // 4. ProjectController (seed with loaded data, wire persistence)
       await this._initializePersistenceLayer();
+      
+      // Initialize Column Registry (new architecture)
+      this._initializeColumnRegistry();
       
       // Initialize scheduler (now uses ProjectController internally)
       await this._initializeScheduler();
@@ -441,6 +447,72 @@ export class AppInitializer {
    */
   getDataLoader(): DataLoader | null {
     return this.dataLoader;
+  }
+
+  /**
+   * Initialize Column Registry System
+   * STRANGLER FIG: New column architecture with renderer registry
+   * @private
+   */
+  private _initializeColumnRegistry(): void {
+    console.log('[AppInitializer] 📊 Initializing Column Registry...');
+    
+    try {
+      // Initialize the column system (register renderers and columns)
+      initializeColumnSystem();
+      
+      // Configure services for renderers that need dependencies
+      const tradePartnerStore = getTradePartnerStore();
+      const editingManager = getEditingStateManager();
+      
+      configureServices({
+        // Trade partner lookup
+        getTradePartner: (id: string) => tradePartnerStore.get(id),
+        
+        // Variance calculation (placeholder - scheduler will set this later)
+        calculateVariance: (task) => {
+          // If scheduler is available, use its method
+          if (this.scheduler && typeof (this.scheduler as any)._calculateVariance === 'function') {
+            return (this.scheduler as any)._calculateVariance(task);
+          }
+          return { start: null, finish: null };
+        },
+        
+        // Editing state check
+        isEditingCell: (taskId: string, field: string) => {
+          return editingManager.isEditingCell(taskId, field);
+        },
+        
+        // Date picker (placeholder - will be wired after scheduler init)
+        openDatePicker: (taskId: string, field: string, anchorEl: HTMLElement, currentValue: string) => {
+          // Delegate to scheduler's date picker
+          console.log('[ColumnRegistry] openDatePicker:', taskId, field, currentValue);
+        },
+        
+        // Date change handler (placeholder - will be wired after scheduler init)
+        onDateChange: (taskId: string, field: string, value: string) => {
+          // Delegate to scheduler
+          if (this.scheduler && typeof (this.scheduler as any)._handleCellChange === 'function') {
+            (this.scheduler as any)._handleCellChange(taskId, field, value);
+          }
+        },
+        
+        // Calendar accessor
+        getCalendar: () => {
+          return ProjectController.getInstance().getCalendar();
+        },
+        
+        // Visual row number accessor
+        getVisualRowNumber: (task) => {
+          return task._visualRowNumber ?? null;
+        }
+      });
+      
+      console.log('[AppInitializer] ✅ Column Registry initialized');
+    } catch (error) {
+      console.error('[AppInitializer] ❌ Column Registry initialization failed:', error);
+      // Non-fatal - the system will fall back to legacy binding
+    }
   }
 
   /**

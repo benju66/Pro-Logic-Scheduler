@@ -43,6 +43,9 @@ export interface FeatureFlagConfig {
     USE_COLUMN_MANAGER: boolean;
     USE_FILE_OPERATION_SERVICE: boolean;
     USE_TRADE_PARTNER_SERVICE: boolean;
+    
+    // Column Registry (Strangler Fig)
+    USE_COLUMN_REGISTRY: boolean;
 }
 
 /**
@@ -59,6 +62,7 @@ const DEFAULT_FLAGS: FeatureFlagConfig = {
     USE_COLUMN_MANAGER: false,
     USE_FILE_OPERATION_SERVICE: false,
     USE_TRADE_PARTNER_SERVICE: false,
+    USE_COLUMN_REGISTRY: true, // ✅ ENABLED: New Column Registry is production-ready
 };
 
 /**

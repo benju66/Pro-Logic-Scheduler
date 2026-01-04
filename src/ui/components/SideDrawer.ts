@@ -97,6 +97,20 @@ export class SideDrawer {
         this._bindEvents();
     }
 
+    /**
+     * Check if the drawer is currently open
+     */
+    public isDrawerOpen(): boolean {
+        return this.isOpen;
+    }
+
+    /**
+     * Get the ID of the currently active task
+     */
+    public getActiveTaskId(): string | null {
+        return this.activeTaskId;
+    }
+
     private _buildDOM(): void {
         this.element = document.createElement('div');
         this.element.className = this.isEmbedded ? 'side-drawer-embedded' : 'side-drawer';

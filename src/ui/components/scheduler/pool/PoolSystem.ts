@@ -201,8 +201,9 @@ export class PoolSystem {
 
             case 'text':
             case 'number':
+            case 'name':  // Name column uses text input with special features
                 input = document.createElement('input');
-                input.type = col.type;
+                input.type = col.type === 'name' ? 'text' : col.type;
                 input.className = 'vsg-input';
                 input.setAttribute('data-field', col.field);
                 input.setAttribute('autocomplete', 'off');
