@@ -167,7 +167,7 @@ export class SelectionModel {
     }
 
     /**
-     * Clear all selection
+     * Clear all selection (including focus)
      */
     public clear(): void {
         this.state$.next({
@@ -176,6 +176,22 @@ export class SelectionModel {
             focusedId: null,
             anchorId: null,
             focusedField: null
+        });
+    }
+
+    /**
+     * Clear selection but preserve focus/navigation state.
+     * Used by Escape command - user wants to deselect but keep their position
+     * for continued keyboard navigation.
+     */
+    public clearSelectionOnly(): void {
+        const current = this.state$.value;
+        this.state$.next({
+            selectedIds: new Set(),
+            selectionOrder: [],
+            focusedId: current.focusedId,      // Preserve focus
+            anchorId: null,                     // Clear anchor (no range selection)
+            focusedField: current.focusedField  // Preserve focused column
         });
     }
 

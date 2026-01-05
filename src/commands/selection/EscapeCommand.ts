@@ -37,9 +37,9 @@ export const EscapeCommand: Command = {
             return { success: true, message: 'Cut cancelled' };
         }
 
-        // Clear selection
+        // Clear selection but preserve focus for continued keyboard navigation
         const hadSelection = ctx.selection.getSelectionCount() > 0;
-        ctx.selection.clear();
+        ctx.selection.clearSelectionOnly();
 
         if (hadSelection) {
             return { success: true, message: 'Selection cleared' };
