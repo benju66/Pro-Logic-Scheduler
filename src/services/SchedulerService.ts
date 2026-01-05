@@ -37,6 +37,7 @@ import { ProjectController } from './ProjectController';
 import { SelectionModel } from './SelectionModel';
 import { AppInitializer } from './AppInitializer';
 import { getEditingStateManager, type EditingStateChangeEvent } from './EditingStateManager';
+import { ZoomController, type IZoomableGantt, ZOOM_CONFIG } from './ZoomController';
 import { CommandService } from '../commands';
 import { getTaskFieldValue } from '../types';
 import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport';
@@ -127,6 +128,9 @@ export class SchedulerService {
     private dataLoader: DataLoader | null = null;
     private snapshotService: SnapshotService | null = null;
     private initPromise: Promise<void> | null = null; // Store init promise to avoid race condition
+    
+    // Zoom controller (extracted from this class for SRP)
+    private zoomController: ZoomController | null = null;
 
     // UI components (initialized in init())
     public grid: VirtualScrollGridFacade | null = null;  // Public for access from AppInitializer and UIEventManager
@@ -487,6 +491,14 @@ export class SchedulerService {
         // Create facade wrappers for backward compatibility
         this.grid = this._createGridFacade(viewport);
         this.gantt = this._createGanttFacade(viewport);
+        
+        // Initialize ZoomController with the GanttRenderer
+        // Note: ganttRenderer is exposed on the viewport for this purpose
+        this.zoomController = ZoomController.getInstance();
+        const ganttRenderer = (viewport as any).ganttRenderer as IZoomableGantt | null;
+        if (ganttRenderer) {
+            this.zoomController.setGanttRenderer(ganttRenderer);
+        }
 
         // ─────────────────────────────────────────────────────────────────────────────
         // Legacy drawer - now managed by RightSidebarManager
@@ -4623,13 +4635,16 @@ export class SchedulerService {
      * @param pixelsPerDay - Pixels per day (1-80)
      */
     setGanttZoom(pixelsPerDay: number): void {
-        const viewport = (this as any).viewport;
-        if (viewport?.ganttRenderer) {
-            (viewport.ganttRenderer as any).setZoom(pixelsPerDay);
-            // Note: GanttRenderer handles re-rendering internally, no need to call render()
-        } else if (this.gantt) {
-            (this.gantt as any).setZoom(pixelsPerDay);
-            // Note: GanttRenderer handles re-rendering internally, no need to call render()
+        if (this.zoomController) {
+            this.zoomController.setZoom(pixelsPerDay);
+        } else {
+            // Fallback for legacy code paths
+            const viewport = (this as any).viewport;
+            if (viewport?.ganttRenderer) {
+                (viewport.ganttRenderer as any).setZoom(pixelsPerDay);
+            } else if (this.gantt) {
+                (this.gantt as any).setZoom(pixelsPerDay);
+            }
         }
     }
 
@@ -4637,26 +4652,33 @@ export class SchedulerService {
      * Get current Gantt zoom level
      */
     getGanttZoom(): number {
+        if (this.zoomController) {
+            return this.zoomController.pixelsPerDay;
+        }
+        // Fallback for legacy code paths
         const viewport = (this as any).viewport;
         if (viewport?.ganttRenderer) {
-            return (viewport.ganttRenderer as any).getZoom() || 20;
+            return (viewport.ganttRenderer as any).getZoom() || ZOOM_CONFIG.DEFAULT;
         } else if (this.gantt) {
-            return (this.gantt as any).getZoom() || 20;
+            return (this.gantt as any).getZoom() || ZOOM_CONFIG.DEFAULT;
         }
-        return 20;
+        return ZOOM_CONFIG.DEFAULT;
     }
 
     /**
      * Zoom Gantt in
      */
     zoomGanttIn(): void {
-        const viewport = (this as any).viewport;
-        if (viewport?.ganttRenderer) {
-            (viewport.ganttRenderer as any).zoomIn();
-            // Note: GanttRenderer handles re-rendering internally, no need to call render()
-        } else if (this.gantt) {
-            (this.gantt as any).zoomIn();
-            // Note: GanttRenderer handles re-rendering internally, no need to call render()
+        if (this.zoomController) {
+            this.zoomController.zoomIn();
+        } else {
+            // Fallback for legacy code paths
+            const viewport = (this as any).viewport;
+            if (viewport?.ganttRenderer) {
+                (viewport.ganttRenderer as any).zoomIn();
+            } else if (this.gantt) {
+                (this.gantt as any).zoomIn();
+            }
         }
     }
 
@@ -4664,13 +4686,16 @@ export class SchedulerService {
      * Zoom Gantt out
      */
     zoomGanttOut(): void {
-        const viewport = (this as any).viewport;
-        if (viewport?.ganttRenderer) {
-            (viewport.ganttRenderer as any).zoomOut();
-            // Note: GanttRenderer handles re-rendering internally, no need to call render()
-        } else if (this.gantt) {
-            (this.gantt as any).zoomOut();
-            // Note: GanttRenderer handles re-rendering internally, no need to call render()
+        if (this.zoomController) {
+            this.zoomController.zoomOut();
+        } else {
+            // Fallback for legacy code paths
+            const viewport = (this as any).viewport;
+            if (viewport?.ganttRenderer) {
+                (viewport.ganttRenderer as any).zoomOut();
+            } else if (this.gantt) {
+                (this.gantt as any).zoomOut();
+            }
         }
     }
 
@@ -4678,13 +4703,16 @@ export class SchedulerService {
      * Fit Gantt to view
      */
     fitGanttToView(): void {
-        const viewport = (this as any).viewport;
-        if (viewport?.ganttRenderer) {
-            (viewport.ganttRenderer as any).fitToView();
-            // Note: GanttRenderer handles re-rendering internally, no need to call render()
-        } else if (this.gantt) {
-            (this.gantt as any).fitToView();
-            // Note: GanttRenderer handles re-rendering internally, no need to call render()
+        if (this.zoomController) {
+            this.zoomController.fitToView();
+        } else {
+            // Fallback for legacy code paths
+            const viewport = (this as any).viewport;
+            if (viewport?.ganttRenderer) {
+                (viewport.ganttRenderer as any).fitToView();
+            } else if (this.gantt) {
+                (this.gantt as any).fitToView();
+            }
         }
     }
 
@@ -4692,14 +4720,25 @@ export class SchedulerService {
      * Reset Gantt zoom to default
      */
     resetGanttZoom(): void {
-        const viewport = (this as any).viewport;
-        if (viewport?.ganttRenderer) {
-            (viewport.ganttRenderer as any).resetZoom();
-            // Note: GanttRenderer handles re-rendering internally, no need to call render()
-        } else if (this.gantt) {
-            (this.gantt as any).resetZoom();
-            // Note: GanttRenderer handles re-rendering internally, no need to call render()
+        if (this.zoomController) {
+            this.zoomController.resetZoom();
+        } else {
+            // Fallback for legacy code paths
+            const viewport = (this as any).viewport;
+            if (viewport?.ganttRenderer) {
+                (viewport.ganttRenderer as any).resetZoom();
+            } else if (this.gantt) {
+                (this.gantt as any).resetZoom();
+            }
         }
+    }
+    
+    /**
+     * Get the ZoomController instance
+     * Allows external code to subscribe to zoom state changes
+     */
+    getZoomController(): ZoomController | null {
+        return this.zoomController;
     }
 
     /**

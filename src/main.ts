@@ -329,65 +329,71 @@ function initZoomControls(): void {
     const resetZoomBtn = document.getElementById('reset-zoom-btn');
     const zoomLevelDisplay = document.getElementById('zoom-level');
     
-    // Update zoom level display
-    function updateZoomDisplay(): void {
-        if (zoomLevelDisplay && scheduler) {
-            const zoom = scheduler.getGanttZoom();
-            const percentage = Math.round((zoom / 20) * 100); // 20 = 100%
-            zoomLevelDisplay.textContent = `${percentage}%`;
-        }
+    // Get ZoomController from scheduler
+    const zoomController = scheduler?.getZoomController();
+    
+    // Subscribe to zoom state changes (replaces polling!)
+    if (zoomController && zoomLevelDisplay) {
+        zoomController.zoomState$.subscribe(state => {
+            zoomLevelDisplay.textContent = `${state.percentage}%`;
+        });
     }
     
     // Zoom in
     zoomInBtn?.addEventListener('click', () => {
-        scheduler?.zoomGanttIn();
-        updateZoomDisplay();
+        if (zoomController) {
+            zoomController.zoomIn();
+        } else {
+            scheduler?.zoomGanttIn();
+        }
     });
     
     // Zoom out
     zoomOutBtn?.addEventListener('click', () => {
-        scheduler?.zoomGanttOut();
-        updateZoomDisplay();
+        if (zoomController) {
+            zoomController.zoomOut();
+        } else {
+            scheduler?.zoomGanttOut();
+        }
     });
     
     // Fit to view
     fitToViewBtn?.addEventListener('click', () => {
-        scheduler?.fitGanttToView();
-        updateZoomDisplay();
+        if (zoomController) {
+            zoomController.fitToView();
+        } else {
+            scheduler?.fitGanttToView();
+        }
     });
     
     // Reset zoom
     resetZoomBtn?.addEventListener('click', () => {
-        scheduler?.resetGanttZoom();
-        updateZoomDisplay();
-    });
-    
-    // Keyboard shortcuts
-    document.addEventListener('keydown', (e) => {
-        if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
-            if (e.key === '=' || e.key === '+') {
-                e.preventDefault();
-                scheduler?.zoomGanttIn();
-                updateZoomDisplay();
-            } else if (e.key === '-') {
-                e.preventDefault();
-                scheduler?.zoomGanttOut();
-                updateZoomDisplay();
-            } else if (e.key === '0') {
-                e.preventDefault();
-                scheduler?.resetGanttZoom();
-                updateZoomDisplay();
-            }
+        if (zoomController) {
+            zoomController.resetZoom();
+        } else {
+            scheduler?.resetGanttZoom();
         }
     });
     
-    // Initial display update (with delay to ensure scheduler is ready)
-    setTimeout(() => {
-        updateZoomDisplay();
-    }, 100);
-    
-    // Update display periodically (in case zoom changes from other sources)
-    setInterval(() => {
-        updateZoomDisplay();
-    }, 500);
+    // Keyboard shortcuts are now handled by ZoomController.initKeyboardShortcuts()
+    // Initialize them if not already done
+    if (zoomController) {
+        zoomController.initKeyboardShortcuts();
+    } else {
+        // Fallback keyboard handling if ZoomController not available
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
+                if (e.key === '=' || e.key === '+') {
+                    e.preventDefault();
+                    scheduler?.zoomGanttIn();
+                } else if (e.key === '-') {
+                    e.preventDefault();
+                    scheduler?.zoomGanttOut();
+                } else if (e.key === '0') {
+                    e.preventDefault();
+                    scheduler?.resetGanttZoom();
+                }
+            }
+        });
+    }
 }
