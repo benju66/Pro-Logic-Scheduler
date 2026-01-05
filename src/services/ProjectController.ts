@@ -345,6 +345,16 @@ export class ProjectController {
      * Uses optimistic update: local state updated immediately, then worker calculates
      */
     public updateTask(id: string, updates: Partial<Task>): void {
+        // Sanitize name field: trim whitespace, reject empty names
+        if (updates.name !== undefined) {
+            const trimmedName = String(updates.name).trim();
+            if (trimmedName === '') {
+                delete updates.name; // Don't update name if it would be empty
+            } else {
+                updates.name = trimmedName;
+            }
+        }
+
         // Get current task to capture old values for undo
         const currentTasks = this.tasks$.value;
         const taskIndex = currentTasks.findIndex(t => t.id === id);
