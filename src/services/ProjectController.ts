@@ -126,6 +126,14 @@ export class ProjectController {
         return this.historyManager !== null;
     }
 
+    /**
+     * Get the history manager instance
+     * @returns HistoryManager instance or null if not set
+     */
+    public getHistoryManager(): HistoryManager | null {
+        return this.historyManager;
+    }
+
     // ========================================================================
     // History Recording Helpers
     // ========================================================================
@@ -370,13 +378,36 @@ export class ProjectController {
             schedulingMode: 'scheduling_mode',
         };
 
-        // Queue TASK_UPDATED events for persistence (one per field for granular undo/redo)
-        for (const [prop, newValue] of Object.entries(updates)) {
-            // Skip calculated fields - they're not persisted
-            const calculatedFields = ['start', 'end', 'level', 'lateStart', 'lateFinish', 
-                                     'totalFloat', 'freeFloat', '_isCritical', '_health'];
-            if (calculatedFields.includes(prop)) continue;
+        // Filter to persistable fields only
+        const calculatedFields = ['start', 'end', 'level', 'lateStart', 'lateFinish', 
+                                 'totalFloat', 'freeFloat', '_isCritical', '_health'];
+        const persistableUpdates = Object.entries(updates).filter(
+            ([prop]) => !calculatedFields.includes(prop)
+        );
 
+        // Filter out updates where value hasn't actually changed
+        // This prevents recording no-op changes (e.g., blur on unchanged field)
+        const changedUpdates = persistableUpdates.filter(([prop, newValue]) => {
+            if (!oldTask) return true; // New task - all values are changes
+            const oldValue = (oldTask as Record<string, unknown>)[prop];
+            // Use JSON.stringify for deep comparison (handles arrays, objects)
+            return JSON.stringify(newValue) !== JSON.stringify(oldValue);
+        });
+
+        // If no actual changes, skip history recording
+        if (changedUpdates.length === 0) {
+            return;
+        }
+
+        // FIX: Wrap multi-field updates in a composite action for single undo
+        // This prevents needing to click undo multiple times for one logical edit
+        const needsComposite = changedUpdates.length > 1 && this.historyManager;
+        if (needsComposite) {
+            this.historyManager!.beginComposite('Update Task');
+        }
+
+        // Queue TASK_UPDATED events for persistence (one per field for granular persistence)
+        for (const [prop, newValue] of changedUpdates) {
             const field = propToFieldMap[prop] || prop;
             const oldValue = oldTask ? (oldTask as Record<string, unknown>)[prop] : null;
 
@@ -394,6 +425,11 @@ export class ProjectController {
                 this.createEvent('TASK_UPDATED', id, { field, new_value: oldValue }),
                 `Update ${prop}`
             );
+        }
+
+        // End composite if we started one
+        if (needsComposite) {
+            this.historyManager!.endComposite();
         }
     }
 

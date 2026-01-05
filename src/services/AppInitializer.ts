@@ -23,6 +23,8 @@ import type { SchedulerServiceOptions, Calendar, TradePartner } from '../types';
 import { initializeColumnSystem, configureServices } from '../core/columns';
 import { getEditingStateManager } from './EditingStateManager';
 import { getTradePartnerStore } from '../data/TradePartnerStore';
+import { HistoryManager } from '../data/HistoryManager';
+import { Subscription, skip, debounceTime } from 'rxjs';
 
 /**
  * App initializer options
@@ -48,6 +50,10 @@ export class AppInitializer {
   private snapshotService: SnapshotService | null = null;
   private dataLoader: DataLoader | null = null;
   private projectController: ProjectController | null = null;
+  private historyManager: HistoryManager | null = null;
+  
+  // Reactive saveData subscription - saves after calculations complete
+  private saveDataSubscription: Subscription | null = null;
   private activityBar: ActivityBar | null = null;
   private settingsModal: SettingsModal | null = null;
   private rightSidebarManager: RightSidebarManager | null = null;
@@ -176,6 +182,14 @@ export class AppInitializer {
       console.log('[AppInitializer] Skipping SQLite persistence (not in Tauri environment)');
       // Initialize controller with empty state for development/testing
       await this.projectController.initialize([], { workingDays: [1, 2, 3, 4, 5], exceptions: {} });
+      
+      // Still initialize HistoryManager for undo/redo in non-Tauri mode
+      console.log('[AppInitializer] Initializing HistoryManager (non-Tauri)...');
+      this.historyManager = new HistoryManager({ maxHistory: 50 });
+      this.projectController.setHistoryManager(this.historyManager);
+      console.log('[AppInitializer] ✅ HistoryManager initialized');
+      
+      // Note: No reactive saveData in non-Tauri mode (no persistence)
       return;
     }
     
@@ -231,11 +245,102 @@ export class AppInitializer {
       this.snapshotService.startPeriodicSnapshots();
       console.log('[AppInitializer] ✅ SnapshotService started periodic snapshots');
       
+      // 9. Initialize HistoryManager for undo/redo (application level)
+      // Moved from SchedulerService to ensure history survives view/tab switches
+      console.log('[AppInitializer] Initializing HistoryManager...');
+      this.historyManager = new HistoryManager({
+        maxHistory: 50
+      });
+      this.projectController.setHistoryManager(this.historyManager);
+      console.log('[AppInitializer] ✅ HistoryManager initialized');
+      
+      // 10. Setup reactive saveData subscription
+      // This ensures saveData() runs AFTER worker calculations complete (via tasks$ emission)
+      // Solves the "Await Trap" - no need to await recalculateAll() before saving
+      this._setupReactiveSaveData();
+      
     } catch (error) {
       console.error('[AppInitializer] ❌ Failed to initialize persistence layer:', error);
       // Continue without persistence - app can still work but won't save
       // Initialize controller with empty state
       await this.projectController.initialize([], { workingDays: [1, 2, 3, 4, 5], exceptions: {} });
+      
+      // Still initialize HistoryManager for undo/redo even if persistence fails
+      if (!this.historyManager) {
+        console.log('[AppInitializer] Initializing HistoryManager (fallback)...');
+        this.historyManager = new HistoryManager({ maxHistory: 50 });
+        this.projectController.setHistoryManager(this.historyManager);
+        console.log('[AppInitializer] ✅ HistoryManager initialized');
+      }
+    }
+  }
+
+  /**
+   * Get the HistoryManager instance
+   * @returns HistoryManager instance or null if not initialized
+   */
+  public getHistoryManager(): HistoryManager | null {
+    return this.historyManager;
+  }
+
+  /**
+   * Setup reactive saveData subscription
+   * 
+   * This subscribes to ProjectController.tasks$ and automatically saves
+   * data after calculations complete. This solves the "Await Trap" problem
+   * where saveData() was called before worker calculations finished.
+   * 
+   * Flow:
+   * 1. User edits task → updateTask() sends to worker
+   * 2. Worker calculates → emits new tasks via tasks$
+   * 3. This subscription triggers (after debounce) → saveData()
+   * 
+   * @private
+   */
+  private _setupReactiveSaveData(): void {
+    if (!this.projectController || !this.snapshotService) {
+      console.warn('[AppInitializer] Cannot setup reactive saveData - services not available');
+      return;
+    }
+
+    console.log('[AppInitializer] Setting up reactive saveData subscription...');
+
+    // Subscribe to task changes with debounce
+    this.saveDataSubscription = this.projectController.tasks$
+      .pipe(
+        skip(1),           // Skip initial value (empty array or loaded data)
+        debounceTime(500)  // Wait 500ms after last change (prevents saving on every keystroke)
+      )
+      .subscribe(async (tasks) => {
+        if (tasks.length === 0) {
+          // Don't save empty state
+          return;
+        }
+
+        try {
+          await this.snapshotService!.createSnapshot(
+            tasks,
+            this.projectController!.calendar$.value,
+            this.loadedTradePartners
+          );
+          console.log('[AppInitializer] ✅ Reactive saveData: snapshot created');
+        } catch (error) {
+          console.error('[AppInitializer] ❌ Reactive saveData failed:', error);
+        }
+      });
+
+    console.log('[AppInitializer] ✅ Reactive saveData subscription active');
+  }
+
+  /**
+   * Dispose reactive saveData subscription
+   * Called during shutdown
+   */
+  private _disposeReactiveSaveData(): void {
+    if (this.saveDataSubscription) {
+      this.saveDataSubscription.unsubscribe();
+      this.saveDataSubscription = null;
+      console.log('[AppInitializer] Reactive saveData subscription disposed');
     }
   }
 
@@ -519,6 +624,9 @@ export class AppInitializer {
    * Clean up resources
    */
   destroy(): void {
+    // Stop reactive saveData subscription
+    this._disposeReactiveSaveData();
+    
     // Stop snapshot service
     this.snapshotService?.stopPeriodicSnapshots();
     

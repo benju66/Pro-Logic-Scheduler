@@ -371,10 +371,14 @@ export class GridRenderer {
      * @private
      */
     private _handleCellChange(taskId: string, field: string, value: unknown): void {
-        // Send to worker via controller
-        this.controller.updateTask(taskId, { [field]: value });
-        
-        // Legacy callback support (for SchedulerService during migration)
+        // Route through SchedulerService for field-specific logic (constraint handling, etc.)
+        // SchedulerService._applyTaskEdit() calls ProjectController.updateTask() which:
+        // - Records to HistoryManager for undo/redo
+        // - Sends to worker for CPM calculation
+        // - Triggers reactive UI updates via tasks$ subscription
+        // 
+        // NOTE: We do NOT call controller.updateTask() directly here to avoid double-recording
+        // undo events (which would require clicking undo twice for each edit)
         if (this.options.onCellChange) {
             this.options.onCellChange(taskId, field, value);
         }
@@ -475,6 +479,10 @@ export class GridRenderer {
      * Bind event listeners
      */
     private _bindEventListeners(): void {
+        // Mousedown - prevent native focus on inputs for single-click
+        // This ensures double-click/F2 is required to enter edit mode
+        this.rowContainer.addEventListener('mousedown', (e) => this._onMouseDown(e));
+        
         // Click events
         this.rowContainer.addEventListener('click', (e) => this._onClick(e));
         
@@ -503,6 +511,33 @@ export class GridRenderer {
         this.rowContainer.addEventListener('dragover', (e) => this._onDragOver(e));
         this.rowContainer.addEventListener('dragleave', (e) => this._onDragLeave(e));
         this.rowContainer.addEventListener('drop', (e) => this._onDrop(e));
+    }
+
+    /**
+     * Handle mousedown events
+     * Prevents native focus on inputs for single-click (requires double-click to edit)
+     */
+    private _onMouseDown(e: MouseEvent): void {
+        const target = e.target as HTMLElement;
+        
+        // If clicking on an input or select, prevent native focus
+        // This ensures we need double-click or F2 to enter edit mode
+        if (target.classList.contains('vsg-input') || target.classList.contains('vsg-select')) {
+            const editingManager = getEditingStateManager();
+            
+            // If already editing this cell, allow normal focus behavior
+            const row = target.closest('.vsg-row') as HTMLElement | null;
+            const taskId = row?.dataset.taskId;
+            const field = target.getAttribute('data-field');
+            
+            if (taskId && field && editingManager.isEditingCell(taskId, field)) {
+                // Already editing this cell - allow native behavior
+                return;
+            }
+            
+            // Prevent native focus - edit mode requires double-click or F2
+            e.preventDefault();
+        }
     }
 
     /**
@@ -634,7 +669,8 @@ export class GridRenderer {
             return detailsPanel !== null && detailsPanel.classList.contains('active');
         };
 
-        // If clicking directly on an input, select the task and focus the cell
+        // If clicking directly on an input, select the task and highlight the cell
+        // NOTE: Single-click = highlight only, double-click = edit mode (standard spreadsheet UX)
         if (target.classList.contains('vsg-input') || target.classList.contains('vsg-select')) {
             const field = target.getAttribute('data-field');
             if (field) {
@@ -649,33 +685,18 @@ export class GridRenderer {
                     this.options.onRowClick(taskId, event);
                 }
                 
-                // Only focus grid input if Properties panel is NOT open
+                // Only highlight if Properties panel is NOT open
                 // If panel is open, let it handle the focus instead
                 if (!isPropertiesPanelOpen()) {
-                    // Apply visual highlight BEFORE focusing (ensures user sees which cell is active)
+                    // Apply visual highlight (no edit mode - that requires double-click or F2)
                     this.highlightCell(taskId, field);
-                    
-                    // Then focus the input
-                    (target as HTMLInputElement | HTMLSelectElement).focus();
-                    if ((target as HTMLInputElement).type === 'text' || (target as HTMLInputElement).type === 'number') {
-                        (target as HTMLInputElement).select();
-                    }
-                    
-                    // Update local state for scroll preservation
-                    this.editingCell = { taskId, field };
-                    this.editingRows.add(taskId);
-                    
-                    // Update EditingStateManager
-                    const editingManager = getEditingStateManager();
-                    const task = this.data.find(t => t.id === taskId);
-                    const originalValue = task ? getTaskFieldValue(task, field as GridColumn['field']) : undefined;
-                    editingManager.enterEditMode({ taskId, field }, 'click', originalValue);
                 }
             }
             return;
         }
 
-        // If clicking on a cell (but not the input), select the task and focus the input
+        // If clicking on a cell (but not the input), select the task and highlight the cell
+        // NOTE: Single-click = highlight only, double-click = edit mode (standard spreadsheet UX)
         const cell = target.closest('[data-field]') as HTMLElement | null;
         if (cell) {
             const field = cell.getAttribute('data-field');
@@ -692,27 +713,11 @@ export class GridRenderer {
                     this.options.onRowClick(taskId, event);
                 }
                 
-                // Only focus grid input if Properties panel is NOT open
+                // Only highlight if Properties panel is NOT open
                 // If panel is open, let it handle the focus instead
                 if (!isPropertiesPanelOpen()) {
-                    // Apply visual highlight BEFORE focusing (ensures user sees which cell is active)
+                    // Apply visual highlight (no edit mode - that requires double-click or F2)
                     this.highlightCell(taskId, field);
-                    
-                    // Then focus the input
-                    input.focus();
-                    if ((input as HTMLInputElement).type === 'text' || (input as HTMLInputElement).type === 'number') {
-                        (input as HTMLInputElement).select();
-                    }
-                    
-                    // Update local state for scroll preservation
-                    this.editingCell = { taskId, field };
-                    this.editingRows.add(taskId);
-                    
-                    // Update EditingStateManager
-                    const editingManager = getEditingStateManager();
-                    const task = this.data.find(t => t.id === taskId);
-                    const originalValue = task ? getTaskFieldValue(task, field as GridColumn['field']) : undefined;
-                    editingManager.enterEditMode({ taskId, field }, 'click', originalValue);
                 }
                 
                 return;
@@ -735,6 +740,8 @@ export class GridRenderer {
 
     /**
      * Handle double-click events
+     * Double-click on editable cell = enter edit mode
+     * Double-click elsewhere on row = open drawer
      */
     private _onDoubleClick(e: MouseEvent): void {
         const target = e.target as HTMLElement;
@@ -743,11 +750,6 @@ export class GridRenderer {
 
         const taskId = row.dataset.taskId;
         if (!taskId) return;
-
-        // Don't trigger if double-clicking on input
-        if (target.classList.contains('vsg-input') || target.classList.contains('vsg-select')) {
-            return;
-        }
 
         // Check if blank row - wake up
         if (row.classList.contains('blank-row')) {
@@ -758,9 +760,55 @@ export class GridRenderer {
             return;
         }
 
+        // Double-click on input/select = enter edit mode
+        if (target.classList.contains('vsg-input') || target.classList.contains('vsg-select')) {
+            const field = target.getAttribute('data-field');
+            if (field) {
+                this._enterEditModeForCell(taskId, field, target as HTMLInputElement | HTMLSelectElement);
+            }
+            return;
+        }
+
+        // Double-click on cell (but not directly on input) = enter edit mode
+        const cell = target.closest('[data-field]') as HTMLElement | null;
+        if (cell) {
+            const field = cell.getAttribute('data-field');
+            const input = cell.querySelector('.vsg-input, .vsg-select') as HTMLInputElement | HTMLSelectElement | null;
+            if (input && !input.disabled && field) {
+                this._enterEditModeForCell(taskId, field, input);
+                return;
+            }
+        }
+
+        // Double-click elsewhere on row = open drawer
         if (this.options.onRowDoubleClick) {
             this.options.onRowDoubleClick(taskId, e);
         }
+    }
+
+    /**
+     * Enter edit mode for a specific cell
+     * Called on double-click or F2
+     */
+    private _enterEditModeForCell(taskId: string, field: string, input: HTMLInputElement | HTMLSelectElement): void {
+        // Apply visual highlight
+        this.highlightCell(taskId, field);
+        
+        // Focus the input
+        input.focus();
+        if ((input as HTMLInputElement).type === 'text' || (input as HTMLInputElement).type === 'number') {
+            (input as HTMLInputElement).select();
+        }
+        
+        // Update local state for scroll preservation
+        this.editingCell = { taskId, field };
+        this.editingRows.add(taskId);
+        
+        // Update EditingStateManager
+        const editingManager = getEditingStateManager();
+        const task = this.data.find(t => t.id === taskId);
+        const originalValue = task ? getTaskFieldValue(task, field as GridColumn['field']) : undefined;
+        editingManager.enterEditMode({ taskId, field }, 'double-click', originalValue);
     }
 
     /**

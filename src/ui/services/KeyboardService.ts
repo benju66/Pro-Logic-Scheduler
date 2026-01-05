@@ -243,25 +243,28 @@ export class KeyboardService {
     }
 
     // Arrow key navigation (only when NOT editing)
-    if (e.key === 'ArrowUp' && this.options.onArrowUp) {
-      e.preventDefault();
-      this.options.onArrowUp(e.shiftKey, isCtrl);
-      return;
-    }
-    if (e.key === 'ArrowDown' && this.options.onArrowDown) {
-      e.preventDefault();
-      this.options.onArrowDown(e.shiftKey, isCtrl);
-      return;
-    }
-    if (e.key === 'ArrowLeft' && this.options.onArrowLeft) {
-      e.preventDefault();
-      this.options.onArrowLeft(e.shiftKey, isCtrl);
-      return;
-    }
-    if (e.key === 'ArrowRight' && this.options.onArrowRight) {
-      e.preventDefault();
-      this.options.onArrowRight(e.shiftKey, isCtrl);
-      return;
+    // When editing, let arrow keys work naturally in text fields
+    if (!isEditing) {
+      if (e.key === 'ArrowUp' && this.options.onArrowUp) {
+        e.preventDefault();
+        this.options.onArrowUp(e.shiftKey, isCtrl);
+        return;
+      }
+      if (e.key === 'ArrowDown' && this.options.onArrowDown) {
+        e.preventDefault();
+        this.options.onArrowDown(e.shiftKey, isCtrl);
+        return;
+      }
+      if (e.key === 'ArrowLeft' && this.options.onArrowLeft) {
+        e.preventDefault();
+        this.options.onArrowLeft(e.shiftKey, isCtrl);
+        return;
+      }
+      if (e.key === 'ArrowRight' && this.options.onArrowRight) {
+        e.preventDefault();
+        this.options.onArrowRight(e.shiftKey, isCtrl);
+        return;
+      }
     }
 
     // F2 - enter edit mode

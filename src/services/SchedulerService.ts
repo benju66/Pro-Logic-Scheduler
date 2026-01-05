@@ -25,7 +25,7 @@ import { OperationQueue } from '../core/OperationQueue';
 import { ColumnRegistry } from '../core/columns';
 // NOTE: TaskStore and CalendarStore removed - all data flows through ProjectController
 import { TradePartnerStore, getTradePartnerStore } from '../data/TradePartnerStore';
-import { HistoryManager } from '../data/HistoryManager';
+// NOTE: HistoryManager moved to AppInitializer (application level) - access via ProjectController.getHistoryManager()
 import { PersistenceService } from '../data/PersistenceService';
 import { DataLoader } from '../data/DataLoader';
 import { SnapshotService } from '../data/SnapshotService';
@@ -67,6 +67,19 @@ import type {
 } from '../types';
 
 /**
+ * Feature flag for legacy recalculation behavior.
+ * 
+ * When TRUE (legacy): Manual recalculateAll() and render() calls are executed.
+ * When FALSE (new):   Reactive architecture - Worker calculates, tasks$ emits, UI auto-renders.
+ * 
+ * Set to false to use new reactive architecture.
+ * Set to true to revert to legacy double-calculation if issues arise.
+ * 
+ * @see docs/PHASE1_ARCHITECTURAL_OPTIMIZATION.md
+ */
+const ENABLE_LEGACY_RECALC = false;  // Phase 4: Testing new reactive architecture
+
+/**
  * Main scheduler service - orchestrates the entire application
  */
 export class SchedulerService {
@@ -101,7 +114,7 @@ export class SchedulerService {
     // Data stores
     // NOTE: taskStore and calendarStore removed - data flows through ProjectController
     private tradePartnerStore!: TradePartnerStore;
-    private historyManager!: HistoryManager;
+    // NOTE: historyManager moved to AppInitializer - access via ProjectController.getHistoryManager()
 
     // UI services
     public toastService!: ToastService;  // Public for access from main.ts
@@ -339,15 +352,8 @@ export class SchedulerService {
             );
         }
 
-        // Initialize HistoryManager for undo/redo
-        this.historyManager = new HistoryManager({
-            maxHistory: 50
-        });
-
-        // Wire HistoryManager to ProjectController for event recording
-        if (!controller.hasHistoryManager()) {
-            controller.setHistoryManager(this.historyManager);
-        }
+        // NOTE: HistoryManager is now initialized in AppInitializer (application level)
+        // Access via ProjectController.getInstance().getHistoryManager()
 
         // UI services
         this.toastService = new ToastService({
@@ -1422,7 +1428,7 @@ export class SchedulerService {
             this._sel_selectSingle(taskId);
         }
 
-        this._sel_setFocused(taskId);
+        this._sel_setFocused(taskId, this._lastClickedField);
         this._updateSelection();
         this._updateHeaderCheckboxState();
     }
@@ -1607,8 +1613,10 @@ export class SchedulerService {
             // NOTE: Removed engine sync - ProjectController handles via Worker
             
             this.toastService.info('Task started - schedule locked with SNET constraint');
-            this.recalculateAll();
-            this.render();
+            if (ENABLE_LEGACY_RECALC) {
+                this.recalculateAll();
+                this.render();
+            }
             return;
             
         } else if (field === 'actualFinish') {
@@ -1651,14 +1659,18 @@ export class SchedulerService {
             // NOTE: Removed engine sync - ProjectController handles via Worker
             
             this.toastService.success('Task complete');
-            this.recalculateAll();
-            this.render();
+            if (ENABLE_LEGACY_RECALC) {
+                this.recalculateAll();
+                this.render();
+            }
             return;
         }
         
         // Recalculate and render
-        this.recalculateAll();
-        this.render();
+        if (ENABLE_LEGACY_RECALC) {
+            this.recalculateAll();
+            this.render();
+        }
     }
 
     /**
@@ -2015,14 +2027,18 @@ export class SchedulerService {
         
         // Handle follow-up actions
         if (result.needsRecalc) {
-            // CRITICAL: Await recalculation to prevent transaction conflicts and visual flash
-            // This ensures:
-            // 1. Recalculation completes before saveData() (prevents transaction errors)
-            // 2. _applyCalculationResult() updates data synchronously before render() (prevents flash)
-            await this.recalculateAll();
-            // Note: render() is already called by _applyCalculationResult(), so we don't need to call it again
-            // Save data after recalculation completes to avoid transaction conflicts
-            this.saveData();
+            if (ENABLE_LEGACY_RECALC) {
+                // LEGACY: Await recalculation to prevent transaction conflicts and visual flash
+                // This ensures:
+                // 1. Recalculation completes before saveData() (prevents transaction errors)
+                // 2. _applyCalculationResult() updates data synchronously before render() (prevents flash)
+                await this.recalculateAll();
+                // Note: render() is already called by _applyCalculationResult(), so we don't need to call it again
+                // Save data after recalculation completes to avoid transaction conflicts
+                this.saveData();
+            }
+            // NEW: With ENABLE_LEGACY_RECALC=false, ProjectController.updateTask() triggers
+            // Worker calculation, and reactive saveData subscription handles persistence
         } else if (result.needsRender) {
             // Update GridRenderer.data synchronously BEFORE render() so that when _bindCell()
             // is called during the render cycle, it has the correct task structure.
@@ -2031,8 +2047,10 @@ export class SchedulerService {
             // Update GanttRenderer.data synchronously BEFORE render() to eliminate flash
             this._updateGanttDataSync();
             
-            this.render();
-            this.saveData();
+            if (ENABLE_LEGACY_RECALC) {
+                this.render();
+                this.saveData();
+            }
         } else {
             // Update GridRenderer.data synchronously BEFORE render() so that when _bindCell()
             // is called during the render cycle, it has the correct task structure.
@@ -2041,8 +2059,10 @@ export class SchedulerService {
             // Update GanttRenderer.data synchronously BEFORE render() to eliminate flash
             this._updateGanttDataSync();
             
-            // Even if no recalc/render needed, save the data
-            this.saveData();
+            if (ENABLE_LEGACY_RECALC) {
+                // Even if no recalc/render needed, save the data
+                this.saveData();
+            }
         }
     }
 
@@ -2163,14 +2183,20 @@ export class SchedulerService {
         
         // Handle follow-up actions
         if (result.needsRecalc) {
-            this.recalculateAll();
-            this.saveData();
-            this.render();
+            if (ENABLE_LEGACY_RECALC) {
+                this.recalculateAll();
+                this.saveData();
+                this.render();
+            }
         } else if (result.needsRender) {
-            this.render();
-            this.saveData();
+            if (ENABLE_LEGACY_RECALC) {
+                this.render();
+                this.saveData();
+            }
         } else {
-            this.saveData();
+            if (ENABLE_LEGACY_RECALC) {
+                this.saveData();
+            }
         }
         
         // Sync drawer with updated values (dates may have changed from CPM)
@@ -2201,9 +2227,11 @@ export class SchedulerService {
         
         // NOTE: Removed engine sync - ProjectController handles via Worker
         
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        if (ENABLE_LEGACY_RECALC) {
+            this.recalculateAll();
+            this.saveData();
+            this.render();
+        }
     }
 
     /**
@@ -2217,9 +2245,11 @@ export class SchedulerService {
         
         // NOTE: Removed engine sync - ProjectController handles via Worker
         
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        if (ENABLE_LEGACY_RECALC) {
+            this.recalculateAll();
+            this.saveData();
+            this.render();
+        }
         this.toastService.success('Calendar updated. Recalculating schedule...');
     }
 
@@ -2409,9 +2439,11 @@ export class SchedulerService {
         // RECALCULATE, SAVE, AND RENDER
         // =========================================================================
         
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        if (ENABLE_LEGACY_RECALC) {
+            this.recalculateAll();
+            this.saveData();
+            this.render();
+        }
         
         // =========================================================================
         // USER FEEDBACK
@@ -2442,9 +2474,11 @@ export class SchedulerService {
         const duration = DateUtils.calcWorkDays(start, end, calendar);
         
         ProjectController.getInstance().updateTask(task.id, { start, end, duration });
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        if (ENABLE_LEGACY_RECALC) {
+            this.recalculateAll();
+            this.saveData();
+            this.render();
+        }
     }
 
     // =========================================================================
@@ -2471,7 +2505,7 @@ export class SchedulerService {
         }
         
         const editableColumns = this.getColumnDefinitions()
-            .filter(col => col.type === 'text' || col.type === 'number' || col.type === 'date' || col.type === 'select')
+            .filter(col => col.type === 'text' || col.type === 'number' || col.type === 'date' || col.type === 'select' || col.type === 'name' || col.type === 'schedulingMode')
             .map(col => col.field);
         
         if (editableColumns.length === 0) return;
@@ -2653,9 +2687,11 @@ export class SchedulerService {
         });
         
         // 5. Update store and render
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        if (ENABLE_LEGACY_RECALC) {
+            this.recalculateAll();
+            this.saveData();
+            this.render();
+        }
     }
 
     /**
@@ -2708,9 +2744,11 @@ export class SchedulerService {
         });
         
         // 4. Update store and render
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        if (ENABLE_LEGACY_RECALC) {
+            this.recalculateAll();
+            this.saveData();
+            this.render();
+        }
     }
 
     /**
@@ -2966,8 +3004,9 @@ export class SchedulerService {
         const idsToDelete = this._sel_toArray();
         
         // Begin composite action for bulk delete (for undo/redo grouping)
-        if (this.historyManager) {
-            this.historyManager.beginComposite(`Delete ${idsToDelete.length} Task(s)`);
+        const historyManager = controller.getHistoryManager();
+        if (historyManager) {
+            historyManager.beginComposite(`Delete ${idsToDelete.length} Task(s)`);
         }
         
         try {
@@ -2977,8 +3016,8 @@ export class SchedulerService {
             }
         } finally {
             // End composite action
-            if (this.historyManager) {
-                this.historyManager.endComposite();
+            if (historyManager) {
+                historyManager.endComposite();
             }
         }
 
@@ -3391,9 +3430,11 @@ export class SchedulerService {
         }
         
         if (indentedCount > 0) {
-            this.recalculateAll();
-            this.saveData();
-            this.render();
+            if (ENABLE_LEGACY_RECALC) {
+                this.recalculateAll();
+                this.saveData();
+                this.render();
+            }
             this.toastService?.success(`Indented ${indentedCount} task${indentedCount > 1 ? 's' : ''}`);
         }
     }
@@ -3446,9 +3487,11 @@ export class SchedulerService {
         }
         
         if (outdentedCount > 0) {
-            this.recalculateAll();
-            this.saveData();
-            this.render();
+            if (ENABLE_LEGACY_RECALC) {
+                this.recalculateAll();
+                this.saveData();
+                this.render();
+            }
             this.toastService?.success(`Outdented ${outdentedCount} task${outdentedCount > 1 ? 's' : ''}`);
         }
     }
@@ -3501,9 +3544,11 @@ export class SchedulerService {
             this._sel_setFocused(null);
         }
         
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        if (ENABLE_LEGACY_RECALC) {
+            this.recalculateAll();
+            this.saveData();
+            this.render();
+        }
         
         this.toastService?.success(`Deleted ${idsToDelete.length} task${idsToDelete.length > 1 ? 's' : ''}`);
     }
@@ -3740,8 +3785,10 @@ export class SchedulerService {
         }
         
         // Recalculate CPM (dates may change due to new dependencies)
-        this.recalculateAll();
-        this.render();
+        if (ENABLE_LEGACY_RECALC) {
+            this.recalculateAll();
+            this.render();
+        }
         
         this.toastService?.success(`Linked ${linkable.length} tasks in sequence`);
     }
@@ -4502,9 +4549,11 @@ export class SchedulerService {
         this._updateSelection();
 
         // 12. recalculateAll() → saveData() → render()
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        if (ENABLE_LEGACY_RECALC) {
+            this.recalculateAll();
+            this.saveData();
+            this.render();
+        }
 
         // Scroll to show the first pasted task
         // Use requestAnimationFrame to ensure render completes before scrolling
@@ -5102,12 +5151,15 @@ export class SchedulerService {
      * Now routes through ProjectController for unified state management
      */
     undo(): void {
-        if (!this.historyManager) {
+        const controller = ProjectController.getInstance();
+        const historyManager = controller.getHistoryManager();
+        
+        if (!historyManager) {
             this.toastService.info('History manager not available');
             return;
         }
 
-        const backwardEvents = this.historyManager.undo();
+        const backwardEvents = historyManager.undo();
         if (!backwardEvents || backwardEvents.length === 0) {
             this.toastService.info('Nothing to undo');
             return;
@@ -5115,13 +5167,12 @@ export class SchedulerService {
 
         // Apply all backward events through ProjectController
         // ProjectController handles optimistic updates and worker sync
-        const controller = ProjectController.getInstance();
         controller.applyEvents(backwardEvents);
         
         // No need to call recalculateAll() or render() - ProjectController does this via worker
         // and SchedulerViewport subscribes to tasks$ for UI updates
         
-        const label = this.historyManager.getRedoLabel();
+        const label = historyManager.getRedoLabel();
         this.toastService.info(label ? `Undone: ${label}` : 'Undone');
     }
 
@@ -5130,12 +5181,15 @@ export class SchedulerService {
      * Now routes through ProjectController for unified state management
      */
     redo(): void {
-        if (!this.historyManager) {
+        const controller = ProjectController.getInstance();
+        const historyManager = controller.getHistoryManager();
+        
+        if (!historyManager) {
             this.toastService.info('History manager not available');
             return;
         }
 
-        const forwardEvents = this.historyManager.redo();
+        const forwardEvents = historyManager.redo();
         if (!forwardEvents || forwardEvents.length === 0) {
             this.toastService.info('Nothing to redo');
             return;
@@ -5143,13 +5197,12 @@ export class SchedulerService {
 
         // Apply all forward events through ProjectController
         // ProjectController handles optimistic updates and worker sync
-        const controller = ProjectController.getInstance();
         controller.applyEvents(forwardEvents);
         
         // No need to call recalculateAll() or render() - ProjectController does this via worker
         // and SchedulerViewport subscribes to tasks$ for UI updates
         
-        const label = this.historyManager.getUndoLabel();
+        const label = historyManager.getUndoLabel();
         this.toastService.info(label ? `Redone: ${label}` : 'Redone');
     }
 
@@ -5185,9 +5238,11 @@ export class SchedulerService {
                 if (data.calendar) {
                     ProjectController.getInstance().updateCalendar(data.calendar);
                 }
-                this.recalculateAll();
-                this.saveData();
-                this.render();
+                if (ENABLE_LEGACY_RECALC) {
+                    this.recalculateAll();
+                    this.saveData();
+                    this.render();
+                }
                 this.toastService.success(`Loaded ${ProjectController.getInstance().getTasks().length} tasks`);
             }
         } catch (err) {
@@ -5275,8 +5330,10 @@ export class SchedulerService {
             ProjectController.getInstance().updateCalendar(result.calendar);
         }
         
-        this.recalculateAll();
-        this.saveData();
+        if (ENABLE_LEGACY_RECALC) {
+            this.recalculateAll();
+            this.saveData();
+        }
         this.toastService.success(`Imported ${result.tasks.length} tasks from MS Project`);
     }
 
@@ -5318,9 +5375,11 @@ export class SchedulerService {
         ProjectController.getInstance().syncTasks([]);
         this._createSampleData();
         
-        this.recalculateAll();
-        await this.saveData();
-        this.render();
+        if (ENABLE_LEGACY_RECALC) {
+            this.recalculateAll();
+            await this.saveData();
+            this.render();
+        }
         
         this.toastService.success('All data cleared - starting fresh');
     }
@@ -5528,9 +5587,11 @@ export class SchedulerService {
         }
         
         ProjectController.getInstance().syncTasks(tasks);
-        this.recalculateAll();
-        this.saveData();
-        this.render();
+        if (ENABLE_LEGACY_RECALC) {
+            this.recalculateAll();
+            this.saveData();
+            this.render();
+        }
         
         this.toastService?.success(`Generated ${count} tasks`);
     }
@@ -5571,9 +5632,11 @@ export class SchedulerService {
         const result = await this._applyTaskEdit(taskId, 'schedulingMode', mode);
         
         if (result.success && result.needsRecalc) {
-            this.recalculateAll();
-            this.saveData();
-            this.render();
+            if (ENABLE_LEGACY_RECALC) {
+                this.recalculateAll();
+                this.saveData();
+                this.render();
+            }
         }
     }
 
