@@ -37,6 +37,7 @@ import { ProjectController } from './ProjectController';
 import { SelectionModel } from './SelectionModel';
 import { AppInitializer } from './AppInitializer';
 import { getEditingStateManager, type EditingStateChangeEvent } from './EditingStateManager';
+import { CommandService } from '../commands';
 import { getTaskFieldValue } from '../types';
 import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport';
 import { GridRenderer } from '../ui/components/scheduler/GridRenderer';
@@ -2609,89 +2610,8 @@ export class SchedulerService {
      * @private
      */
     private _handleTabIndent(): void {
-        if (this._sel_count() === 0) return;
-        
-        this.saveCheckpoint();
-        
-        const list = this._getFlatList();
-        const selectedIds = new Set(this._sel_toArray());
-        const allTasks = ProjectController.getInstance().getTasks();
-        
-        // 1. Find the "top-level" selected tasks 
-        //    (tasks whose parent is NOT also selected)
-        const topLevelSelected = list.filter(task => 
-            selectedIds.has(task.id) && 
-            (!task.parentId || !selectedIds.has(task.parentId))
-        );
-        
-        if (topLevelSelected.length === 0) return;
-        
-        // 2. Find the first top-level selected task to determine the new parent
-        //    New parent = the sibling immediately ABOVE it (not selected)
-        //    If no valid sibling above, skip this task
-        const firstTask = topLevelSelected[0];
-        const firstIdx = list.findIndex(t => t.id === firstTask.id);
-        
-        // Validation: prevent indent on first task
-        if (firstIdx <= 0) return;
-        
-        const prev = list[firstIdx - 1];
-        const taskDepth = ProjectController.getInstance().getDepth(firstTask.id);
-        const prevDepth = ProjectController.getInstance().getDepth(prev.id);
-        
-        // Can't indent if previous task is at a deeper level
-        if (prevDepth < taskDepth) return;
-        
-        // Determine new parent for the first task
-        let newParentId: string | null = null;
-        if (prevDepth === taskDepth) {
-            // Same depth - make previous task the parent
-            newParentId = prev.id;
-        } else {
-            // Previous task is at shallower depth - find ancestor at same depth
-            let curr: Task | undefined = prev;
-            while (curr && ProjectController.getInstance().getDepth(curr.id) > taskDepth) {
-                curr = allTasks.find(t => t.id === curr!.parentId);
-            }
-            if (curr) {
-                newParentId = curr.id;
-            }
-        }
-        
-        // Validation: prevent circular references (new parent shouldn't be a descendant)
-        if (newParentId) {
-            // Check if any selected task is a descendant of newParentId
-            const newParentDescendants = this._getAllDescendants(newParentId);
-            const wouldCreateCircularRef = topLevelSelected.some(task => 
-                newParentDescendants.has(task.id)
-            );
-            if (wouldCreateCircularRef) {
-                return; // Would create circular reference
-            }
-        }
-        
-        if (!newParentId) return;
-        
-        // 3. Apply SAME parent to ALL top-level selected tasks
-        //    Children of selected tasks keep their parentId unchanged
-        //    (they move with their parent automatically)
-        topLevelSelected.forEach(task => {
-            // Get the new parent's last child's sortKey
-            const newSortKey = OrderingService.generateAppendKey(
-                ProjectController.getInstance().getLastSortKey(newParentId)
-            );
-            ProjectController.getInstance().updateTask(task.id, { 
-                parentId: newParentId,
-                sortKey: newSortKey
-            });
-        });
-        
-        // 5. Update store and render
-        if (ENABLE_LEGACY_RECALC) {
-            this.recalculateAll();
-            this.saveData();
-            this.render();
-        }
+        // PHASE 2: Delegate to CommandService
+        CommandService.getInstance().execute('hierarchy.indent');
     }
 
     /**
@@ -2699,56 +2619,8 @@ export class SchedulerService {
      * @private
      */
     private _handleTabOutdent(): void {
-        if (this._sel_count() === 0) return;
-        
-        this.saveCheckpoint();
-        
-        const list = this._getFlatList();
-        const selectedIds = new Set(this._sel_toArray());
-        const allTasks = ProjectController.getInstance().getTasks();
-        
-        // 1. Find top-level selected tasks (parent not selected)
-        const topLevelSelected = list.filter(task => 
-            selectedIds.has(task.id) && 
-            (!task.parentId || !selectedIds.has(task.parentId))
-        );
-        
-        if (topLevelSelected.length === 0) return;
-        
-        // 2. For each top-level selected task, move to grandparent
-        //    New parent = current parent's parent (grandparent)
-        //    If already at root (parentId is null), skip
-        topLevelSelected.forEach(task => {
-            // Validation: prevent outdent on root tasks
-            if (!task.parentId) return;
-            
-            const currentParent = allTasks.find(t => t.id === task.parentId);
-            const grandparentId = currentParent ? currentParent.parentId : null;
-            
-            // Insert after the former parent among its siblings
-            const formerParent = currentParent;
-            const auntsUncles = ProjectController.getInstance().getChildren(grandparentId);
-            const formerParentIndex = auntsUncles.findIndex(t => t.id === formerParent?.id);
-            
-            const beforeKey = formerParent?.sortKey ?? null;
-            const afterKey = formerParentIndex < auntsUncles.length - 1 
-                ? auntsUncles[formerParentIndex + 1].sortKey 
-                : null;
-            
-            const newSortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
-            
-            ProjectController.getInstance().updateTask(task.id, { 
-                parentId: grandparentId,
-                sortKey: newSortKey
-            });
-        });
-        
-        // 4. Update store and render
-        if (ENABLE_LEGACY_RECALC) {
-            this.recalculateAll();
-            this.saveData();
-            this.render();
-        }
+        // PHASE 2: Delegate to CommandService
+        CommandService.getInstance().execute('hierarchy.outdent');
     }
 
     /**
@@ -2756,28 +2628,14 @@ export class SchedulerService {
      * @private
      */
     private _handleEscape(): void {
-        // First check if drawer is open
+        // First check if drawer is open (UI-specific, not in command)
         if (this.drawer && this.drawer.isDrawerOpen()) {
             this.drawer.close();
             return;
         }
         
-        // If cut is pending, cancel it
-        if (this.clipboardIsCut) {
-            // Remove 'row-cut' visual class from original rows (if implemented)
-            // For now, just clear the cut state
-            
-            // Clear clipboard
-            this.clipboard = null;
-            this.clipboardIsCut = false;
-            this.clipboardOriginalIds = [];
-            
-            this.toastService.info('Cut cancelled');
-            return;
-        }
-        
-        // Otherwise, deselect all
-        this._sel_clear();
+        // PHASE 2: Delegate to CommandService for cut cancel / selection clear
+        CommandService.getInstance().execute('selection.escape');
         this._updateSelection();
     }
 
@@ -2998,36 +2856,8 @@ export class SchedulerService {
      * @private
      */
     private _deleteSelected(): void {
-        if (this._sel_count() === 0) return;
-        
-        const controller = ProjectController.getInstance();
-        const idsToDelete = this._sel_toArray();
-        
-        // Begin composite action for bulk delete (for undo/redo grouping)
-        const historyManager = controller.getHistoryManager();
-        if (historyManager) {
-            historyManager.beginComposite(`Delete ${idsToDelete.length} Task(s)`);
-        }
-        
-        try {
-            for (const id of idsToDelete) {
-                // Fire-and-forget to ProjectController (handles optimistic update + worker + persistence)
-                controller.deleteTask(id);
-            }
-        } finally {
-            // End composite action
-            if (historyManager) {
-                historyManager.endComposite();
-            }
-        }
-
-        this._sel_clear();
-        this._sel_setFocused(null);
-        
-        // NOTE: Removed recalculateAll(), saveData(), render()
-        // ProjectController handles these via Worker + optimistic updates
-        
-        this.toastService.success(`Deleted ${idsToDelete.length} task(s)`);
+        // PHASE 2: Delegate to CommandService
+        CommandService.getInstance().execute('task.delete');
     }
 
     /**
@@ -3035,17 +2865,8 @@ export class SchedulerService {
      * @param taskId - Task ID
      */
     toggleCollapse(taskId: string): void {
-        const controller = ProjectController.getInstance();
-        const task = controller.getTaskById(taskId);
-        if (!task) return;
-
-        // Fire-and-forget to ProjectController
-        controller.updateTask(taskId, {
-            _collapsed: !task._collapsed
-        });
-        
-        // NOTE: Removed manual render logic - SchedulerViewport subscribes to controller.tasks$
-        // and will auto-update when the optimistic update is applied
+        // PHASE 2: Delegate to CommandService
+        CommandService.getInstance().execute('view.toggleCollapse', { args: { taskId } });
     }
 
     /**
@@ -3719,335 +3540,32 @@ export class SchedulerService {
      * Single undo reverses all created links
      */
     linkSelectedInOrder(): void {
-        const selectedArray = this.getSelectionInOrder();
-        
-        if (selectedArray.length < 2) {
-            this.toastService?.warning('Select 2 or more tasks to link');
-            return;
-        }
-        
-        // Filter out parent/summary tasks (can't link them)
-        const linkable = selectedArray.filter(id => !ProjectController.getInstance().isParent(id));
-        
-        if (linkable.length < 2) {
-            this.toastService?.warning('Need 2+ non-summary tasks to link');
-            return;
-        }
-        
-        // Track how many links we create
-        let linksCreated = 0;
-        const tasksToUpdate: Array<{ id: string; oldDeps: Dependency[]; newDeps: Dependency[] }> = [];
-        
-        // Create links: task[0] → task[1] → task[2] → ...
-        for (let i = 0; i < linkable.length - 1; i++) {
-            const predecessorId = linkable[i];
-            const successorId = linkable[i + 1];
-            const successor = ProjectController.getInstance().getTaskById(successorId);
-            
-            if (!successor) continue;
-            
-            // Skip if link already exists
-            const existingDeps = successor.dependencies || [];
-            if (existingDeps.some(d => d.id === predecessorId)) {
-                continue;
-            }
-            
-            // Create new dependency
-            const newDep: Dependency = { 
-                id: predecessorId, 
-                type: 'FS' as LinkType, 
-                lag: 0 
-            };
-            
-            const newDeps = [...existingDeps, newDep];
-            
-            tasksToUpdate.push({
-                id: successorId,
-                oldDeps: existingDeps,
-                newDeps: newDeps
-            });
-            
-            linksCreated++;
-        }
-        
-        if (linksCreated === 0) {
-            this.toastService?.info('Tasks are already linked');
-            return;
-        }
-        
-        // Apply all updates (each creates its own history entry)
-        // The undo stack will have multiple entries, but that's acceptable
-        // For true batch undo, we'd need HistoryManager changes
-        for (const update of tasksToUpdate) {
-            ProjectController.getInstance().updateTask(update.id, { dependencies: update.newDeps });
-            
-            // NOTE: Removed engine sync - ProjectController handles via Worker
-        }
-        
-        // Recalculate CPM (dates may change due to new dependencies)
-        if (ENABLE_LEGACY_RECALC) {
-            this.recalculateAll();
-            this.render();
-        }
-        
-        this.toastService?.success(`Linked ${linkable.length} tasks in sequence`);
+        // PHASE 2: Delegate to CommandService
+        CommandService.getInstance().execute('dependency.linkSelected');
     }
 
     /**
-     * Insert task above focused task
-     */
-    /**
      * Insert a new task above the currently focused task
-     * Uses fractional indexing to insert between siblings
      */
     insertTaskAbove(): void {
-        // Guard: Don't allow task creation during initialization
-        if (!this.isInitialized) {
-            console.log('[SchedulerService] ⚠️ insertTaskAbove() blocked - not initialized');
-            return;
-        }
-        
-        const controller = ProjectController.getInstance();
-        const currentFocusedId = this._sel_getFocused();
-        
-        // If no focused task, just add to bottom
-        if (!currentFocusedId) {
-            this.addTask();
-            return;
-        }
-        
-        const focusedTask = controller.getTaskById(currentFocusedId);
-        if (!focusedTask) {
-            this.addTask();
-            return;
-        }
-        
-        this.saveCheckpoint();
-        
-        // Get siblings sorted by sortKey
-        const siblings = controller.getChildren(focusedTask.parentId ?? null);
-        const focusedIndex = siblings.findIndex(t => t.id === focusedTask.id);
-        
-        // Determine sort key bounds for insertion
-        const beforeKey = focusedIndex > 0 ? siblings[focusedIndex - 1].sortKey : null;
-        const afterKey = focusedTask.sortKey;
-        
-        // Generate key between previous sibling and focused task
-        const sortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
-        
-        const today = DateUtils.today();
-        
-        // Create new task
-        const newTask: Task = {
-            id: `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            name: 'New Task',
-            start: today,
-            end: today,
-            duration: 1,
-            parentId: focusedTask.parentId,
-            dependencies: [],
-            progress: 0,
-            constraintType: 'asap',
-            constraintDate: null,
-            notes: '',
-            level: focusedTask.level || 0,
-            sortKey: sortKey,
-            _collapsed: false,
-        } as Task;
-        
-        // Fire-and-forget to ProjectController
-        controller.addTask(newTask);
-        
-        // Focus the new task
-        this._sel_selectSingle(newTask.id);
-        
-        // Pass focusCell: true to focus the name input for immediate editing
-        if (this.grid) {
-            this.grid.setSelection(this.selectedIds, this._sel_getFocused(), { focusCell: true, focusField: 'name' });
-        }
-        if (this.gantt) {
-            this.gantt.setSelection(this.selectedIds);
-        }
-        this._updateHeaderCheckboxState();
-        
-        // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
-        
-        this.toastService.success('Task inserted');
+        // PHASE 2: Delegate to CommandService
+        CommandService.getInstance().execute('task.insertAbove');
     }
 
     /**
      * Insert a new task BELOW the currently focused task
-     * Uses fractional indexing to insert between siblings
      */
     insertTaskBelow(): void {
-        // Guard: Don't allow task creation during initialization
-        if (!this.isInitialized) {
-            console.log('[SchedulerService] ⚠️ insertTaskBelow() blocked - not initialized');
-            return;
-        }
-        
-        const controller = ProjectController.getInstance();
-        const currentFocusedId = this._sel_getFocused();
-        
-        // If no focused task, just add to bottom
-        if (!currentFocusedId) {
-            this.addTask();
-            return;
-        }
-        
-        const focusedTask = controller.getTaskById(currentFocusedId);
-        if (!focusedTask) {
-            this.addTask();
-            return;
-        }
-        
-        this.saveCheckpoint();
-        
-        // Get siblings sorted by sortKey
-        const siblings = controller.getChildren(focusedTask.parentId ?? null);
-        const focusedIndex = siblings.findIndex(t => t.id === focusedTask.id);
-        
-        // Determine sort key bounds for insertion BELOW focused task
-        // beforeKey = focused task's key (insert AFTER this)
-        // afterKey = next sibling's key (insert BEFORE this), or null if at end
-        const beforeKey = focusedTask.sortKey;
-        const afterKey = (focusedIndex >= 0 && focusedIndex < siblings.length - 1)
-            ? siblings[focusedIndex + 1].sortKey
-            : null;
-        
-        // Generate key between focused task and next sibling
-        const sortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
-        
-        const today = DateUtils.today();
-        
-        // Create new task
-        const newTask: Task = {
-            id: `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            name: 'New Task',
-            start: today,
-            end: today,
-            duration: 1,
-            parentId: focusedTask.parentId,
-            dependencies: [],
-            progress: 0,
-            constraintType: 'asap',
-            constraintDate: null,
-            notes: '',
-            level: focusedTask.level || 0,
-            sortKey: sortKey,
-            _collapsed: false,
-        } as Task;
-        
-        // Fire-and-forget to ProjectController
-        controller.addTask(newTask);
-        
-        // Focus the new task
-        this._sel_selectSingle(newTask.id);
-        
-        // Pass focusCell: true to focus the name input for immediate editing
-        if (this.grid) {
-            this.grid.setSelection(this.selectedIds, this._sel_getFocused(), { focusCell: true, focusField: 'name' });
-        }
-        if (this.gantt) {
-            this.gantt.setSelection(this.selectedIds);
-        }
-        this._updateHeaderCheckboxState();
-        
-        // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
-        
-        this.toastService.success('Task inserted');
+        // PHASE 2: Delegate to CommandService
+        CommandService.getInstance().execute('task.insertBelow');
     }
 
     /**
      * Add a new task as a CHILD of the currently focused task
-     * If focused task has no children, this is the first child
-     * If focused task has children, appends to end of children
-     * If no task is focused, behaves like addTask() (adds to root)
      */
     addChildTask(): void {
-        // Guard: Don't allow task creation during initialization
-        if (!this.isInitialized) {
-            console.log('[SchedulerService] ⚠️ addChildTask() blocked - not initialized');
-            return;
-        }
-        
-        const controller = ProjectController.getInstance();
-        const currentFocusedId = this._sel_getFocused();
-        
-        // If no focused task, just add to root level
-        if (!currentFocusedId) {
-            this.addTask();
-            return;
-        }
-        
-        const parentTask = controller.getTaskById(currentFocusedId);
-        if (!parentTask) {
-            this.addTask();
-            return;
-        }
-        
-        this.saveCheckpoint();
-        
-        // The focused task becomes the parent
-        const newParentId = currentFocusedId;
-        
-        // Get existing children of this parent (sorted by sortKey)
-        const existingChildren = controller.getChildren(newParentId);
-        
-        // Generate sortKey - append after last child (or first child if none)
-        const lastChildKey = existingChildren.length > 0 
-            ? existingChildren[existingChildren.length - 1].sortKey 
-            : null;
-        const sortKey = OrderingService.generateInsertKey(lastChildKey, null);
-        
-        const today = DateUtils.today();
-        
-        // Create new task as child
-        const newTask: Task = {
-            id: `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            name: 'New Task',
-            start: today,
-            end: today,
-            duration: 1,
-            parentId: newParentId,  // KEY: Set parent to focused task
-            dependencies: [],
-            progress: 0,
-            constraintType: 'asap',
-            constraintDate: null,
-            notes: '',
-            level: (parentTask.level || 0) + 1,  // Increment level
-            sortKey: sortKey,
-            _collapsed: false,
-        } as Task;
-        
-        // Ensure parent is expanded so child is visible
-        if (parentTask._collapsed) {
-            controller.updateTask(newParentId, { _collapsed: false });
-        }
-        
-        // Fire-and-forget to ProjectController
-        controller.addTask(newTask);
-        
-        // Focus the new task
-        this._sel_selectSingle(newTask.id);
-        
-        // Update selection with focusCell to immediately enter edit mode
-        if (this.grid) {
-            this.grid.setSelection(this.selectedIds, this._sel_getFocused(), { focusCell: true, focusField: 'name' });
-        }
-        if (this.gantt) {
-            this.gantt.setSelection(this.selectedIds);
-        }
-        this._updateHeaderCheckboxState();
-        
-        // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
-        
-        // Scroll to new task
-        if (this.grid) {
-            this.grid.scrollToTask(newTask.id);
-        }
-        
-        this.toastService.success('Child task added');
+        // PHASE 2: Delegate to CommandService
+        CommandService.getInstance().execute('task.addChild');
     }
 
     /**
@@ -4055,49 +3573,12 @@ export class SchedulerService {
      * Only modifies the moved task's sortKey
      */
     moveSelectedTasks(direction: number): void {
-        const controller = ProjectController.getInstance();
-        
-        const focusedId = this._sel_getFocused();
-        if (!focusedId) return;
-        
-        const task = controller.getTaskById(focusedId);
-        if (!task) return;
-        
-        const siblings = controller.getChildren(task.parentId ?? null);
-        const currentIndex = siblings.findIndex(t => t.id === task.id);
-        
-        // Already at top
-        if (direction === -1 && currentIndex <= 0) return;
-        // Already at bottom
-        if (direction === 1 && currentIndex >= siblings.length - 1) return;
-        
-        this.saveCheckpoint();
-        
+        // PHASE 2: Delegate to CommandService
         if (direction === -1) {
-            // Move up: before previous sibling
-            const prevSibling = siblings[currentIndex - 1];
-            const beforeKey = currentIndex > 1 ? siblings[currentIndex - 2].sortKey : null;
-            const afterKey = prevSibling.sortKey;
-            
-            // Generate new key
-            const newSortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
-            
-            // Fire-and-forget to ProjectController
-            controller.updateSortKey(task.id, newSortKey);
+            CommandService.getInstance().execute('hierarchy.moveUp');
         } else {
-            // Move down: after next sibling
-            const nextSibling = siblings[currentIndex + 1];
-            const beforeKey = nextSibling.sortKey;
-            const afterKey = currentIndex < siblings.length - 2 ? siblings[currentIndex + 2].sortKey : null;
-            
-            // Generate new key
-            const newSortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
-            
-            // Fire-and-forget to ProjectController
-            controller.updateSortKey(task.id, newSortKey);
+            CommandService.getInstance().execute('hierarchy.moveDown');
         }
-        
-        // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
         
         // Keep focus on moved task
         if (this.grid) {
@@ -4310,265 +3791,24 @@ export class SchedulerService {
      * Copy selected tasks
      */
     copySelected(): void {
-        if (this._sel_count() === 0) {
-            this.toastService.info('No tasks selected');
-            return;
-        }
-
-        const selected = ProjectController.getInstance().getTasks().filter(t => this._sel_has(t.id));
-        
-        // Include children - for each selected parent, auto-include ALL descendants (recursively)
-        const payload = new Set<Task>();
-        const getDescendants = (parentId: string): void => {
-            ProjectController.getInstance().getChildren(parentId).forEach(child => {
-                payload.add(child);
-                getDescendants(child.id);
-            });
-        };
-
-        selected.forEach(task => {
-            payload.add(task);
-            if (ProjectController.getInstance().isParent(task.id)) {
-                getDescendants(task.id);
-            }
-        });
-
-        // Deep clone the collection (JSON parse/stringify)
-        const payloadArray = Array.from(payload);
-        this.clipboard = payloadArray.map(t => JSON.parse(JSON.stringify(t)));
-        
-        // Store original IDs
-        this.clipboardOriginalIds = payloadArray.map(t => t.id);
-        
-        // Set clipboardIsCut = false
-        this.clipboardIsCut = false;
-        
-        this.toastService.success(`Copied ${this.clipboard.length} task(s)`);
+        // PHASE 2: Delegate to CommandService
+        CommandService.getInstance().execute('clipboard.copy');
     }
 
     /**
      * Cut selected tasks
      */
     cutSelected(): void {
-        if (this._sel_count() === 0) {
-            this.toastService.info('No tasks selected');
-            return;
-        }
-
-        // Perform same logic as copySelection()
-        const selected = ProjectController.getInstance().getTasks().filter(t => this._sel_has(t.id));
-        
-        // Include children - for each selected parent, auto-include ALL descendants (recursively)
-        const payload = new Set<Task>();
-        const getDescendants = (parentId: string): void => {
-            ProjectController.getInstance().getChildren(parentId).forEach(child => {
-                payload.add(child);
-                getDescendants(child.id);
-            });
-        };
-
-        selected.forEach(task => {
-            payload.add(task);
-            if (ProjectController.getInstance().isParent(task.id)) {
-                getDescendants(task.id);
-            }
-        });
-
-        // Deep clone the collection (JSON parse/stringify)
-        const payloadArray = Array.from(payload);
-        this.clipboard = payloadArray.map(t => JSON.parse(JSON.stringify(t)));
-        
-        // Store original IDs for deletion after cut-paste
-        this.clipboardOriginalIds = payloadArray.map(t => t.id);
-        
-        // Set clipboardIsCut = true
-        this.clipboardIsCut = true;
-        
-        // Do NOT delete tasks yet - wait for paste
-        
-        this.toastService.success(`Cut ${this.clipboard.length} task(s)`);
+        // PHASE 2: Delegate to CommandService
+        CommandService.getInstance().execute('clipboard.cut');
     }
 
     /**
      * Paste tasks
      */
     paste(): void {
-        // 1. If clipboard is empty, show toast "Nothing to paste" and return
-        if (!this.clipboard || this.clipboard.length === 0) {
-            this.toastService.info('Nothing to paste');
-            return;
-        }
-
-        // 2. saveCheckpoint() for undo
-        this.saveCheckpoint();
-
-        // 3. Determine target parentId (same parent as focused task, or null)
-        const currentFocusedId = this._sel_getFocused();
-        let targetParentId: string | null = null;
-        if (currentFocusedId) {
-            const focusedTask = ProjectController.getInstance().getTaskById(currentFocusedId);
-            if (focusedTask) {
-                targetParentId = focusedTask.parentId;
-            }
-        }
-
-        // 5. Create ID map: oldId → newId (generate unique IDs)
-        const idMap = new Map<string, string>();
-        this.clipboard.forEach(task => {
-            const newId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            idMap.set(task.id, newId);
-        });
-
-        // 6. Clone tasks with new IDs
-        const newTasks = this.clipboard.map(task => {
-            const cloned = JSON.parse(JSON.stringify(task)) as Task;
-            cloned.id = idMap.get(task.id)!;
-            return cloned;
-        });
-
-        // 7. Remap parentId:
-        //    - If original parentId exists in idMap → use mapped ID (internal)
-        //    - Else → use targetParentId (external parent)
-        newTasks.forEach(task => {
-            if (task.parentId && idMap.has(task.parentId)) {
-                // Internal parent - use mapped ID
-                task.parentId = idMap.get(task.parentId)!;
-            } else {
-                // Top-level of pasted subtree: attach to target parent
-                task.parentId = targetParentId;
-            }
-        });
-
-        // 8. Remap dependencies:
-        //    - KEEP only dependencies where dep.id exists in idMap (internal)
-        //    - DROP dependencies pointing outside the copied set (external)
-        //    - Remap kept dep.id to new ID
-        newTasks.forEach(task => {
-            task.dependencies = (task.dependencies || [])
-                .filter(dep => idMap.has(dep.id))
-                .map(dep => ({
-                    ...dep,
-                    id: idMap.get(dep.id)!
-                }));
-        });
-
-        // 8.5. Assign sortKeys to pasted tasks - INSERT AFTER FOCUSED TASK
-        // 
-        // For tasks being pasted at the same level as the focused task (targetParentId),
-        // we want to insert them immediately AFTER the focused task, not at the end.
-        // For tasks in other parent groups (nested children within pasted content),
-        // we append to the end of that group since there's no specific position.
-        
-        const pastedTasksByParent = new Map<string | null, Task[]>();
-        newTasks.forEach(task => {
-            const parentId = task.parentId ?? null;
-            if (!pastedTasksByParent.has(parentId)) {
-                pastedTasksByParent.set(parentId, []);
-            }
-            pastedTasksByParent.get(parentId)!.push(task);
-        });
-        
-        // Assign sortKeys to each group
-        pastedTasksByParent.forEach((pastedSiblings, parentId) => {
-            // Check if this is the same parent level as the focused task
-            const isTargetLevel = parentId === targetParentId;
-            
-            if (isTargetLevel && currentFocusedId) {
-                // INSERT AFTER FOCUSED TASK
-                // Get the focused task and its siblings
-                const focusedTask = ProjectController.getInstance().getTaskById(currentFocusedId);
-                const siblings = ProjectController.getInstance().getChildren(parentId);
-                const focusedIndex = siblings.findIndex(t => t.id === currentFocusedId);
-                
-                // Determine the sort key bounds for insertion
-                // beforeKey = focused task's key (insert AFTER this)
-                // afterKey = next sibling's key (insert BEFORE this), or null if at end
-                const beforeKey = focusedTask?.sortKey ?? null;
-                const afterKey = (focusedIndex >= 0 && focusedIndex < siblings.length - 1)
-                    ? siblings[focusedIndex + 1].sortKey
-                    : null;
-                
-                // Generate keys between focused task and next sibling
-                const sortKeys = OrderingService.generateBulkKeys(
-                    beforeKey,
-                    afterKey,
-                    pastedSiblings.length
-                );
-                
-                pastedSiblings.forEach((task, index) => {
-                    task.sortKey = sortKeys[index];
-                });
-            } else {
-                // APPEND TO END (for nested children or when no focused task)
-                // This handles internal hierarchy within pasted content
-                const existingLastKey = ProjectController.getInstance().getLastSortKey(parentId);
-                
-                const sortKeys = OrderingService.generateBulkKeys(
-                    existingLastKey,
-                    null,
-                    pastedSiblings.length
-                );
-                
-                pastedSiblings.forEach((task, index) => {
-                    task.sortKey = sortKeys[index];
-                });
-            }
-        });
-
-        // 9. Append newTasks to existing tasks
-        const allTasks = ProjectController.getInstance().getTasks();
-        const finalTasks = [...allTasks, ...newTasks];
-
-        // Update store with new array (use finalTasks, not allTasks!)
-        ProjectController.getInstance().syncTasks(finalTasks);
-
-        // 10. If clipboardIsCut === true:
-        //     - Delete original tasks using clipboardOriginalIds
-        //     - Clear clipboard (cut is one-time)
-        //     - Clear clipboardIsCut flag
-        const wasCut = this.clipboardIsCut;
-        if (this.clipboardIsCut) {
-            // Delete original tasks
-            this.clipboardOriginalIds.forEach(id => {
-                ProjectController.getInstance().deleteTask(id);
-            });
-            
-            // Clear clipboard (cut is one-time)
-            this.clipboard = null;
-            this.clipboardIsCut = false;
-            this.clipboardOriginalIds = [];
-        }
-
-        // 11. Select the newly pasted tasks
-        const pastedIds = newTasks.map(t => t.id);
-        const firstId = newTasks[0]?.id || null;
-        this._sel_set(pastedIds, firstId);
-        this._sel_setAnchor(firstId);
-
-        // Update selection in UI
-        this._updateSelection();
-
-        // 12. recalculateAll() → saveData() → render()
-        if (ENABLE_LEGACY_RECALC) {
-            this.recalculateAll();
-            this.saveData();
-            this.render();
-        }
-
-        // Scroll to show the first pasted task
-        // Use requestAnimationFrame to ensure render completes before scrolling
-        const focused = this._sel_getFocused();
-        if (this.grid && focused) {
-            requestAnimationFrame(() => {
-                this.grid?.scrollToTask(focused!);
-            });
-        }
-
-        // 13. Show toast: "Pasted X task(s)" or "Moved X task(s)" for cut
-        const message = wasCut 
-            ? `Moved ${newTasks.length} task(s)` 
-            : `Pasted ${newTasks.length} task(s)`;
-        this.toastService.success(message);
+        // PHASE 2: Delegate to CommandService
+        CommandService.getInstance().execute('clipboard.paste');
     }
 
     // =========================================================================
@@ -5151,29 +4391,8 @@ export class SchedulerService {
      * Now routes through ProjectController for unified state management
      */
     undo(): void {
-        const controller = ProjectController.getInstance();
-        const historyManager = controller.getHistoryManager();
-        
-        if (!historyManager) {
-            this.toastService.info('History manager not available');
-            return;
-        }
-
-        const backwardEvents = historyManager.undo();
-        if (!backwardEvents || backwardEvents.length === 0) {
-            this.toastService.info('Nothing to undo');
-            return;
-        }
-
-        // Apply all backward events through ProjectController
-        // ProjectController handles optimistic updates and worker sync
-        controller.applyEvents(backwardEvents);
-        
-        // No need to call recalculateAll() or render() - ProjectController does this via worker
-        // and SchedulerViewport subscribes to tasks$ for UI updates
-        
-        const label = historyManager.getRedoLabel();
-        this.toastService.info(label ? `Undone: ${label}` : 'Undone');
+        // PHASE 2: Delegate to CommandService
+        CommandService.getInstance().execute('edit.undo');
     }
 
     /**
@@ -5181,29 +4400,8 @@ export class SchedulerService {
      * Now routes through ProjectController for unified state management
      */
     redo(): void {
-        const controller = ProjectController.getInstance();
-        const historyManager = controller.getHistoryManager();
-        
-        if (!historyManager) {
-            this.toastService.info('History manager not available');
-            return;
-        }
-
-        const forwardEvents = historyManager.redo();
-        if (!forwardEvents || forwardEvents.length === 0) {
-            this.toastService.info('Nothing to redo');
-            return;
-        }
-
-        // Apply all forward events through ProjectController
-        // ProjectController handles optimistic updates and worker sync
-        controller.applyEvents(forwardEvents);
-        
-        // No need to call recalculateAll() or render() - ProjectController does this via worker
-        // and SchedulerViewport subscribes to tasks$ for UI updates
-        
-        const label = historyManager.getUndoLabel();
-        this.toastService.info(label ? `Redone: ${label}` : 'Redone');
+        // PHASE 2: Delegate to CommandService
+        CommandService.getInstance().execute('edit.redo');
     }
 
     // =========================================================================

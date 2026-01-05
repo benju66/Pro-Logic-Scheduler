@@ -648,14 +648,11 @@ export class GridRenderer {
                 this.options.onRowClick(taskId, event);
             }
             
-            // ADDED: Set _focusedCell so Enter navigation works after checkbox selection
-            // Default to first editable column (typically 'name')
-            const editableColumns = this.options.columns.filter(col => 
-                col.type === 'text' || col.type === 'number' || col.type === 'date' || col.type === 'select'
-            );
-            if (editableColumns.length > 0 && taskId) {
-                this._focusedCell = { taskId, field: editableColumns[0].field };
-                this.highlightCell(taskId, editableColumns[0].field);
+            // Set _focusedCell so Enter navigation works after checkbox selection
+            // Explicitly default to 'name' field - the primary task identifier
+            if (taskId) {
+                this._focusedCell = { taskId, field: 'name' };
+                this.highlightCell(taskId, 'name');
             }
             
             return;
@@ -994,6 +991,12 @@ export class GridRenderer {
         
         // Only handle Enter
         if (e.key !== 'Enter') return;
+        
+        // PHASE 2: Skip if modifiers are pressed - let CommandService handle these
+        // Shift+Enter = insert task above, Ctrl+Enter = add child task
+        if (e.shiftKey || e.ctrlKey || e.metaKey) {
+            return; // Don't preventDefault/stopPropagation - allow event to bubble to KeyboardService
+        }
         
         const editingManager = getEditingStateManager();
         

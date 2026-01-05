@@ -72,6 +72,21 @@ export class HistoryManager {
   }
 
   /**
+   * Get current options
+   */
+  getOptions(): HistoryManagerOptions {
+    return this.options;
+  }
+
+  /**
+   * Set the onStateChange callback
+   * Allows dynamic subscription to state changes (e.g., for CommandService)
+   */
+  setOnStateChange(callback: HistoryManagerOptions['onStateChange']): void {
+    this.options.onStateChange = callback;
+  }
+
+  /**
    * Begin a composite action
    * All events recorded until endComposite() will be grouped as a single undoable action
    * 

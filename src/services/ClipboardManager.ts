@@ -1,0 +1,117 @@
+/**
+ * @fileoverview Clipboard Manager - Manages clipboard state for copy/cut/paste operations
+ * @module services/ClipboardManager
+ * 
+ * PHASE 2: Extracted from SchedulerService to support Command pattern.
+ */
+
+import type { Task } from '../types';
+
+/**
+ * Clipboard entry containing copied/cut task data
+ */
+export interface ClipboardEntry {
+    /** Deep-cloned tasks */
+    tasks: Task[];
+    /** Original task IDs (for cut operations) */
+    originalIds: string[];
+    /** Whether this was a cut operation */
+    isCut: boolean;
+}
+
+/**
+ * Manages clipboard state for copy/cut/paste operations.
+ * Singleton pattern for global clipboard access.
+ */
+export class ClipboardManager {
+    private static instance: ClipboardManager;
+    private clipboard: ClipboardEntry | null = null;
+
+    private constructor() {}
+
+    static getInstance(): ClipboardManager {
+        if (!ClipboardManager.instance) {
+            ClipboardManager.instance = new ClipboardManager();
+        }
+        return ClipboardManager.instance;
+    }
+
+    /**
+     * Set clipboard contents from a copy operation
+     */
+    setCopy(tasks: Task[], originalIds: string[]): void {
+        this.clipboard = {
+            tasks: tasks.map(t => JSON.parse(JSON.stringify(t))),
+            originalIds,
+            isCut: false
+        };
+    }
+
+    /**
+     * Set clipboard contents from a cut operation
+     */
+    setCut(tasks: Task[], originalIds: string[]): void {
+        this.clipboard = {
+            tasks: tasks.map(t => JSON.parse(JSON.stringify(t))),
+            originalIds,
+            isCut: true
+        };
+    }
+
+    /**
+     * Get current clipboard contents
+     */
+    get(): ClipboardEntry | null {
+        return this.clipboard;
+    }
+
+    /**
+     * Check if clipboard has content
+     */
+    hasContent(): boolean {
+        return this.clipboard !== null && this.clipboard.tasks.length > 0;
+    }
+
+    /**
+     * Check if clipboard is from a cut operation
+     */
+    isCut(): boolean {
+        return this.clipboard?.isCut ?? false;
+    }
+
+    /**
+     * Get clipboard tasks (cloned)
+     */
+    getTasks(): Task[] {
+        if (!this.clipboard) return [];
+        return this.clipboard.tasks.map(t => JSON.parse(JSON.stringify(t)));
+    }
+
+    /**
+     * Get original IDs (for cut operations)
+     */
+    getOriginalIds(): string[] {
+        return this.clipboard?.originalIds ?? [];
+    }
+
+    /**
+     * Clear clipboard (after paste from cut)
+     */
+    clear(): void {
+        this.clipboard = null;
+    }
+
+    /**
+     * Cancel a pending cut (revert to normal state without deleting)
+     */
+    cancelCut(): void {
+        if (this.clipboard?.isCut) {
+            this.clipboard = null;
+        }
+    }
+}
+
+// Convenience function
+export function getClipboardManager(): ClipboardManager {
+    return ClipboardManager.getInstance();
+}

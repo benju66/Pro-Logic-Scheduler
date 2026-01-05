@@ -13,18 +13,23 @@
 import { SchedulerService } from './SchedulerService';
 import { StatsService } from './StatsService';
 import { ProjectController } from './ProjectController';
+import { SelectionModel } from './SelectionModel';
+import { OrderingService } from './OrderingService';
 import { PersistenceService } from '../data/PersistenceService';
 import { SnapshotService } from '../data/SnapshotService';
 import { DataLoader } from '../data/DataLoader';
 import { ActivityBar } from '../ui/components/ActivityBar';
 import { SettingsModal } from '../ui/components/SettingsModal';
 import { RightSidebarManager } from '../ui/components/RightSidebarManager';
-import type { SchedulerServiceOptions, Calendar, TradePartner } from '../types';
+import type { SchedulerServiceOptions, Calendar, TradePartner, Task } from '../types';
 import { initializeColumnSystem, configureServices } from '../core/columns';
 import { getEditingStateManager } from './EditingStateManager';
 import { getTradePartnerStore } from '../data/TradePartnerStore';
 import { HistoryManager } from '../data/HistoryManager';
 import { Subscription, skip, debounceTime } from 'rxjs';
+import { CommandService, registerAllCommands, CommandUIBinding } from '../commands';
+import type { CommandContext } from '../commands';
+import { getClipboardManager } from './ClipboardManager';
 
 /**
  * App initializer options
@@ -127,6 +132,9 @@ export class AppInitializer {
       
       // Initialize scheduler (now uses ProjectController internally)
       await this._initializeScheduler();
+      
+      // Initialize Command Registry (PHASE 2)
+      this._initializeCommandService();
       
       // Initialize UI handlers
       this._initializeUIHandlers();
@@ -618,6 +626,84 @@ export class AppInitializer {
       console.error('[AppInitializer] ❌ Column Registry initialization failed:', error);
       // Non-fatal - the system will fall back to legacy binding
     }
+  }
+
+  /**
+   * Initialize Command Service (PHASE 2: Command Registry)
+   * Sets up the command context and registers all commands.
+   * @private
+   */
+  private _initializeCommandService(): void {
+    console.log('[AppInitializer] 🎮 Initializing Command Service...');
+    
+    const service = CommandService.getInstance();
+    const self = this; // Capture for closures
+    
+    // Build command context with all dependencies
+    // NOTE: Uses lazy getter for toastService (created inside SchedulerService)
+    const context: CommandContext = {
+      controller: ProjectController.getInstance(),
+      selection: SelectionModel.getInstance(),
+      historyManager: this.historyManager,
+      
+      // LAZY GETTER: ToastService is created inside SchedulerService
+      get toastService() {
+        return self.scheduler?.toastService ?? null;
+      },
+      
+      // Static class with utility methods
+      orderingService: OrderingService,
+      
+      tradePartnerStore: getTradePartnerStore(),
+      
+      // Clipboard for copy/cut/paste
+      clipboardManager: getClipboardManager(),
+      
+      // Helper method replacing private _getFlatList()
+      getVisibleTasks(): Task[] {
+        const controller = ProjectController.getInstance();
+        return controller.getVisibleTasks((id: string) => {
+          const task = controller.getTaskById(id);
+          return task?._collapsed ?? false;
+        });
+      }
+    };
+    
+    service.setContext(context);
+    registerAllCommands();
+    
+    // PHASE 2.3: Wire state changes to notify CommandService
+    // Selection changes trigger command state updates
+    SelectionModel.getInstance().state$.subscribe(() => {
+      service.notifyStateChange();
+    });
+    
+    // History changes also trigger command state updates (for undo/redo buttons)
+    if (this.historyManager) {
+      const originalOnStateChange = this.historyManager.getOptions().onStateChange;
+      this.historyManager.setOnStateChange((_state) => {
+        service.notifyStateChange();
+        if (originalOnStateChange) originalOnStateChange(_state);
+      });
+    }
+    
+    // PHASE 2.3: Set up UI bindings for toolbar buttons
+    const uiBinding = new CommandUIBinding(service);
+    uiBinding
+      .bindButton('[data-action="undo"]', 'edit.undo')
+      .bindButton('[data-action="redo"]', 'edit.redo')
+      .bindButton('[data-action="bulk-indent"]', 'hierarchy.indent')
+      .bindButton('[data-action="bulk-outdent"]', 'hierarchy.outdent')
+      .bindButton('[data-action="bulk-delete"]', 'task.delete');
+    
+    // Start binding after DOM is ready
+    setTimeout(() => uiBinding.start(), 0);
+    
+    // Expose command service globally for debugging
+    (window as unknown as Record<string, unknown>).commandService = service;
+    (window as unknown as Record<string, unknown>).commandUIBinding = uiBinding;
+    
+    console.log('[AppInitializer] ✅ Command Service initialized');
   }
 
   /**

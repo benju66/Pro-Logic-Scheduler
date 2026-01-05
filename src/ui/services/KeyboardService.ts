@@ -1,9 +1,13 @@
 /**
  * @fileoverview Keyboard shortcut service - handles keyboard navigation and shortcuts
  * @module ui/services/KeyboardService
+ * 
+ * PHASE 2: Now integrates with CommandService for command-based shortcuts.
+ * Shortcuts registered with CommandService are tried first, then legacy callbacks.
  */
 
 import { getEditingStateManager, type EditingStateChangeEvent } from '../../services/EditingStateManager';
+import { CommandService, buildShortcutFromEvent } from '../../commands';
 
 /**
  * Keyboard service options
@@ -104,6 +108,7 @@ export class KeyboardService {
 
   /**
    * Handle keydown events
+   * PHASE 2: Try CommandService first, then fall back to legacy callbacks.
    * @private
    * @param e - Keyboard event
    */
@@ -120,30 +125,43 @@ export class KeyboardService {
     const isEditing = editingManager.isEditing();
     const isCtrl = e.ctrlKey || e.metaKey;
 
-    // Undo/Redo (always active)
-    if (isCtrl && e.key === 'z' && !e.shiftKey) {
-      e.preventDefault();
-      if (this.options.onUndo) this.options.onUndo();
-      return;
+    // Build shortcut string for CommandService
+    const shortcut = buildShortcutFromEvent(e);
+
+    // =========================================================================
+    // PHASE 2: Try CommandService for registered shortcuts
+    // These shortcuts work via the Command Registry even during editing
+    // =========================================================================
+    
+    // Shortcuts that work during editing: Undo, Redo
+    if (this._isShortcutActiveWhileEditing(shortcut)) {
+      if (this._tryCommandService(shortcut, e)) {
+        return;
+      }
     }
 
-    if ((isCtrl && e.key === 'y') || (isCtrl && e.shiftKey && e.key === 'z')) {
-      e.preventDefault();
-      if (this.options.onRedo) this.options.onRedo();
-      return;
-    }
+    // =========================================================================
+    // PHASE 2: Task creation shortcuts (work even during editing)
+    // These are handled by CommandService, but we need to exit edit mode first
+    // =========================================================================
 
     // Ctrl+Enter: Add child task (works even when editing)
-    if (isCtrl && e.key === 'Enter') {
-      e.preventDefault();
+    // Shift+Enter: Insert task above (works even when editing)
+    if (e.key === 'Enter' && (isCtrl || e.shiftKey)) {
       if (isEditing) {
-        // Exit edit mode first
+        // Exit edit mode first, then execute command
         editingManager.exitEditMode('programmatic');
       }
-      if (this.options.onCtrlEnter) {
-        setTimeout(() => this.options.onCtrlEnter!(), 50);
+      // Let CommandService handle via _tryCommandService below
+      if (this._tryCommandService(shortcut, e)) {
+        return;
       }
-      return;
+      // Fallback to legacy handler for Ctrl+Enter only
+      if (isCtrl && this.options.onCtrlEnter) {
+        e.preventDefault();
+        setTimeout(() => this.options.onCtrlEnter!(), 50);
+        return;
+      }
     }
 
     // Insert key - add task
@@ -164,31 +182,25 @@ export class KeyboardService {
       return;
     }
 
-    // Skip other shortcuts when editing (except undo/redo)
+    // Skip other shortcuts when editing
     if (isEditing) return;
+
+    // =========================================================================
+    // PHASE 2: Try CommandService for non-editing shortcuts
+    // =========================================================================
+    
+    if (this._tryCommandService(shortcut, e)) {
+      return;
+    }
+
+    // =========================================================================
+    // LEGACY: Callbacks for shortcuts not yet migrated to commands
+    // =========================================================================
 
     // Escape
     if (e.key === 'Escape') {
       if (this.options.onEscape) {
         this.options.onEscape();
-      }
-      return;
-    }
-
-    // Delete selected
-    if ((e.key === 'Delete' || e.key === 'Backspace') && this.options.onDelete) {
-      e.preventDefault();
-      this.options.onDelete();
-      return;
-    }
-
-    // Tab = indent, Shift+Tab = outdent (only when NOT editing)
-    if (e.key === 'Tab' && this.options.onTab) {
-      e.preventDefault();
-      if (e.shiftKey) {
-        if (this.options.onShiftTab) this.options.onShiftTab();
-      } else {
-        this.options.onTab();
       }
       return;
     }
@@ -213,7 +225,6 @@ export class KeyboardService {
       this.options.onPaste();
       return;
     }
-
 
     // Ctrl+Arrow Up/Down - move task
     if (isCtrl && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
@@ -243,28 +254,25 @@ export class KeyboardService {
     }
 
     // Arrow key navigation (only when NOT editing)
-    // When editing, let arrow keys work naturally in text fields
-    if (!isEditing) {
-      if (e.key === 'ArrowUp' && this.options.onArrowUp) {
-        e.preventDefault();
-        this.options.onArrowUp(e.shiftKey, isCtrl);
-        return;
-      }
-      if (e.key === 'ArrowDown' && this.options.onArrowDown) {
-        e.preventDefault();
-        this.options.onArrowDown(e.shiftKey, isCtrl);
-        return;
-      }
-      if (e.key === 'ArrowLeft' && this.options.onArrowLeft) {
-        e.preventDefault();
-        this.options.onArrowLeft(e.shiftKey, isCtrl);
-        return;
-      }
-      if (e.key === 'ArrowRight' && this.options.onArrowRight) {
-        e.preventDefault();
-        this.options.onArrowRight(e.shiftKey, isCtrl);
-        return;
-      }
+    if (e.key === 'ArrowUp' && this.options.onArrowUp) {
+      e.preventDefault();
+      this.options.onArrowUp(e.shiftKey, isCtrl);
+      return;
+    }
+    if (e.key === 'ArrowDown' && this.options.onArrowDown) {
+      e.preventDefault();
+      this.options.onArrowDown(e.shiftKey, isCtrl);
+      return;
+    }
+    if (e.key === 'ArrowLeft' && this.options.onArrowLeft) {
+      e.preventDefault();
+      this.options.onArrowLeft(e.shiftKey, isCtrl);
+      return;
+    }
+    if (e.key === 'ArrowRight' && this.options.onArrowRight) {
+      e.preventDefault();
+      this.options.onArrowRight(e.shiftKey, isCtrl);
+      return;
     }
 
     // F2 - enter edit mode
@@ -287,6 +295,44 @@ export class KeyboardService {
       if (this.options.onDrivingPath) this.options.onDrivingPath();
       return;
     }
+  }
+
+  /**
+   * Try to execute a shortcut via CommandService.
+   * Returns true if command was found and executed.
+   * @private
+   */
+  private _tryCommandService(shortcut: string, e: KeyboardEvent): boolean {
+    const commandService = CommandService.getInstance();
+    
+    // Check if this shortcut is registered
+    if (!commandService.hasShortcut(shortcut)) {
+      return false;
+    }
+
+    // Prevent default and execute
+    e.preventDefault();
+    
+    // Execute asynchronously (commands may be async)
+    commandService.executeShortcut(shortcut).catch(err => {
+      console.error('[KeyboardService] Command execution failed:', err);
+    });
+
+    return true;
+  }
+
+  /**
+   * Check if a shortcut should work even while editing.
+   * These are critical shortcuts like Undo/Redo.
+   * @private
+   */
+  private _isShortcutActiveWhileEditing(shortcut: string): boolean {
+    const activeWhileEditing = [
+      'Ctrl+Z',        // Undo
+      'Ctrl+Y',        // Redo
+      'Ctrl+Shift+Z',  // Redo (alternate)
+    ];
+    return activeWhileEditing.includes(shortcut);
   }
 
   // REMOVE the old _isEditing method - no longer needed
