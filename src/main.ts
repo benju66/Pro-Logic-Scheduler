@@ -12,6 +12,7 @@ import { SchedulerService } from './services/SchedulerService';
 import { AppInitializer } from './services/AppInitializer';
 import { UIEventManager } from './services/UIEventManager';
 import { ProjectController } from './services/ProjectController';
+import { CommandService } from './commands';
 import type { ToastType } from './types';
 
 // Import Unified Scheduler V2 styles
@@ -339,61 +340,30 @@ function initZoomControls(): void {
         });
     }
     
-    // Zoom in
+    // Zoom in - use Command Registry
     zoomInBtn?.addEventListener('click', () => {
-        if (zoomController) {
-            zoomController.zoomIn();
-        } else {
-            scheduler?.zoomGanttIn();
-        }
+        CommandService.getInstance().execute('view.zoomIn');
     });
     
-    // Zoom out
+    // Zoom out - use Command Registry
     zoomOutBtn?.addEventListener('click', () => {
-        if (zoomController) {
-            zoomController.zoomOut();
-        } else {
-            scheduler?.zoomGanttOut();
-        }
+        CommandService.getInstance().execute('view.zoomOut');
     });
     
-    // Fit to view
+    // Fit to view - use Command Registry
     fitToViewBtn?.addEventListener('click', () => {
-        if (zoomController) {
-            zoomController.fitToView();
-        } else {
-            scheduler?.fitGanttToView();
-        }
+        CommandService.getInstance().execute('view.fitToView');
     });
     
-    // Reset zoom
+    // Reset zoom - use Command Registry
     resetZoomBtn?.addEventListener('click', () => {
-        if (zoomController) {
-            zoomController.resetZoom();
-        } else {
-            scheduler?.resetGanttZoom();
-        }
+        CommandService.getInstance().execute('view.resetZoom');
     });
     
-    // Keyboard shortcuts are now handled by ZoomController.initKeyboardShortcuts()
-    // Initialize them if not already done
+    // Keyboard shortcuts for zoom are now handled by CommandService via KeyboardService
+    // The commands view.zoomIn, view.zoomOut, view.resetZoom have shortcuts registered
+    // ZoomController keyboard shortcuts can still be initialized for redundancy/fallback
     if (zoomController) {
         zoomController.initKeyboardShortcuts();
-    } else {
-        // Fallback keyboard handling if ZoomController not available
-        document.addEventListener('keydown', (e) => {
-            if ((e.ctrlKey || e.metaKey) && !e.shiftKey) {
-                if (e.key === '=' || e.key === '+') {
-                    e.preventDefault();
-                    scheduler?.zoomGanttIn();
-                } else if (e.key === '-') {
-                    e.preventDefault();
-                    scheduler?.zoomGanttOut();
-                } else if (e.key === '0') {
-                    e.preventDefault();
-                    scheduler?.resetGanttZoom();
-                }
-            }
-        });
     }
 }

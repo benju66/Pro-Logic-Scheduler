@@ -10,6 +10,7 @@ import type { SchedulerService } from './SchedulerService';
 import type { ToastService } from '../ui/services/ToastService';
 import type { ToastType } from '../types';
 import { SelectionModel } from './SelectionModel';
+import { CommandService } from '../commands';
 
 /**
  * UI event manager options
@@ -548,10 +549,10 @@ export class UIEventManager {
           scheduler.addTask();
           break;
         case 'zoom-out':
-          scheduler.zoomOut();
+          CommandService.getInstance().execute('view.zoomOut');
           break;
         case 'zoom-in':
-          scheduler.zoomIn();
+          CommandService.getInstance().execute('view.zoomIn');
           break;
         case 'open-calendar':
           scheduler.openCalendar();

@@ -39,7 +39,7 @@ export { IndentCommand, OutdentCommand, MoveUpCommand, MoveDownCommand } from '.
 export { UndoCommand, RedoCommand } from './edit';
 export { CopyCommand, CutCommand, PasteCommand } from './clipboard';
 export { SelectAllCommand, EscapeCommand } from './selection';
-export { CollapseCommand, ExpandCommand, ToggleCollapseCommand } from './view';
+export { CollapseCommand, ExpandCommand, ToggleCollapseCommand, ZoomInCommand, ZoomOutCommand, FitToViewCommand, ResetZoomCommand } from './view';
 export { LinkSelectedCommand, UnlinkCommand } from './dependency';
 
 // Debug command for testing
@@ -52,7 +52,7 @@ import { IndentCommand, OutdentCommand, MoveUpCommand, MoveDownCommand } from '.
 import { UndoCommand, RedoCommand } from './edit';
 import { CopyCommand, CutCommand, PasteCommand } from './clipboard';
 import { SelectAllCommand, EscapeCommand } from './selection';
-import { CollapseCommand, ExpandCommand, ToggleCollapseCommand } from './view';
+import { CollapseCommand, ExpandCommand, ToggleCollapseCommand, ZoomInCommand, ZoomOutCommand, FitToViewCommand, ResetZoomCommand } from './view';
 import { LinkSelectedCommand, UnlinkCommand } from './dependency';
 
 /**
@@ -122,6 +122,10 @@ export function registerAllCommands(): void {
     service.register(CollapseCommand);
     service.register(ExpandCommand);
     service.register(ToggleCollapseCommand);
+    service.register(ZoomInCommand);
+    service.register(ZoomOutCommand);
+    service.register(FitToViewCommand);
+    service.register(ResetZoomCommand);
 
     // Dependency commands
     service.register(LinkSelectedCommand);

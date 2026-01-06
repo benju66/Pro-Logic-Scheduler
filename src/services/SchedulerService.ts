@@ -4599,24 +4599,6 @@ export class SchedulerService {
     // =========================================================================
 
     /**
-     * Zoom in (increase visual scale)
-     * NOTE: This changes zoom level, NOT view mode
-     * Use setViewMode() to change Day/Week/Month time scale
-     */
-    zoomIn(): void {
-        this.zoomGanttIn();
-    }
-
-    /**
-     * Zoom out (decrease visual scale)
-     * NOTE: This changes zoom level, NOT view mode
-     * Use setViewMode() to change Day/Week/Month time scale
-     */
-    zoomOut(): void {
-        this.zoomGanttOut();
-    }
-
-    /**
      * Set view mode
      * @param mode - View mode: 'Day', 'Week', or 'Month'
      */
@@ -4630,109 +4612,6 @@ export class SchedulerService {
         }
     }
 
-    /**
-     * Set Gantt zoom level
-     * @param pixelsPerDay - Pixels per day (1-80)
-     */
-    setGanttZoom(pixelsPerDay: number): void {
-        if (this.zoomController) {
-            this.zoomController.setZoom(pixelsPerDay);
-        } else {
-            // Fallback for legacy code paths
-            const viewport = (this as any).viewport;
-            if (viewport?.ganttRenderer) {
-                (viewport.ganttRenderer as any).setZoom(pixelsPerDay);
-            } else if (this.gantt) {
-                (this.gantt as any).setZoom(pixelsPerDay);
-            }
-        }
-    }
-
-    /**
-     * Get current Gantt zoom level
-     */
-    getGanttZoom(): number {
-        if (this.zoomController) {
-            return this.zoomController.pixelsPerDay;
-        }
-        // Fallback for legacy code paths
-        const viewport = (this as any).viewport;
-        if (viewport?.ganttRenderer) {
-            return (viewport.ganttRenderer as any).getZoom() || ZOOM_CONFIG.DEFAULT;
-        } else if (this.gantt) {
-            return (this.gantt as any).getZoom() || ZOOM_CONFIG.DEFAULT;
-        }
-        return ZOOM_CONFIG.DEFAULT;
-    }
-
-    /**
-     * Zoom Gantt in
-     */
-    zoomGanttIn(): void {
-        if (this.zoomController) {
-            this.zoomController.zoomIn();
-        } else {
-            // Fallback for legacy code paths
-            const viewport = (this as any).viewport;
-            if (viewport?.ganttRenderer) {
-                (viewport.ganttRenderer as any).zoomIn();
-            } else if (this.gantt) {
-                (this.gantt as any).zoomIn();
-            }
-        }
-    }
-
-    /**
-     * Zoom Gantt out
-     */
-    zoomGanttOut(): void {
-        if (this.zoomController) {
-            this.zoomController.zoomOut();
-        } else {
-            // Fallback for legacy code paths
-            const viewport = (this as any).viewport;
-            if (viewport?.ganttRenderer) {
-                (viewport.ganttRenderer as any).zoomOut();
-            } else if (this.gantt) {
-                (this.gantt as any).zoomOut();
-            }
-        }
-    }
-
-    /**
-     * Fit Gantt to view
-     */
-    fitGanttToView(): void {
-        if (this.zoomController) {
-            this.zoomController.fitToView();
-        } else {
-            // Fallback for legacy code paths
-            const viewport = (this as any).viewport;
-            if (viewport?.ganttRenderer) {
-                (viewport.ganttRenderer as any).fitToView();
-            } else if (this.gantt) {
-                (this.gantt as any).fitToView();
-            }
-        }
-    }
-
-    /**
-     * Reset Gantt zoom to default
-     */
-    resetGanttZoom(): void {
-        if (this.zoomController) {
-            this.zoomController.resetZoom();
-        } else {
-            // Fallback for legacy code paths
-            const viewport = (this as any).viewport;
-            if (viewport?.ganttRenderer) {
-                (viewport.ganttRenderer as any).resetZoom();
-            } else if (this.gantt) {
-                (this.gantt as any).resetZoom();
-            }
-        }
-    }
-    
     /**
      * Get the ZoomController instance
      * Allows external code to subscribe to zoom state changes
