@@ -40,9 +40,16 @@ export interface ViewState {
  * 
  * Single source of truth for UI updates. Subscribes to state streams
  * and coordinates updates to Grid and Gantt components.
+ * 
+ * MIGRATION NOTE (Pure DI):
+ * - Constructor is now public for DI compatibility
+ * - getInstance() retained for backward compatibility
+ * - Use setInstance() in Composition Root or inject directly
+ * 
+ * @see docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md
  */
 export class ViewCoordinator {
-    private static instance: ViewCoordinator;
+    private static instance: ViewCoordinator | null = null;
     
     // Component references (set via setComponents)
     private grid: VirtualScrollGridFacade | null = null;
@@ -60,13 +67,35 @@ export class ViewCoordinator {
     private selectionCallbacks: Array<(state: ViewState) => void> = [];
     private dataChangeCallbacks: Array<(tasks: Task[]) => void> = [];
     
-    private constructor() {}
+    // =========================================================================
+    // INJECTED SERVICES (Pure DI Migration)
+    // =========================================================================
+    private projectController: ProjectController | null = null;
+    private selectionModel: SelectionModel | null = null;
     
+    /**
+     * Constructor is public for Pure DI compatibility.
+     */
+    public constructor() {
+        // Lazy-initialize service references from singletons for now
+        // Future: Accept as constructor parameters
+    }
+    
+    /**
+     * Get the singleton instance (lazy initialization)
+     */
     public static getInstance(): ViewCoordinator {
         if (!ViewCoordinator.instance) {
             ViewCoordinator.instance = new ViewCoordinator();
         }
         return ViewCoordinator.instance;
+    }
+    
+    /**
+     * Set the singleton instance (for testing/DI)
+     */
+    public static setInstance(instance: ViewCoordinator): void {
+        ViewCoordinator.instance = instance;
     }
     
     // =========================================================================
@@ -95,8 +124,12 @@ export class ViewCoordinator {
     public initSubscriptions(): void {
         this.dispose(); // Clean up any existing subscriptions
         
-        const controller = ProjectController.getInstance();
-        const selection = SelectionModel.getInstance();
+        // Cache service references (Pure DI - using singletons for now)
+        this.projectController = ProjectController.getInstance();
+        this.selectionModel = SelectionModel.getInstance();
+        
+        const controller = this.projectController;
+        const selection = this.selectionModel;
         
         // =====================================================================
         // TASK SUBSCRIPTION - Core reactive update
@@ -239,9 +272,9 @@ export class ViewCoordinator {
      * Transforms tasks into visible flat list respecting collapse state
      */
     private _updateGridData(tasks: Task[]): void {
-        if (!this.grid) return;
+        if (!this.grid || !this.projectController) return;
         
-        const controller = ProjectController.getInstance();
+        const controller = this.projectController;
         const visibleTasks = controller.getVisibleTasks(id => {
             const task = controller.getTaskById(id);
             return task?._collapsed || false;
@@ -264,9 +297,9 @@ export class ViewCoordinator {
      * Update gantt data
      */
     private _updateGanttData(tasks: Task[]): void {
-        if (!this.gantt) return;
+        if (!this.gantt || !this.projectController) return;
         
-        const controller = ProjectController.getInstance();
+        const controller = this.projectController;
         const visibleTasks = controller.getVisibleTasks(id => {
             const task = controller.getTaskById(id);
             return task?._collapsed || false;
@@ -303,7 +336,11 @@ export class ViewCoordinator {
      * Use sparingly - only when synchronous update is required
      */
     public forceUpdate(): void {
-        const tasks = ProjectController.getInstance().tasks$.value;
+        if (!this.projectController) {
+            // Fallback to singleton if not initialized via subscriptions yet
+            this.projectController = ProjectController.getInstance();
+        }
+        const tasks = this.projectController.tasks$.value;
         this._updateGridData(tasks);
         this._updateGanttData(tasks);
         this._render();
@@ -406,7 +443,7 @@ export class ViewCoordinator {
         if (ViewCoordinator.instance) {
             ViewCoordinator.instance.dispose();
         }
-        ViewCoordinator.instance = null as any;
+        ViewCoordinator.instance = null;
     }
 }
 

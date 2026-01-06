@@ -61,17 +61,44 @@ export interface TaskEditResult {
  * 
  * Handles all business logic for task field edits.
  * Stateless service - receives dependencies through method parameters.
+ * 
+ * MIGRATION NOTE (Pure DI):
+ * - Constructor is now public for DI compatibility
+ * - getInstance() retained for backward compatibility
+ * - This is a stateless service, so DI is straightforward
+ * 
+ * @see docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md
  */
 export class SchedulingLogicService {
-    private static instance: SchedulingLogicService;
+    private static instance: SchedulingLogicService | null = null;
     
-    private constructor() {}
+    /**
+     * Constructor is public for Pure DI compatibility.
+     */
+    public constructor() {}
     
+    /**
+     * Get the singleton instance (lazy initialization)
+     */
     public static getInstance(): SchedulingLogicService {
         if (!SchedulingLogicService.instance) {
             SchedulingLogicService.instance = new SchedulingLogicService();
         }
         return SchedulingLogicService.instance;
+    }
+    
+    /**
+     * Set the singleton instance (for testing/DI)
+     */
+    public static setInstance(instance: SchedulingLogicService): void {
+        SchedulingLogicService.instance = instance;
+    }
+    
+    /**
+     * Reset the singleton instance (for testing)
+     */
+    public static resetInstance(): void {
+        SchedulingLogicService.instance = null;
     }
     
     /**

@@ -21,19 +21,45 @@ export interface ClipboardEntry {
 
 /**
  * Manages clipboard state for copy/cut/paste operations.
- * Singleton pattern for global clipboard access.
+ * 
+ * MIGRATION NOTE (Pure DI):
+ * - Constructor is now public for DI compatibility
+ * - getInstance() retained for backward compatibility during migration
+ * - Use setInstance() in Composition Root or inject directly
+ * 
+ * @see docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md
  */
 export class ClipboardManager {
-    private static instance: ClipboardManager;
+    private static instance: ClipboardManager | null = null;
     private clipboard: ClipboardEntry | null = null;
 
-    private constructor() {}
+    /**
+     * Constructor is public for Pure DI compatibility.
+     */
+    public constructor() {}
 
+    /**
+     * Get the singleton instance (lazy initialization)
+     */
     static getInstance(): ClipboardManager {
         if (!ClipboardManager.instance) {
             ClipboardManager.instance = new ClipboardManager();
         }
         return ClipboardManager.instance;
+    }
+    
+    /**
+     * Set the singleton instance (for testing/DI)
+     */
+    static setInstance(instance: ClipboardManager): void {
+        ClipboardManager.instance = instance;
+    }
+    
+    /**
+     * Reset the singleton instance (for testing)
+     */
+    static resetInstance(): void {
+        ClipboardManager.instance = null;
     }
 
     /**

@@ -12,7 +12,13 @@ import { SchedulerService } from './services/SchedulerService';
 import { AppInitializer } from './services/AppInitializer';
 import { UIEventManager } from './services/UIEventManager';
 import { ProjectController } from './services/ProjectController';
+import { SelectionModel } from './services/SelectionModel';
+import { EditingStateManager } from './services/EditingStateManager';
+import { ClipboardManager } from './services/ClipboardManager';
 import { CommandService } from './commands';
+import { ColumnRegistry } from './core/columns/ColumnRegistry';
+import { ServiceContainer } from './core/columns/ServiceContainer';
+import { FeatureFlags } from './core/FeatureFlags';
 import type { ToastType } from './types';
 
 // Import Unified Scheduler V2 styles
@@ -63,6 +69,52 @@ async function initApp(): Promise<void> {
             console.log('⚠️ Already initializing, skipping duplicate initApp() call');
             return;
         }
+        
+        // =====================================================================
+        // COMPOSITION ROOT - Pure DI Service Wiring
+        // All singletons are created here and registered via setInstance()
+        // This enables testing with mock injection while maintaining backward
+        // compatibility with existing getInstance() calls.
+        // 
+        // @see docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md
+        // =====================================================================
+        
+        console.log('[Composition Root] 🔧 Initializing services...');
+        
+        // Level 0: Leaf services (no dependencies)
+        const featureFlags = new FeatureFlags();
+        FeatureFlags.setInstance(featureFlags);
+        
+        const clipboardManager = new ClipboardManager();
+        ClipboardManager.setInstance(clipboardManager);
+        
+        const selectionModel = new SelectionModel();
+        SelectionModel.setInstance(selectionModel);
+        
+        const editingStateManager = new EditingStateManager();
+        EditingStateManager.setInstance(editingStateManager);
+        
+        // Level 1: Column system
+        const columnRegistry = new ColumnRegistry();
+        ColumnRegistry.setInstance(columnRegistry);
+        
+        const serviceContainer = new ServiceContainer();
+        ServiceContainer.setInstance(serviceContainer);
+        
+        // Level 1: Core data (worker initialization happens in constructor)
+        const projectController = new ProjectController();
+        ProjectController.setInstance(projectController);
+        
+        // Level 2: Command system
+        const commandService = new CommandService();
+        CommandService.setInstance(commandService);
+        
+        console.log('[Composition Root] ✅ Services initialized');
+        
+        // =====================================================================
+        // END COMPOSITION ROOT
+        // AppInitializer will wire remaining dependencies (persistence, UI, etc.)
+        // =====================================================================
         
         appInitializer = new AppInitializer({ isTauri: tauriAvailable });
         

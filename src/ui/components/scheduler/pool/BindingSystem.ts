@@ -27,12 +27,19 @@ export class BindingSystem {
     private calendar: Calendar | null = null;
     private onDateChange: ((taskId: string, field: string, value: string) => void) | null = null;
     private onOpenDatePicker: ((taskId: string, field: string, anchorEl: HTMLElement, currentValue: string) => void) | null = null;
+    
+    // Pure DI: Cached service references
+    private projectController: ProjectController;
+    private columnRegistry: ColumnRegistry;
 
     constructor(columns: GridColumn[]) {
         this.columnMap = new Map();
         columns.forEach(col => {
             this.columnMap.set(col.field, col);
         });
+        // Cache service references (singletons already wired in Composition Root)
+        this.projectController = ProjectController.getInstance();
+        this.columnRegistry = ColumnRegistry.getInstance();
     }
     
     /**
@@ -90,7 +97,7 @@ export class BindingSystem {
         row.element.setAttribute('aria-rowindex', String(index + 1));
         row.element.setAttribute('aria-selected', String(isSelected));
         // Use freshTask for field values (name), task for structure (id)
-        const freshTask = ProjectController.getInstance().getTaskById(task.id) ?? task;
+        const freshTask = this.projectController.getTaskById(task.id) ?? task;
         row.element.setAttribute('aria-label', `${freshTask.name}, row ${index + 1}`);
 
         // Bind cells
@@ -420,7 +427,7 @@ export class BindingSystem {
         if (ctx.isParent) return;
 
         // Query TaskStore for fresh constraint data
-        const freshTask = ProjectController.getInstance().getTaskById(task.id) ?? task;
+        const freshTask = this.projectController.getTaskById(task.id) ?? task;
         const constraintType = freshTask.constraintType || 'asap';
         const constraintDate = freshTask.constraintDate || '';
 
@@ -577,10 +584,10 @@ export class BindingSystem {
      * Called when USE_COLUMN_REGISTRY feature flag is enabled
      */
     private _bindCellWithRegistry(cell: PooledCell, col: GridColumn, task: Task, ctx: BindingContext): void {
-        const registry = ColumnRegistry.getInstance();
+        const registry = this.columnRegistry;
         
         // Get fresh task data
-        const freshTask = ProjectController.getInstance().getTaskById(task.id) ?? task;
+        const freshTask = this.projectController.getTaskById(task.id) ?? task;
         
         // Build ColumnContext for the renderer
         const columnContext: ColumnContext = {
@@ -640,7 +647,7 @@ export class BindingSystem {
      */
     private _bindCellLegacy(cell: PooledCell, col: GridColumn, task: Task, ctx: BindingContext): void {
         const { isParent, isCollapsed, depth } = ctx;
-        const freshTask = ProjectController.getInstance().getTaskById(task.id) ?? task;
+        const freshTask = this.projectController.getTaskById(task.id) ?? task;
 
         // Handle special column: actions FIRST
         if (col.type === 'actions' && col.actions) {

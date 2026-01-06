@@ -23,6 +23,7 @@ import { DateUtils } from '../core/DateUtils';
 import { LINK_TYPES, CONSTRAINT_TYPES } from '../core/Constants';
 import { OperationQueue } from '../core/OperationQueue';
 import { ColumnRegistry } from '../core/columns';
+import { calculateVariance as calculateVarianceFn } from '../core/calculations';
 // NOTE: TaskStore and CalendarStore removed - all data flows through ProjectController
 import { TradePartnerStore, getTradePartnerStore } from '../data/TradePartnerStore';
 // NOTE: HistoryManager moved to AppInitializer (application level) - access via ProjectController.getHistoryManager()
@@ -113,6 +114,21 @@ export class SchedulerService {
     private options: SchedulerServiceOptions;
     private isTauri: boolean;
 
+    // =========================================================================
+    // INJECTED SERVICES (Pure DI Migration)
+    // These are initialized from singletons for now, will accept injection later
+    // @see docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md
+    // =========================================================================
+    
+    /** ProjectController - core data controller */
+    private projectController: ProjectController;
+    
+    /** SelectionModel - selection state */
+    private selectionModel: SelectionModel;
+    
+    /** CommandService - command registry */
+    private commandService: CommandService;
+
     // Data stores
     // NOTE: taskStore and calendarStore removed - data flows through ProjectController
     private tradePartnerStore!: TradePartnerStore;
@@ -143,7 +159,7 @@ export class SchedulerService {
     // Selection state now fully managed by SelectionModel
     // Legacy public accessor for backward compatibility (reads from SelectionModel)
     public get selectedIds(): Set<string> {
-        return SelectionModel.getInstance().getSelectedIdSet();
+        return this.selectionModel.getSelectedIdSet();
     }
     
     private _unsubscribeEditing: (() => void) | null = null;
@@ -166,21 +182,21 @@ export class SchedulerService {
      * Clear all selection
      */
     private _sel_clear(): void {
-        SelectionModel.getInstance().clear();
+        this.selectionModel.clear();
     }
 
     /**
      * Add task to selection
      */
     private _sel_add(id: string): void {
-        SelectionModel.getInstance().addToSelection([id]);
+        this.selectionModel.addToSelection([id]);
     }
 
     /**
      * Remove task from selection
      */
     private _sel_delete(id: string): void {
-        SelectionModel.getInstance().removeFromSelection([id]);
+        this.selectionModel.removeFromSelection([id]);
     }
 
     /**
@@ -188,14 +204,14 @@ export class SchedulerService {
      */
     private _sel_set(ids: string[], focusId?: string | null): void {
         const focus = focusId ?? (ids.length > 0 ? ids[ids.length - 1] : null);
-        SelectionModel.getInstance().setSelection(new Set(ids), focus, ids);
+        this.selectionModel.setSelection(new Set(ids), focus, ids);
     }
 
     /**
      * Set focused task
      */
     private _sel_setFocused(id: string | null, field?: string): void {
-        SelectionModel.getInstance().setFocus(id, field ?? undefined);
+        this.selectionModel.setFocus(id, field ?? undefined);
     }
 
     /**
@@ -211,21 +227,21 @@ export class SchedulerService {
      * Get selection count
      */
     private _sel_count(): number {
-        return SelectionModel.getInstance().getSelectionCount();
+        return this.selectionModel.getSelectionCount();
     }
 
     /**
      * Check if task is selected
      */
     private _sel_has(id: string): boolean {
-        return SelectionModel.getInstance().isSelected(id);
+        return this.selectionModel.isSelected(id);
     }
 
     /**
      * Get selected IDs as array
      */
     private _sel_toArray(): string[] {
-        return SelectionModel.getInstance().getSelectedIds();
+        return this.selectionModel.getSelectedIds();
     }
 
     /**
@@ -233,35 +249,35 @@ export class SchedulerService {
      * This is the most common selection pattern in the codebase.
      */
     private _sel_selectSingle(id: string): void {
-        SelectionModel.getInstance().setSelection(new Set([id]), id, [id]);
+        this.selectionModel.setSelection(new Set([id]), id, [id]);
     }
 
     /**
      * Get focused task ID
      */
     private _sel_getFocused(): string | null {
-        return SelectionModel.getInstance().getFocusedId();
+        return this.selectionModel.getFocusedId();
     }
 
     /**
      * Get anchor ID
      */
     private _sel_getAnchor(): string | null {
-        return SelectionModel.getInstance().getAnchorId();
+        return this.selectionModel.getAnchorId();
     }
 
     /**
      * Get focused column
      */
     private _sel_getFocusedColumn(): string | null {
-        return SelectionModel.getInstance().getFocusedField();
+        return this.selectionModel.getFocusedField();
     }
 
     /**
      * Set focused column
      */
     private _sel_setFocusedColumn(field: string | null): void {
-        SelectionModel.getInstance().setFocusedField(field);
+        this.selectionModel.setFocusedField(field);
     }
 
     // =========================================================================
@@ -302,6 +318,15 @@ export class SchedulerService {
         // Use isTauri from options (provided by AppInitializer)
         // Desktop-only architecture - must be Tauri environment
         this.isTauri = options.isTauri !== undefined ? options.isTauri : true;
+        
+        // =====================================================================
+        // PURE DI: Initialize service references
+        // Using getInstance() for now - these are already wired in Composition Root
+        // Future: Accept these as constructor parameters
+        // =====================================================================
+        this.projectController = ProjectController.getInstance();
+        this.selectionModel = SelectionModel.getInstance();
+        this.commandService = CommandService.getInstance();
 
         // Initialize services (async - will be awaited in init())
         // Store the promise to avoid race conditions
@@ -327,7 +352,7 @@ export class SchedulerService {
         // This prevents duplicate initialization and double snapshot timers.
         
         const appInitializer = AppInitializer.getInstance();
-        const controller = ProjectController.getInstance();
+        const controller = this.projectController;
         
         // Get reference to shared PersistenceService
         if (controller.hasPersistenceService()) {
@@ -358,7 +383,7 @@ export class SchedulerService {
         }
 
         // NOTE: HistoryManager is now initialized in AppInitializer (application level)
-        // Access via ProjectController.getInstance().getHistoryManager()
+        // Access via this.projectController.getHistoryManager()
 
         // UI services
         this.toastService = new ToastService({
@@ -431,8 +456,8 @@ export class SchedulerService {
             onBarClick: (taskId, e) => this._handleRowClick(taskId, e),
             onBarDoubleClick: (taskId, e) => this._handleRowDoubleClick(taskId, e),
             onBarDrag: (task, start, end) => this._handleBarDrag(task, start, end),
-            isParent: (id) => ProjectController.getInstance().isParent(id),
-            getDepth: (id) => ProjectController.getInstance().getDepth(id),
+            isParent: (id) => this.projectController.isParent(id),
+            getDepth: (id) => this.projectController.getDepth(id),
         };
 
         // Use the parent container that holds both grid and gantt
@@ -460,8 +485,8 @@ export class SchedulerService {
             onEnterLastRow: (lastTaskId, field) => this._handleEnterLastRow(lastTaskId, field),
             onEditEnd: () => this.exitEditMode(),
             onTradePartnerClick: (taskId, tradePartnerId, e) => this._handleTradePartnerClick(taskId, tradePartnerId, e),
-            isParent: (id) => ProjectController.getInstance().isParent(id),
-            getDepth: (id) => ProjectController.getInstance().getDepth(id),
+            isParent: (id) => this.projectController.isParent(id),
+            getDepth: (id) => this.projectController.getDepth(id),
         };
         viewport.initGrid(gridOptions);
 
@@ -477,7 +502,7 @@ export class SchedulerService {
             onBarClick: (taskId, e) => this._handleRowClick(taskId, e),
             onBarDoubleClick: (taskId, e) => this._handleRowDoubleClick(taskId, e),
             onBarDrag: (task, start, end) => this._handleBarDrag(task, start, end),
-            isParent: (id) => ProjectController.getInstance().isParent(id),
+            isParent: (id) => this.projectController.isParent(id),
             getHighlightDependencies: () => this.displaySettings.highlightDependenciesOnHover,
         };
         viewport.initGantt(ganttOptions);
@@ -519,8 +544,8 @@ export class SchedulerService {
 
         this.dependenciesModal = new DependenciesModal({
             container: modalsContainer,
-            getTasks: () => ProjectController.getInstance().getTasks(),
-            isParent: (id) => ProjectController.getInstance().isParent(id),
+            getTasks: () => this.projectController.getTasks(),
+            isParent: (id) => this.projectController.isParent(id),
             onSave: (taskId, deps) => this._handleDependenciesSave(taskId, deps),
         });
 
@@ -550,12 +575,12 @@ export class SchedulerService {
 
         // Load persisted data
         try {
-            const taskCountBeforeLoad = ProjectController.getInstance().getTasks().length;
+            const taskCountBeforeLoad = this.projectController.getTasks().length;
             console.log('[SchedulerService] 🔍 Before loadData() - task count:', taskCountBeforeLoad);
             
             await this.loadData();
             
-            const taskCountAfterLoad = ProjectController.getInstance().getTasks().length;
+            const taskCountAfterLoad = this.projectController.getTasks().length;
             console.log('[SchedulerService] ✅ After loadData() - task count:', taskCountAfterLoad);
         } catch (error) {
             console.error('[SchedulerService] Error loading persisted data:', error);
@@ -563,7 +588,7 @@ export class SchedulerService {
         
         // TODO: Calendar integration for Flatpickr - add setCalendar to GridRenderer
         // Pass calendar to grid for date picker integration
-        // const calendar = ProjectController.getInstance().getCalendar();
+        // const calendar = this.projectController.getCalendar();
         // if (this.grid) {
         //     this.grid.setCalendar(calendar);
         // }
@@ -670,13 +695,13 @@ export class SchedulerService {
         
         // Update SelectionModel (the single source of truth)
         // SelectionModel now tracks selection order internally
-        SelectionModel.getInstance().setSelection(selectedSet, primaryId, selectedIds);
+        this.selectionModel.setSelection(selectedSet, primaryId, selectedIds);
         
         // === Notify registered callbacks ===
         // IMPORTANT: This is the ONLY place callbacks are triggered.
         // Do NOT add callbacks to _handleRowClick - it would cause double-firing
         // since row clicks internally trigger _handleSelectionChange via _updateSelection().
-        const primaryTask = primaryId ? ProjectController.getInstance().getTaskById(primaryId) || null : null;
+        const primaryTask = primaryId ? this.projectController.getTaskById(primaryId) || null : null;
         
         // Pass the clicked field (if any) to callbacks
         // Only pass field if this selection change was triggered by a click (not programmatic)
@@ -1261,38 +1286,13 @@ export class SchedulerService {
      * @private
      * @param task - Task to calculate variance for
      * @returns Variance object with start and finish variances in work days
+     * 
+     * @see src/core/calculations/VarianceCalculator.ts for the extracted implementation
      */
     private _calculateVariance(task: Task): { start: number | null; finish: number | null } {
-        let startVariance: number | null = null;
-        let finishVariance: number | null = null;
-        
-        // Calculate start variance: compareStart - baselineStart (or current start if no actual)
-        // Positive = ahead of baseline, Negative = behind baseline
-        if (task.baselineStart) {
-            const compareStart = task.actualStart || task.start;
-            if (compareStart) {
-                // calcWorkDaysDifference(compareStart, baselineStart) returns:
-                // - Positive if compareStart < baselineStart (ahead of schedule)
-                // - Negative if compareStart > baselineStart (behind schedule)
-                // This matches the desired sign convention
-                startVariance = DateUtils.calcWorkDaysDifference(compareStart, task.baselineStart, this.calendar);
-            }
-        }
-        
-        // Calculate finish variance: compareFinish - baselineFinish (or current end if no actual)
-        // Positive = ahead of baseline, Negative = behind baseline
-        if (task.baselineFinish) {
-            const compareFinish = task.actualFinish || task.end;
-            if (compareFinish) {
-                // calcWorkDaysDifference(compareFinish, baselineFinish) returns:
-                // - Positive if compareFinish < baselineFinish (ahead of schedule)
-                // - Negative if compareFinish > baselineFinish (behind schedule)
-                // This matches the desired sign convention
-                finishVariance = DateUtils.calcWorkDaysDifference(compareFinish, task.baselineFinish, this.calendar);
-            }
-        }
-        
-        return { start: startVariance, finish: finishVariance };
+        // Delegated to standalone module for Pure DI compatibility
+        // See: docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md - Phase 0
+        return calculateVarianceFn(task, this.calendar);
     }
 
     /**
@@ -1332,7 +1332,7 @@ export class SchedulerService {
      * @returns All tasks
      */
     get tasks(): Task[] {
-        return ProjectController.getInstance().getTasks();
+        return this.projectController.getTasks();
     }
 
     /**
@@ -1347,7 +1347,7 @@ export class SchedulerService {
         // Unconditional reset - always safe when replacing entire dataset
         editingManager.reset();
         
-        ProjectController.getInstance().syncTasks(tasks);
+        this.projectController.syncTasks(tasks);
         // Trigger render to update viewport with new data
         this.render();
     }
@@ -1357,7 +1357,7 @@ export class SchedulerService {
      * @returns Calendar object
      */
     get calendar(): Calendar {
-        return ProjectController.getInstance().getCalendar();
+        return this.projectController.getCalendar();
     }
 
     /**
@@ -1365,7 +1365,7 @@ export class SchedulerService {
      * @param calendar - Calendar object
      */
     set calendar(calendar: Calendar) {
-        ProjectController.getInstance().updateCalendar(calendar);
+        this.projectController.updateCalendar(calendar);
     }
 
     // =========================================================================
@@ -1413,8 +1413,8 @@ export class SchedulerService {
         // Selection logic here
         if (e.shiftKey && this._sel_getAnchor()) {
             // Range selection
-            const visibleTasks = ProjectController.getInstance().getVisibleTasks((id) => {
-                const task = ProjectController.getInstance().getTaskById(id);
+            const visibleTasks = this.projectController.getVisibleTasks((id) => {
+                const task = this.projectController.getTaskById(id);
                 return task?._collapsed || false;
             });
             const anchorIndex = visibleTasks.findIndex(t => t.id === this._sel_getAnchor());
@@ -1485,10 +1485,10 @@ export class SchedulerService {
      * @param value - New date value (ISO format: YYYY-MM-DD)
      */
     private async _applyDateChangeImmediate(taskId: string, field: string, value: string): Promise<void> {
-        const task = ProjectController.getInstance().getTaskById(taskId);
+        const task = this.projectController.getTaskById(taskId);
         if (!task) return;
         
-        const isParent = ProjectController.getInstance().isParent(taskId);
+        const isParent = this.projectController.isParent(taskId);
         if (isParent) return; // Parents don't have direct date edits
         
         // Validate date format
@@ -1498,7 +1498,7 @@ export class SchedulerService {
         }
         
         const isManual = task.schedulingMode === 'Manual';
-        const calendar = ProjectController.getInstance().getCalendar();
+        const calendar = this.projectController.getCalendar();
         
         // ═══════════════════════════════════════════════════════════════════════
         // SCHEDULED DATE EDITS (start, end)
@@ -1514,7 +1514,7 @@ export class SchedulerService {
                     start: value,
                     end: newEnd  // Always recalculate to ensure End >= Start
                 };
-                ProjectController.getInstance().updateTask(taskId, updates);
+                this.projectController.updateTask(taskId, updates);
                 
                 // NOTE: Removed engine sync - ProjectController handles via Worker
                 
@@ -1526,7 +1526,7 @@ export class SchedulerService {
                     constraintType: 'snet' as ConstraintType,
                     constraintDate: value 
                 };
-                ProjectController.getInstance().updateTask(taskId, updates);
+                this.projectController.updateTask(taskId, updates);
                 
                 // NOTE: Removed engine sync - ProjectController handles via Worker
                 
@@ -1564,7 +1564,7 @@ export class SchedulerService {
                     end: value,
                     duration: Math.max(1, newDuration)
                 };
-                ProjectController.getInstance().updateTask(taskId, updates);
+                this.projectController.updateTask(taskId, updates);
                 
                 // NOTE: Removed engine sync - ProjectController handles via Worker
                 
@@ -1585,7 +1585,7 @@ export class SchedulerService {
                     constraintType: 'fnlt' as ConstraintType,
                     constraintDate: value 
                 };
-                ProjectController.getInstance().updateTask(taskId, updates);
+                this.projectController.updateTask(taskId, updates);
                 
                 // NOTE: Removed engine sync - ProjectController handles via Worker
                 
@@ -1610,7 +1610,7 @@ export class SchedulerService {
         
         if (field === 'actualStart') {
             // DRIVER MODE + ANCHOR: actualStart drives schedule and locks history
-            const calendar = ProjectController.getInstance().getCalendar();
+            const calendar = this.projectController.getCalendar();
             const updates: Partial<Task> = {
                 actualStart: value,
                 start: value,
@@ -1622,7 +1622,7 @@ export class SchedulerService {
                 updates.duration = DateUtils.calcWorkDays(value, task.actualFinish, calendar);
             }
             
-            ProjectController.getInstance().updateTask(taskId, updates);
+            this.projectController.updateTask(taskId, updates);
             // NOTE: Removed engine sync - ProjectController handles via Worker
             
             this.toastService.info('Task started - schedule locked with SNET constraint');
@@ -1641,7 +1641,7 @@ export class SchedulerService {
                 return;
             }
             
-            const calendar = ProjectController.getInstance().getCalendar();
+            const calendar = this.projectController.getCalendar();
             const actualDuration = effectiveStart
                 ? DateUtils.calcWorkDays(effectiveStart, value, calendar)
                 : task.duration;
@@ -1668,7 +1668,7 @@ export class SchedulerService {
                 }
             }
             
-            ProjectController.getInstance().updateTask(taskId, updates);
+            this.projectController.updateTask(taskId, updates);
             // NOTE: Removed engine sync - ProjectController handles via Worker
             
             this.toastService.success('Task complete');
@@ -1699,12 +1699,12 @@ export class SchedulerService {
         needsRender: boolean;
         success: boolean;
     }> {
-        const task = ProjectController.getInstance().getTaskById(taskId);
+        const task = this.projectController.getTaskById(taskId);
         if (!task) {
             return { needsRecalc: false, needsRender: false, success: false };
         }
         
-        const isParent = ProjectController.getInstance().isParent(taskId);
+        const isParent = this.projectController.isParent(taskId);
         let needsRecalc = false;
         let needsRender = false;
 
@@ -1723,7 +1723,7 @@ export class SchedulerService {
                 // Only update store if we have a valid positive number
                 // Invalid values (empty, NaN) are ignored - DOM keeps user's input
                 if (!isNaN(parsedDuration) && parsedDuration >= 1) {
-                    ProjectController.getInstance().updateTask(taskId, { duration: parsedDuration });
+                    this.projectController.updateTask(taskId, { duration: parsedDuration });
                     
                     // CRITICAL: Await engine update to ensure it completes before recalculation
                     // This prevents race condition where recalculateAll() runs before engine
@@ -1799,12 +1799,12 @@ export class SchedulerService {
                         updates.duration = DateUtils.calcWorkDays(
                             actualStartValue,
                             task.actualFinish,
-                            ProjectController.getInstance().getCalendar()
+                            this.projectController.getCalendar()
                         );
                     }
 
                     // Atomic update
-                    ProjectController.getInstance().updateTask(taskId, updates);
+                    this.projectController.updateTask(taskId, updates);
 
                     // NOTE: Removed engine sync - ProjectController handles via Worker
 
@@ -1815,7 +1815,7 @@ export class SchedulerService {
                     // Clearing actualStart
                     // NOTE: We preserve the constraint - user may have wanted SNET anyway
                     // They can manually remove it if needed
-                    ProjectController.getInstance().updateTask(taskId, { actualStart: null });
+                    this.projectController.updateTask(taskId, { actualStart: null });
                     // NOTE: Removed engine sync - ProjectController handles via Worker
                     
                     this.toastService.info('Actual start cleared. Start constraint preserved.');
@@ -1846,7 +1846,7 @@ export class SchedulerService {
                     }
 
                     // Calculate actual duration
-                    const calendar = ProjectController.getInstance().getCalendar();
+                    const calendar = this.projectController.getCalendar();
                     const actualDuration = effectiveStart
                         ? DateUtils.calcWorkDays(effectiveStart, actualFinishValue, calendar)
                         : task.duration;
@@ -1876,7 +1876,7 @@ export class SchedulerService {
                     }
 
                     // Atomic update
-                    ProjectController.getInstance().updateTask(taskId, updates);
+                    this.projectController.updateTask(taskId, updates);
 
                     // NOTE: Removed engine sync - ProjectController handles via Worker
 
@@ -1900,7 +1900,7 @@ export class SchedulerService {
                     
                 } else if (!value && !isParent) {
                     // Clearing actualFinish - task is no longer complete
-                    ProjectController.getInstance().updateTask(taskId, { 
+                    this.projectController.updateTask(taskId, { 
                         actualFinish: null,
                         progress: 0,
                         remainingDuration: task.duration // Reset remaining work
@@ -1917,27 +1917,27 @@ export class SchedulerService {
                 // Constraint type change: if set to ASAP, clear constraint date
                 const constraintValue = String(value);
                 if (constraintValue === 'asap') {
-                    ProjectController.getInstance().updateTask(taskId, { 
+                    this.projectController.updateTask(taskId, { 
                         constraintType: 'asap',
                         constraintDate: null 
                     });
                     this.toastService.info('Constraint removed - task will schedule based on dependencies');
                 } else {
                     // For other constraint types, just update
-                    ProjectController.getInstance().updateTask(taskId, { constraintType: constraintValue as ConstraintType });
+                    this.projectController.updateTask(taskId, { constraintType: constraintValue as ConstraintType });
                 }
                 needsRecalc = true;
                 break;
                 
             case 'constraintDate':
                 // Constraint date change
-                ProjectController.getInstance().updateTask(taskId, { constraintDate: String(value) || null });
+                this.projectController.updateTask(taskId, { constraintDate: String(value) || null });
                 needsRecalc = true;
                 break;
                 
             case 'tradePartnerIds':
                 // Trade partner assignments - display only, doesn't affect CPM
-                ProjectController.getInstance().updateTask(taskId, { tradePartnerIds: Array.isArray(value) ? value as string[] : [] });
+                this.projectController.updateTask(taskId, { tradePartnerIds: Array.isArray(value) ? value as string[] : [] });
                 
                 // NOTE: Removed engine sync - ProjectController handles via Worker
                 
@@ -1983,13 +1983,13 @@ export class SchedulerService {
                         constraintDate: task.start || null
                     };
                     
-                    ProjectController.getInstance().updateTask(taskId, updates);
+                    this.projectController.updateTask(taskId, updates);
                     // NOTE: Removed engine sync - ProjectController handles via Worker
                     
                     this.toastService.info('Task is now auto-scheduled with SNET constraint (remove constraint for ASAP)');
                 } else {
                     // AUTO → MANUAL: Simple mode change, dates preserved
-                    ProjectController.getInstance().updateTask(taskId, { schedulingMode: newMode });
+                    this.projectController.updateTask(taskId, { schedulingMode: newMode });
                     // NOTE: Removed engine sync - ProjectController handles via Worker
                     
                     this.toastService.info('Task is now manually scheduled - dates are fixed');
@@ -2001,7 +2001,7 @@ export class SchedulerService {
                 
             default:
                 // All other fields - simple update (name, notes, progress, etc.)
-                ProjectController.getInstance().updateTask(taskId, { [field]: value } as Partial<Task>);
+                this.projectController.updateTask(taskId, { [field]: value } as Partial<Task>);
                 needsRender = true;
         }
         
@@ -2088,7 +2088,7 @@ export class SchedulerService {
      */
     private _handleEnterLastRow(lastTaskId: string, field: string): void {
         // Get the last task to determine its parent (new task will be a sibling)
-        const lastTask = ProjectController.getInstance().getTaskById(lastTaskId);
+        const lastTask = this.projectController.getTaskById(lastTaskId);
         if (!lastTask) return;
         
         // Create new task with same parent as the last task (making it a sibling)
@@ -2214,7 +2214,7 @@ export class SchedulerService {
         
         // Sync drawer with updated values (dates may have changed from CPM)
         if (this.drawer && this.drawer.isDrawerOpen() && this.drawer.getActiveTaskId() === taskId) {
-            const updatedTask = ProjectController.getInstance().getTaskById(taskId);
+            const updatedTask = this.projectController.getTaskById(taskId);
             if (updatedTask) {
                 this.drawer.sync(updatedTask);
             }
@@ -2236,7 +2236,7 @@ export class SchedulerService {
         }
 
         this.saveCheckpoint();
-        ProjectController.getInstance().updateTask(taskId, { dependencies });
+        this.projectController.updateTask(taskId, { dependencies });
         
         // NOTE: Removed engine sync - ProjectController handles via Worker
         
@@ -2254,7 +2254,7 @@ export class SchedulerService {
      */
     private _handleCalendarSave(calendar: Calendar): void {
         this.saveCheckpoint();
-        ProjectController.getInstance().updateCalendar(calendar);
+        this.projectController.updateCalendar(calendar);
         
         // NOTE: Removed engine sync - ProjectController handles via Worker
         
@@ -2293,7 +2293,7 @@ export class SchedulerService {
         }
         
         // Guard: No valid target
-        const targetTask = ProjectController.getInstance().getTaskById(targetId);
+        const targetTask = this.projectController.getTaskById(targetId);
         if (!targetTask) {
             this.toastService.warning('Invalid drop target');
             return;
@@ -2313,7 +2313,7 @@ export class SchedulerService {
         // Find "top-level" selected tasks (tasks whose parent is NOT also selected)
         // This is the same pattern used in indentSelection()
         const topLevelSelected = taskIds
-            .map(id => ProjectController.getInstance().getTaskById(id))
+            .map(id => this.projectController.getTaskById(id))
             .filter((t): t is Task => t !== undefined)
             .filter(task => !task.parentId || !selectedSet.has(task.parentId));
         
@@ -2331,7 +2331,7 @@ export class SchedulerService {
             taskIdsToMove.add(task.id);
             
             // Recursively collect all descendants
-            ProjectController.getInstance().getChildren(task.id).forEach(child => {
+            this.projectController.getChildren(task.id).forEach(child => {
                 collectDescendants(child);
             });
         };
@@ -2354,7 +2354,7 @@ export class SchedulerService {
                 this.toastService.warning('Cannot drop a task onto its own descendant');
                 return;
             }
-            const parent = ProjectController.getInstance().getTaskById(checkParent);
+            const parent = this.projectController.getTaskById(checkParent);
             checkParent = parent?.parentId ?? null;
         }
         
@@ -2379,7 +2379,7 @@ export class SchedulerService {
             newParentId = targetId;
             
             // Append to end of target's children
-            const existingChildren = ProjectController.getInstance().getChildren(targetId);
+            const existingChildren = this.projectController.getChildren(targetId);
             beforeKey = existingChildren.length > 0 
                 ? existingChildren[existingChildren.length - 1].sortKey ?? null 
                 : null;
@@ -2387,7 +2387,7 @@ export class SchedulerService {
             
             // If target was collapsed, expand it to show the newly added children
             if (targetTask._collapsed) {
-                ProjectController.getInstance().updateTask(targetId, { _collapsed: false });
+                this.projectController.updateTask(targetId, { _collapsed: false });
             }
             
         } else if (position === 'before') {
@@ -2397,7 +2397,7 @@ export class SchedulerService {
             newParentId = targetTask.parentId ?? null;
             
             // Get siblings at target's level
-            const siblings = ProjectController.getInstance().getChildren(newParentId);
+            const siblings = this.projectController.getChildren(newParentId);
             const targetIndex = siblings.findIndex(t => t.id === targetId);
             
             // beforeKey = previous sibling's key (or null if first)
@@ -2412,7 +2412,7 @@ export class SchedulerService {
             newParentId = targetTask.parentId ?? null;
             
             // Get siblings at target's level
-            const siblings = ProjectController.getInstance().getChildren(newParentId);
+            const siblings = this.projectController.getChildren(newParentId);
             const targetIndex = siblings.findIndex(t => t.id === targetId);
             
             // beforeKey = target's key
@@ -2439,7 +2439,7 @@ export class SchedulerService {
         // =========================================================================
         
         topLevelSelected.forEach((task, index) => {
-            ProjectController.getInstance().updateTask(task.id, {
+            this.projectController.updateTask(task.id, {
                 parentId: newParentId,
                 sortKey: sortKeys[index]
             });
@@ -2483,10 +2483,10 @@ export class SchedulerService {
      */
     private _handleBarDrag(task: Task, start: string, end: string): void {
         this.saveCheckpoint();
-        const calendar = ProjectController.getInstance().getCalendar();
+        const calendar = this.projectController.getCalendar();
         const duration = DateUtils.calcWorkDays(start, end, calendar);
         
-        ProjectController.getInstance().updateTask(task.id, { start, end, duration });
+        this.projectController.updateTask(task.id, { start, end, duration });
         if (ENABLE_LEGACY_RECALC) {
             this.recalculateAll();
             this.saveData();
@@ -2523,8 +2523,8 @@ export class SchedulerService {
         
         if (editableColumns.length === 0) return;
         
-        const visibleTasks = ProjectController.getInstance().getVisibleTasks((id) => {
-            const task = ProjectController.getInstance().getTaskById(id);
+        const visibleTasks = this.projectController.getVisibleTasks((id) => {
+            const task = this.projectController.getTaskById(id);
             return task?._collapsed || false;
         });
         
@@ -2605,8 +2605,8 @@ export class SchedulerService {
         const focusedId = this._sel_getFocused();
         if (!focusedId) return;
         
-        const task = ProjectController.getInstance().getTaskById(focusedId);
-        if (!task || !ProjectController.getInstance().isParent(focusedId)) return;
+        const task = this.projectController.getTaskById(focusedId);
+        if (!task || !this.projectController.isParent(focusedId)) return;
 
         if (key === 'ArrowRight' && task._collapsed) {
             this.toggleCollapse(focusedId);
@@ -2623,7 +2623,7 @@ export class SchedulerService {
      */
     private _handleTabIndent(): void {
         // PHASE 2: Delegate to CommandService
-        CommandService.getInstance().execute('hierarchy.indent');
+        this.commandService.execute('hierarchy.indent');
     }
 
     /**
@@ -2632,7 +2632,7 @@ export class SchedulerService {
      */
     private _handleTabOutdent(): void {
         // PHASE 2: Delegate to CommandService
-        CommandService.getInstance().execute('hierarchy.outdent');
+        this.commandService.execute('hierarchy.outdent');
     }
 
     /**
@@ -2647,7 +2647,7 @@ export class SchedulerService {
         }
         
         // PHASE 2: Delegate to CommandService for cut cancel / selection clear
-        CommandService.getInstance().execute('selection.escape');
+        this.commandService.execute('selection.escape');
         this._updateSelection();
     }
 
@@ -2665,7 +2665,7 @@ export class SchedulerService {
      * @returns Task or undefined
      */
     getTask(id: string): Task | undefined {
-        return ProjectController.getInstance().getTaskById(id);
+        return this.projectController.getTaskById(id);
     }
 
     // =========================================================================
@@ -2698,7 +2698,7 @@ export class SchedulerService {
     public getSelectedTask(): Task | null {
         const focusedId = this._sel_getFocused();
         if (!focusedId) return null;
-        return ProjectController.getInstance().getTaskById(focusedId) || null;
+        return this.projectController.getTaskById(focusedId) || null;
     }
 
     /**
@@ -2745,7 +2745,7 @@ export class SchedulerService {
      * @returns True if parent
      */
     isParent(id: string): boolean {
-        return ProjectController.getInstance().isParent(id);
+        return this.projectController.isParent(id);
     }
 
     /**
@@ -2754,7 +2754,7 @@ export class SchedulerService {
      * @returns Depth level
      */
     getDepth(id: string): number {
-        return ProjectController.getInstance().getDepth(id);
+        return this.projectController.getDepth(id);
     }
 
     /**
@@ -2771,7 +2771,7 @@ export class SchedulerService {
             return Promise.resolve(undefined);
         }
         
-        const controller = ProjectController.getInstance();
+        const controller = this.projectController;
         
         return this.operationQueue.enqueue(async () => {
             this.saveCheckpoint();
@@ -2840,7 +2840,7 @@ export class SchedulerService {
      */
     deleteTask(taskId: string): void {
         const editingManager = getEditingStateManager();
-        const controller = ProjectController.getInstance();
+        const controller = this.projectController;
         
         if (editingManager.isEditingTask(taskId)) {
             editingManager.exitEditMode('task-deleted');
@@ -2869,7 +2869,7 @@ export class SchedulerService {
      */
     private _deleteSelected(): void {
         // PHASE 2: Delegate to CommandService
-        CommandService.getInstance().execute('task.delete');
+        this.commandService.execute('task.delete');
     }
 
     /**
@@ -2878,14 +2878,14 @@ export class SchedulerService {
      */
     toggleCollapse(taskId: string): void {
         // PHASE 2: Delegate to CommandService
-        CommandService.getInstance().execute('view.toggleCollapse', { args: { taskId } });
+        this.commandService.execute('view.toggleCollapse', { args: { taskId } });
     }
 
     /**
      * Indent a task (make it a child of previous sibling)
      */
     indent(taskId: string): void {
-        const controller = ProjectController.getInstance();
+        const controller = this.projectController;
         const task = controller.getTaskById(taskId);
         if (!task) return;
 
@@ -2934,7 +2934,7 @@ export class SchedulerService {
      * Outdent a task (move to parent's level)
      */
     outdent(taskId: string): void {
-        const controller = ProjectController.getInstance();
+        const controller = this.projectController;
         const task = controller.getTaskById(taskId);
         if (!task || !task.parentId) return;
 
@@ -3070,7 +3070,7 @@ export class SchedulerService {
      * Insert blank row above a task
      */
     insertBlankRowAbove(taskId: string): void {
-        const controller = ProjectController.getInstance();
+        const controller = this.projectController;
         const task = controller.getTaskById(taskId);
         if (!task) return;
         
@@ -3103,7 +3103,7 @@ export class SchedulerService {
      * Insert blank row below a task
      */
     insertBlankRowBelow(taskId: string): void {
-        const controller = ProjectController.getInstance();
+        const controller = this.projectController;
         const task = controller.getTaskById(taskId);
         if (!task) return;
         
@@ -3137,7 +3137,7 @@ export class SchedulerService {
      * Called when user double-clicks a blank row
      */
     wakeUpBlankRow(taskId: string): void {
-        const controller = ProjectController.getInstance();
+        const controller = this.projectController;
         const task = controller.getTaskById(taskId);
         if (!task || !controller.isBlankRow(taskId)) {
             return;
@@ -3167,7 +3167,7 @@ export class SchedulerService {
      * Convert a blank row to a task
      */
     convertBlankToTask(taskId: string): void {
-        const controller = ProjectController.getInstance();
+        const controller = this.projectController;
         
         if (!controller.isBlankRow(taskId)) {
             this.toastService?.error('Only blank rows can be converted');
@@ -3236,8 +3236,8 @@ export class SchedulerService {
             if (idx <= 0) continue;
             
             const prev = list[idx - 1];
-            const taskDepth = ProjectController.getInstance().getDepth(task.id);
-            const prevDepth = ProjectController.getInstance().getDepth(prev.id);
+            const taskDepth = this.projectController.getDepth(task.id);
+            const prevDepth = this.projectController.getDepth(prev.id);
             
             // Can only indent if prev is at same or higher depth
             if (prevDepth < taskDepth) continue;
@@ -3247,17 +3247,17 @@ export class SchedulerService {
                 newParentId = prev.id;
             } else {
                 let curr: Task | undefined = prev;
-                while (curr && ProjectController.getInstance().getDepth(curr.id) > taskDepth) {
-                    curr = curr.parentId ? ProjectController.getInstance().getTaskById(curr.parentId) : undefined;
+                while (curr && this.projectController.getDepth(curr.id) > taskDepth) {
+                    curr = curr.parentId ? this.projectController.getTaskById(curr.parentId) : undefined;
                 }
                 if (curr) newParentId = curr.id;
             }
             
             if (newParentId !== null) {
                 const newSortKey = OrderingService.generateAppendKey(
-                    ProjectController.getInstance().getLastSortKey(newParentId)
+                    this.projectController.getLastSortKey(newParentId)
                 );
-                ProjectController.getInstance().moveTask(task.id, newParentId, newSortKey);
+                this.projectController.moveTask(task.id, newParentId, newSortKey);
                 indentedCount++;
             }
         }
@@ -3286,7 +3286,7 @@ export class SchedulerService {
         
         const list = this._getFlatList();
         const selectedIds = new Set(this._sel_toArray());
-        const allTasks = ProjectController.getInstance().getTasks();
+        const allTasks = this.projectController.getTasks();
         
         // Get top-level selected tasks
         const topLevelSelected = list.filter(task =>
@@ -3302,7 +3302,7 @@ export class SchedulerService {
             const grandparentId = currentParent ? currentParent.parentId : null;
             
             // Position after former parent among its siblings
-            const auntsUncles = ProjectController.getInstance().getChildren(grandparentId);
+            const auntsUncles = this.projectController.getChildren(grandparentId);
             const formerParentIndex = auntsUncles.findIndex(t => t.id === currentParent?.id);
             
             const beforeKey = currentParent?.sortKey ?? null;
@@ -3312,7 +3312,7 @@ export class SchedulerService {
             
             const newSortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
             
-            ProjectController.getInstance().updateTask(task.id, {
+            this.projectController.updateTask(task.id, {
                 parentId: grandparentId,
                 sortKey: newSortKey
             });
@@ -3341,7 +3341,7 @@ export class SchedulerService {
         
         const selectedCount = this._sel_count();
         const selectedArray = this._sel_toArray();
-        const hasParents = selectedArray.some(id => ProjectController.getInstance().isParent(id));
+        const hasParents = selectedArray.some(id => this.projectController.isParent(id));
         
         // Confirm for multiple tasks or parent tasks
         if (selectedCount > 1 || hasParents) {
@@ -3367,7 +3367,7 @@ export class SchedulerService {
             if (editingManager.isEditingTask(taskId)) {
                 editingManager.exitEditMode('task-deleted');
             }
-            ProjectController.getInstance().deleteTask(taskId);
+            this.projectController.deleteTask(taskId);
             this._sel_delete(taskId);
             // NOTE: Removed engine sync - ProjectController handles via Worker
         }
@@ -3403,8 +3403,8 @@ export class SchedulerService {
      * @private
      */
     private _getFlatList(): Task[] {
-        return ProjectController.getInstance().getVisibleTasks((id) => {
-            const t = ProjectController.getInstance().getTaskById(id);
+        return this.projectController.getVisibleTasks((id) => {
+            const t = this.projectController.getTaskById(id);
             return t?._collapsed || false;
         });
     }
@@ -3416,7 +3416,7 @@ export class SchedulerService {
     private _getAllDescendants(taskId: string): Set<string> {
         const descendants = new Set<string>();
         const collect = (id: string) => {
-            const children = ProjectController.getInstance().getChildren(id);
+            const children = this.projectController.getChildren(id);
             for (const child of children) {
                 descendants.add(child.id);
                 collect(child.id);
@@ -3441,7 +3441,7 @@ export class SchedulerService {
             if (visited.has(currentId)) continue;
             visited.add(currentId);
             
-            const task = ProjectController.getInstance().getTaskById(currentId);
+            const task = this.projectController.getTaskById(currentId);
             if (task?.dependencies) {
                 for (const dep of task.dependencies) {
                     if (!visited.has(dep.id)) {
@@ -3476,7 +3476,7 @@ export class SchedulerService {
      * @returns Validation result with error message if invalid
      */
     private _validateDependencies(taskId: string, dependencies: Array<{ id: string; type: LinkType; lag: number }>): { valid: boolean; error?: string } {
-        const task = ProjectController.getInstance().getTaskById(taskId);
+        const task = this.projectController.getTaskById(taskId);
         if (!task) {
             return { valid: false, error: 'Task not found' };
         }
@@ -3484,7 +3484,7 @@ export class SchedulerService {
         // Check each dependency
         for (const dep of dependencies) {
             // Check if predecessor exists
-            const predecessor = ProjectController.getInstance().getTaskById(dep.id);
+            const predecessor = this.projectController.getTaskById(dep.id);
             if (!predecessor) {
                 return { valid: false, error: `Predecessor task "${dep.id}" not found` };
             }
@@ -3553,7 +3553,7 @@ export class SchedulerService {
      */
     linkSelectedInOrder(): void {
         // PHASE 2: Delegate to CommandService
-        CommandService.getInstance().execute('dependency.linkSelected');
+        this.commandService.execute('dependency.linkSelected');
     }
 
     /**
@@ -3561,7 +3561,7 @@ export class SchedulerService {
      */
     insertTaskAbove(): void {
         // PHASE 2: Delegate to CommandService
-        CommandService.getInstance().execute('task.insertAbove');
+        this.commandService.execute('task.insertAbove');
     }
 
     /**
@@ -3569,7 +3569,7 @@ export class SchedulerService {
      */
     insertTaskBelow(): void {
         // PHASE 2: Delegate to CommandService
-        CommandService.getInstance().execute('task.insertBelow');
+        this.commandService.execute('task.insertBelow');
     }
 
     /**
@@ -3577,7 +3577,7 @@ export class SchedulerService {
      */
     addChildTask(): void {
         // PHASE 2: Delegate to CommandService
-        CommandService.getInstance().execute('task.addChild');
+        this.commandService.execute('task.addChild');
     }
 
     /**
@@ -3587,9 +3587,9 @@ export class SchedulerService {
     moveSelectedTasks(direction: number): void {
         // PHASE 2: Delegate to CommandService
         if (direction === -1) {
-            CommandService.getInstance().execute('hierarchy.moveUp');
+            this.commandService.execute('hierarchy.moveUp');
         } else {
-            CommandService.getInstance().execute('hierarchy.moveDown');
+            this.commandService.execute('hierarchy.moveDown');
         }
         
         // Keep focus on moved task
@@ -3667,7 +3667,7 @@ export class SchedulerService {
         if (!focusedId || !focusedColumn) return;
         
         const editingManager = getEditingStateManager();
-        const task = ProjectController.getInstance().getTaskById(focusedId);
+        const task = this.projectController.getTaskById(focusedId);
         const originalValue = task ? getTaskFieldValue(task, focusedColumn as GridColumn['field']) : undefined;
         
         editingManager.enterEditMode(
@@ -3701,7 +3701,7 @@ export class SchedulerService {
      * @returns Array of task IDs in the order they were selected
      */
     getSelectionInOrder(): string[] {
-        return SelectionModel.getInstance().getSelectionInOrder();
+        return this.selectionModel.getSelectionInOrder();
     }
 
     /**
@@ -3742,8 +3742,8 @@ export class SchedulerService {
         }
 
         // Get visible tasks (respecting collapse state)
-        const visibleTasks = ProjectController.getInstance().getVisibleTasks((id) => {
-            const task = ProjectController.getInstance().getTaskById(id);
+        const visibleTasks = this.projectController.getVisibleTasks((id) => {
+            const task = this.projectController.getTaskById(id);
             return task?._collapsed || false;
         });
 
@@ -3778,8 +3778,8 @@ export class SchedulerService {
      */
     private _handleSelectAllClick(checkbox: HTMLInputElement): void {
         // Get visible tasks (respecting collapse state)
-        const visibleTasks = ProjectController.getInstance().getVisibleTasks((id) => {
-            const task = ProjectController.getInstance().getTaskById(id);
+        const visibleTasks = this.projectController.getVisibleTasks((id) => {
+            const task = this.projectController.getTaskById(id);
             return task?._collapsed || false;
         });
 
@@ -3804,7 +3804,7 @@ export class SchedulerService {
      */
     copySelected(): void {
         // PHASE 2: Delegate to CommandService
-        CommandService.getInstance().execute('clipboard.copy');
+        this.commandService.execute('clipboard.copy');
     }
 
     /**
@@ -3812,7 +3812,7 @@ export class SchedulerService {
      */
     cutSelected(): void {
         // PHASE 2: Delegate to CommandService
-        CommandService.getInstance().execute('clipboard.cut');
+        this.commandService.execute('clipboard.cut');
     }
 
     /**
@@ -3820,7 +3820,7 @@ export class SchedulerService {
      */
     paste(): void {
         // PHASE 2: Delegate to CommandService
-        CommandService.getInstance().execute('clipboard.paste');
+        this.commandService.execute('clipboard.paste');
     }
 
     // =========================================================================
@@ -3866,7 +3866,7 @@ export class SchedulerService {
      * @param taskId - Task ID
      */
     openDependencies(taskId: string): void {
-        const task = ProjectController.getInstance().getTaskById(taskId);
+        const task = this.projectController.getTaskById(taskId);
         if (!task) return;
         
         // Try to open via panel system first (if RightSidebarManager is available)
@@ -3898,7 +3898,7 @@ export class SchedulerService {
      */
     openCalendar(): void {
         if (!this.calendarModal) return;
-        this.calendarModal.open(ProjectController.getInstance().getCalendar());
+        this.calendarModal.open(this.projectController.getCalendar());
     }
 
     /**
@@ -3924,7 +3924,7 @@ export class SchedulerService {
         // In the new architecture, ProjectController.forceRecalculate() sends
         // a CALCULATE command to the WASM Worker. The Worker emits results
         // via tasks$ which the UI subscribes to. No manual result application needed.
-        ProjectController.getInstance().forceRecalculate();
+        this.projectController.forceRecalculate();
         return Promise.resolve();
     }
 
@@ -3996,7 +3996,7 @@ export class SchedulerService {
          */
         const traverse = (parentId: string | null): void => {
             // getChildren returns tasks SORTED by sortKey - this is critical
-            const children = ProjectController.getInstance().getChildren(parentId);
+            const children = this.projectController.getChildren(parentId);
             
             for (const task of children) {
                 // 1. Assign number based on row type
@@ -4010,7 +4010,7 @@ export class SchedulerService {
                 
                 // 2. Recurse into children (regardless of collapsed state)
                 // This ensures number continuity even for hidden tasks
-                if (ProjectController.getInstance().isParent(task.id)) {
+                if (this.projectController.isParent(task.id)) {
                     traverse(task.id);
                 }
             }
@@ -4028,8 +4028,8 @@ export class SchedulerService {
      */
     private _updateGridDataSync(): void {
         if (this.grid) {
-            const tasks = ProjectController.getInstance().getVisibleTasks((id) => {
-                const task = ProjectController.getInstance().getTaskById(id);
+            const tasks = this.projectController.getVisibleTasks((id) => {
+                const task = this.projectController.getTaskById(id);
                 return task?._collapsed || false;
             });
             this.grid.setData(tasks);
@@ -4044,8 +4044,8 @@ export class SchedulerService {
      */
     private _updateGanttDataSync(): void {
         if (this.gantt) {
-            const tasks = ProjectController.getInstance().getVisibleTasks((id) => {
-                const task = ProjectController.getInstance().getTaskById(id);
+            const tasks = this.projectController.getVisibleTasks((id) => {
+                const task = this.projectController.getTaskById(id);
                 return task?._collapsed || false;
             });
             this.gantt.setData(tasks);
@@ -4067,8 +4067,8 @@ export class SchedulerService {
             this._assignVisualRowNumbers();
             
             // Get visible tasks for hierarchy-aware display
-            const tasks = ProjectController.getInstance().getVisibleTasks((id) => {
-                const task = ProjectController.getInstance().getTaskById(id);
+            const tasks = this.projectController.getVisibleTasks((id) => {
+                const task = this.projectController.getTaskById(id);
                 return task?._collapsed || false;
             });
 
@@ -4121,9 +4121,9 @@ export class SchedulerService {
                 const tasksWithSortKeys = this._assignSortKeysToImportedTasks(tasks);
                 
                 // NOTE: disableNotifications removed - ProjectController handles via reactive streams
-                ProjectController.getInstance().syncTasks(tasksWithSortKeys);
+                this.projectController.syncTasks(tasksWithSortKeys);
                 
-                ProjectController.getInstance().updateCalendar(calendar);
+                this.projectController.updateCalendar(calendar);
                 // NOTE: Removed engine sync - ProjectController handles via Worker
                 
                 this.recalculateAll();
@@ -4150,8 +4150,8 @@ export class SchedulerService {
         
         try {
             await this.snapshotService.createSnapshot(
-                ProjectController.getInstance().getTasks(),
-                ProjectController.getInstance().getCalendar(),
+                this.projectController.getTasks(),
+                this.projectController.getCalendar(),
                 this.tradePartnerStore.getAll()
             );
             console.log('[SchedulerService] ✅ Snapshot checkpoint created');
@@ -4173,8 +4173,8 @@ export class SchedulerService {
         
         if (this.snapshotService) {
             await this.snapshotService.createSnapshot(
-                ProjectController.getInstance().getTasks(),
-                ProjectController.getInstance().getCalendar(),
+                this.projectController.getTasks(),
+                this.projectController.getCalendar(),
                 this.tradePartnerStore.getAll()
             );
             this.snapshotService.stopPeriodicSnapshots();
@@ -4189,7 +4189,7 @@ export class SchedulerService {
      */
     private _createSampleData(): void {
         const today = DateUtils.today();
-        const calendar = ProjectController.getInstance().getCalendar(); // Get calendar from store
+        const calendar = this.projectController.getCalendar(); // Get calendar from store
         
         const tasks: Task[] = [
             {
@@ -4227,7 +4227,7 @@ export class SchedulerService {
         ];
         
         // NOTE: disableNotifications removed - ProjectController handles via reactive streams
-        ProjectController.getInstance().syncTasks(tasks);
+        this.projectController.syncTasks(tasks);
         
         // Recalculate after a brief delay to ensure everything is set up
         setTimeout(() => {
@@ -4404,7 +4404,7 @@ export class SchedulerService {
      */
     undo(): void {
         // PHASE 2: Delegate to CommandService
-        CommandService.getInstance().execute('edit.undo');
+        this.commandService.execute('edit.undo');
     }
 
     /**
@@ -4413,7 +4413,7 @@ export class SchedulerService {
      */
     redo(): void {
         // PHASE 2: Delegate to CommandService
-        CommandService.getInstance().execute('edit.redo');
+        this.commandService.execute('edit.redo');
     }
 
     // =========================================================================
@@ -4427,8 +4427,8 @@ export class SchedulerService {
     async saveToFile(): Promise<void> {
         try {
             await this.fileService.saveToFile({
-                tasks: ProjectController.getInstance().getTasks(),
-                calendar: ProjectController.getInstance().getCalendar(),
+                tasks: this.projectController.getTasks(),
+                calendar: this.projectController.getCalendar(),
             });
         } catch (err) {
             // Error handled by FileService
@@ -4444,16 +4444,16 @@ export class SchedulerService {
             const data = await this.fileService.openFromFile();
             if (data) {
                 this.saveCheckpoint();
-                ProjectController.getInstance().syncTasks(data.tasks || []);
+                this.projectController.syncTasks(data.tasks || []);
                 if (data.calendar) {
-                    ProjectController.getInstance().updateCalendar(data.calendar);
+                    this.projectController.updateCalendar(data.calendar);
                 }
                 if (ENABLE_LEGACY_RECALC) {
                     this.recalculateAll();
                     this.saveData();
                     this.render();
                 }
-                this.toastService.success(`Loaded ${ProjectController.getInstance().getTasks().length} tasks`);
+                this.toastService.success(`Loaded ${this.projectController.getTasks().length} tasks`);
             }
         } catch (err) {
             // Error handled by FileService
@@ -4465,8 +4465,8 @@ export class SchedulerService {
      */
     exportAsDownload(): void {
         this.fileService.exportAsDownload({
-            tasks: ProjectController.getInstance().getTasks(),
-            calendar: ProjectController.getInstance().getCalendar(),
+            tasks: this.projectController.getTasks(),
+            calendar: this.projectController.getCalendar(),
         });
     }
 
@@ -4484,9 +4484,9 @@ export class SchedulerService {
             const tasks = data.tasks || [];
             const tasksWithSortKeys = this._assignSortKeysToImportedTasks(tasks);
             
-            ProjectController.getInstance().syncTasks(tasksWithSortKeys);
+            this.projectController.syncTasks(tasksWithSortKeys);
             if (data.calendar) {
-                ProjectController.getInstance().updateCalendar(data.calendar);
+                this.projectController.updateCalendar(data.calendar);
             }
             // Note: recalculateAll() and render() will be triggered automatically by _onTasksChanged()
             this.saveData();
@@ -4512,10 +4512,10 @@ export class SchedulerService {
             
             // Import calendar if provided
             if (data.calendar) {
-                ProjectController.getInstance().updateCalendar(data.calendar); // skipEvent=true to avoid duplicate persistence
+                this.projectController.updateCalendar(data.calendar); // skipEvent=true to avoid duplicate persistence
             }
             
-            ProjectController.getInstance().syncTasks(tasksWithSortKeys);
+            this.projectController.syncTasks(tasksWithSortKeys);
             // Note: recalculateAll() and render() will be triggered automatically by _onTasksChanged()
             this.saveData();
             this.toastService.success(`Imported ${tasksWithSortKeys.length} tasks`);
@@ -4534,10 +4534,10 @@ export class SchedulerService {
         this.saveCheckpoint();
         
         const tasksWithSortKeys = this._assignSortKeysToImportedTasks(result.tasks);
-        ProjectController.getInstance().syncTasks(tasksWithSortKeys);
+        this.projectController.syncTasks(tasksWithSortKeys);
         
         if (result.calendar) {
-            ProjectController.getInstance().updateCalendar(result.calendar);
+            this.projectController.updateCalendar(result.calendar);
         }
         
         if (ENABLE_LEGACY_RECALC) {
@@ -4552,8 +4552,8 @@ export class SchedulerService {
      */
     exportToMSProjectXML(): void {
         this.fileService.exportToMSProjectXML({
-            tasks: ProjectController.getInstance().getTasks(),
-            calendar: ProjectController.getInstance().getCalendar(),
+            tasks: this.projectController.getTasks(),
+            calendar: this.projectController.getCalendar(),
         });
     }
 
@@ -4582,7 +4582,7 @@ export class SchedulerService {
         localStorage.removeItem('pro_scheduler_column_preferences');
         
         // Reset in-memory state
-        ProjectController.getInstance().syncTasks([]);
+        this.projectController.syncTasks([]);
         this._createSampleData();
         
         if (ENABLE_LEGACY_RECALC) {
@@ -4632,9 +4632,9 @@ export class SchedulerService {
         ganttStats?: unknown;
     } {
         return {
-            taskCount: ProjectController.getInstance().getTasks().length,
-            visibleCount: ProjectController.getInstance().getVisibleTasks((id) => {
-                const task = ProjectController.getInstance().getTaskById(id);
+            taskCount: this.projectController.getTasks().length,
+            visibleCount: this.projectController.getVisibleTasks((id) => {
+                const task = this.projectController.getTaskById(id);
                 return task?._collapsed || false;
             }).length,
             lastCalcTime: `${this._lastCalcTime.toFixed(2)}ms`,
@@ -4651,14 +4651,14 @@ export class SchedulerService {
         this.saveCheckpoint();
         
         const today = DateUtils.today();
-        const existingTasks = ProjectController.getInstance().getTasks();
+        const existingTasks = this.projectController.getTasks();
         const tasks: Task[] = [...existingTasks];
         
         // Pre-generate all sortKeys to avoid stale reads
-        const lastKey = ProjectController.getInstance().getLastSortKey(null);
+        const lastKey = this.projectController.getLastSortKey(null);
         const sortKeys = OrderingService.generateBulkKeys(lastKey, null, count);
         
-        const calendar = ProjectController.getInstance().getCalendar();
+        const calendar = this.projectController.getCalendar();
         
         for (let i = 0; i < count; i++) {
             const duration = Math.floor(Math.random() * 10) + 1;
@@ -4702,7 +4702,7 @@ export class SchedulerService {
             tasks.push(task);
         }
         
-        ProjectController.getInstance().syncTasks(tasks);
+        this.projectController.syncTasks(tasks);
         if (ENABLE_LEGACY_RECALC) {
             this.recalculateAll();
             this.saveData();
@@ -4737,7 +4737,7 @@ export class SchedulerService {
      * @param mode - 'Auto' or 'Manual'
      */
     public async setSchedulingMode(taskId: string, mode: 'Auto' | 'Manual'): Promise<void> {
-        const task = ProjectController.getInstance().getTaskById(taskId);
+        const task = this.projectController.getTaskById(taskId);
         if (!task) {
             console.warn('[SchedulerService] Task not found:', taskId);
             return;
@@ -4762,7 +4762,7 @@ export class SchedulerService {
      * @param taskId - Task ID
      */
     public toggleSchedulingMode(taskId: string): void {
-        const task = ProjectController.getInstance().getTaskById(taskId);
+        const task = this.projectController.getTaskById(taskId);
         if (!task) return;
         
         const newMode = task.schedulingMode === 'Manual' ? 'Auto' : 'Manual';
@@ -4832,7 +4832,7 @@ export class SchedulerService {
         if (!partner) return;
         
         // Remove from all tasks first
-        const affectedTasks = ProjectController.getInstance().getTasks().filter(
+        const affectedTasks = this.projectController.getTasks().filter(
             t => t.tradePartnerIds?.includes(id)
         );
         
@@ -4858,7 +4858,7 @@ export class SchedulerService {
      * Assign a trade partner to a task
      */
     assignTradePartner(taskId: string, tradePartnerId: string): void {
-        const task = ProjectController.getInstance().getTaskById(taskId);
+        const task = this.projectController.getTaskById(taskId);
         const partner = this.tradePartnerStore.get(tradePartnerId);
         if (!task || !partner) return;
         
@@ -4867,7 +4867,7 @@ export class SchedulerService {
         
         // Update task
         const newIds = [...(task.tradePartnerIds || []), tradePartnerId];
-        ProjectController.getInstance().updateTask(taskId, { tradePartnerIds: newIds });
+        this.projectController.updateTask(taskId, { tradePartnerIds: newIds });
         
         // Queue persistence event
         if (this.persistenceService) {
@@ -4884,7 +4884,7 @@ export class SchedulerService {
      * Unassign a trade partner from a task
      */
     unassignTradePartner(taskId: string, tradePartnerId: string, showToast = true): void {
-        const task = ProjectController.getInstance().getTaskById(taskId);
+        const task = this.projectController.getTaskById(taskId);
         if (!task || !task.tradePartnerIds) return;
         
         // Check if assigned
@@ -4892,7 +4892,7 @@ export class SchedulerService {
         
         // Update task
         const newIds = task.tradePartnerIds.filter(id => id !== tradePartnerId);
-        ProjectController.getInstance().updateTask(taskId, { tradePartnerIds: newIds });
+        this.projectController.updateTask(taskId, { tradePartnerIds: newIds });
         
         // Queue persistence event
         if (this.persistenceService) {
@@ -4910,7 +4910,7 @@ export class SchedulerService {
      * Get trade partners for a task
      */
     getTaskTradePartners(taskId: string): TradePartner[] {
-        const task = ProjectController.getInstance().getTaskById(taskId);
+        const task = this.projectController.getTaskById(taskId);
         if (!task?.tradePartnerIds) return [];
         return this.tradePartnerStore.getMany(task.tradePartnerIds);
     }

@@ -32,9 +32,16 @@ import { BehaviorSubject, Observable, combineLatest, map, distinctUntilChanged, 
  * 
  * Singleton that manages command registration, shortcut mapping,
  * and execution with proper context injection.
+ * 
+ * MIGRATION NOTE (Pure DI):
+ * - Constructor is now public for DI compatibility
+ * - getInstance() retained for backward compatibility
+ * - Use setInstance() in Composition Root or inject directly
+ * 
+ * @see docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md
  */
 export class CommandService implements ICommandService {
-    private static instance: CommandService;
+    private static instance: CommandService | null = null;
 
     /** Command registry: id -> Command */
     private registry = new Map<string, Command<unknown>>();
@@ -48,7 +55,10 @@ export class CommandService implements ICommandService {
     /** Debug mode for logging */
     private debugMode = false;
 
-    private constructor() {
+    /**
+     * Constructor is public for Pure DI compatibility.
+     */
+    public constructor() {
         // Check for debug mode (handle server-side/Node environments)
         if (typeof window !== 'undefined') {
             this.debugMode = (window as unknown as Record<string, unknown>).__COMMAND_DEBUG__ === true;
@@ -56,7 +66,7 @@ export class CommandService implements ICommandService {
     }
 
     /**
-     * Get the singleton instance
+     * Get the singleton instance (lazy initialization)
      */
     static getInstance(): CommandService {
         if (!CommandService.instance) {
@@ -64,12 +74,19 @@ export class CommandService implements ICommandService {
         }
         return CommandService.instance;
     }
+    
+    /**
+     * Set the singleton instance (for testing/DI)
+     */
+    static setInstance(instance: CommandService): void {
+        CommandService.instance = instance;
+    }
 
     /**
      * Reset the singleton instance (for testing)
      */
     static resetInstance(): void {
-        CommandService.instance = null!;
+        CommandService.instance = null;
     }
 
     // =========================================================================

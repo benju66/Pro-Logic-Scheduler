@@ -20,14 +20,22 @@ import type { PersistenceService } from '../data/PersistenceService';
 import type { HistoryManager, QueuedEvent } from '../data/HistoryManager';
 
 /**
- * ProjectController - Singleton
+ * ProjectController
  * 
  * The "brain" interface for the UI. All task operations go through here,
  * which delegates to the WASM Worker running in a background thread.
+ * 
+ * MIGRATION NOTE (Pure DI):
+ * - Constructor is now public for DI compatibility
+ * - getInstance() retained for backward compatibility during migration
+ * - Use setInstance() in Composition Root or inject directly
+ * - This is the LARGEST singleton with 166+ callers
+ * 
+ * @see docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md
  */
 export class ProjectController {
     private worker: Worker | null = null;
-    private static instance: ProjectController;
+    private static instance: ProjectController | null = null;
 
     // ========================================================================
     // Observable State (Hot streams that drive the UI)
@@ -71,18 +79,37 @@ export class ProjectController {
     // Constructor & Singleton
     // ========================================================================
 
-    private constructor() {
+    /**
+     * Constructor is public for Pure DI compatibility.
+     * Creates and initializes the WASM worker.
+     */
+    public constructor() {
         this.initializeWorker();
     }
 
     /**
-     * Get the singleton instance
+     * Get the singleton instance (lazy initialization)
      */
     public static getInstance(): ProjectController {
         if (!ProjectController.instance) {
             ProjectController.instance = new ProjectController();
         }
         return ProjectController.instance;
+    }
+    
+    /**
+     * Set the singleton instance (for testing/DI)
+     * Call this in the Composition Root to inject a configured instance.
+     */
+    public static setInstance(instance: ProjectController): void {
+        ProjectController.instance = instance;
+    }
+    
+    /**
+     * Reset the singleton instance (for testing)
+     */
+    public static resetInstance(): void {
+        ProjectController.instance = null;
     }
 
     /**

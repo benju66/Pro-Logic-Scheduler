@@ -33,13 +33,20 @@ export interface SelectionState {
 }
 
 /**
- * SelectionModel - Singleton
+ * SelectionModel
  * 
  * Manages synchronous UI state for selection and focus.
  * All selection operations are instant and don't require worker communication.
+ * 
+ * MIGRATION NOTE (Pure DI):
+ * - Constructor is now public for DI compatibility
+ * - getInstance() retained for backward compatibility during migration
+ * - Use setInstance() in Composition Root or inject directly
+ * 
+ * @see docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md
  */
 export class SelectionModel {
-    private static instance: SelectionModel;
+    private static instance: SelectionModel | null = null;
 
     // State exposed as observable for UI binding
     public readonly state$ = new BehaviorSubject<SelectionState>({
@@ -54,16 +61,33 @@ export class SelectionModel {
     // Constructor & Singleton
     // ========================================================================
 
-    private constructor() {}
+    /**
+     * Constructor is public for Pure DI compatibility.
+     */
+    public constructor() {}
 
     /**
-     * Get the singleton instance
+     * Get the singleton instance (lazy initialization)
      */
     public static getInstance(): SelectionModel {
         if (!SelectionModel.instance) {
             SelectionModel.instance = new SelectionModel();
         }
         return SelectionModel.instance;
+    }
+    
+    /**
+     * Set the singleton instance (for testing/DI)
+     */
+    public static setInstance(instance: SelectionModel): void {
+        SelectionModel.instance = instance;
+    }
+    
+    /**
+     * Reset the singleton instance (for testing)
+     */
+    public static resetInstance(): void {
+        SelectionModel.instance = null;
     }
 
     // ========================================================================

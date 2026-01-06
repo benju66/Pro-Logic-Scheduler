@@ -15,6 +15,13 @@ import type { RendererServices } from './types';
  * This singleton provides access to services that renderers need,
  * avoiding the problematic `this` capture in inline renderer functions.
  * 
+ * MIGRATION NOTE (Pure DI):
+ * - Constructor is now public for DI compatibility
+ * - getInstance() retained for backward compatibility
+ * - Use setInstance() in Composition Root or inject directly
+ * 
+ * @see docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md
+ * 
  * @example
  * ```typescript
  * // In renderer:
@@ -23,7 +30,7 @@ import type { RendererServices } from './types';
  * ```
  */
 export class ServiceContainer implements RendererServices {
-    private static instance: ServiceContainer;
+    private static instance: ServiceContainer | null = null;
     
     // Service implementations (set during initialization)
     private _getTradePartner: ((id: string) => { id: string; name: string; color: string } | undefined) | null = null;
@@ -34,10 +41,13 @@ export class ServiceContainer implements RendererServices {
     private _getCalendar: (() => Calendar | null) | null = null;
     private _getVisualRowNumber: ((task: Task) => number | null) | null = null;
     
-    private constructor() {}
+    /**
+     * Constructor is public for Pure DI compatibility.
+     */
+    public constructor() {}
     
     /**
-     * Get singleton instance
+     * Get singleton instance (lazy initialization)
      */
     static getInstance(): ServiceContainer {
         if (!ServiceContainer.instance) {
@@ -47,10 +57,17 @@ export class ServiceContainer implements RendererServices {
     }
     
     /**
+     * Set the singleton instance (for testing/DI)
+     */
+    static setInstance(instance: ServiceContainer): void {
+        ServiceContainer.instance = instance;
+    }
+    
+    /**
      * Reset instance (for testing)
      */
     static resetInstance(): void {
-        ServiceContainer.instance = new ServiceContainer();
+        ServiceContainer.instance = null;
     }
     
     // =========================================================================

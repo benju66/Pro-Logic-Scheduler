@@ -23,6 +23,7 @@ import { SettingsModal } from '../ui/components/SettingsModal';
 import { RightSidebarManager } from '../ui/components/RightSidebarManager';
 import type { SchedulerServiceOptions, Calendar, TradePartner, Task } from '../types';
 import { initializeColumnSystem, configureServices } from '../core/columns';
+import { createVarianceCalculator } from '../core/calculations';
 import { getEditingStateManager } from './EditingStateManager';
 import { getTradePartnerStore } from '../data/TradePartnerStore';
 import { HistoryManager } from '../data/HistoryManager';
@@ -42,7 +43,12 @@ export interface AppInitializerOptions {
  * App Initializer Service
  * Handles application initialization sequence
  * 
- * STRANGLER FIG: Now a singleton to provide shared access to services
+ * MIGRATION NOTE (Pure DI):
+ * - Constructor is already public
+ * - getInstance() and setInstance() for DI compatibility
+ * - Will transition to being called from main.ts Composition Root
+ * 
+ * @see docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md
  */
 export class AppInitializer {
   // Singleton instance
@@ -74,6 +80,20 @@ export class AppInitializer {
    */
   public static getInstance(): AppInitializer | null {
     return AppInitializer.instance;
+  }
+  
+  /**
+   * Set the singleton instance (for testing/DI)
+   */
+  public static setInstance(instance: AppInitializer): void {
+    AppInitializer.instance = instance;
+  }
+  
+  /**
+   * Reset the singleton instance (for testing)
+   */
+  public static resetInstance(): void {
+    AppInitializer.instance = null;
   }
 
   /**
@@ -578,18 +598,20 @@ export class AppInitializer {
       const tradePartnerStore = getTradePartnerStore();
       const editingManager = getEditingStateManager();
       
+      // Create variance calculator that reads calendar from ProjectController
+      // This breaks the SchedulerService dependency - variance calculation is now standalone
+      // See: docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md - Phase 0
+      const projectController = this.projectController!;
+      const calculateVariance = createVarianceCalculator(
+        () => projectController.getCalendar()
+      );
+      
       configureServices({
         // Trade partner lookup
         getTradePartner: (id: string) => tradePartnerStore.get(id),
         
-        // Variance calculation (placeholder - scheduler will set this later)
-        calculateVariance: (task) => {
-          // If scheduler is available, use its method
-          if (this.scheduler && typeof (this.scheduler as any)._calculateVariance === 'function') {
-            return (this.scheduler as any)._calculateVariance(task);
-          }
-          return { start: null, finish: null };
-        },
+        // Variance calculation (standalone module - no scheduler dependency)
+        calculateVariance,
         
         // Editing state check
         isEditingCell: (taskId: string, field: string) => {
@@ -612,7 +634,7 @@ export class AppInitializer {
         
         // Calendar accessor
         getCalendar: () => {
-          return ProjectController.getInstance().getCalendar();
+          return projectController.getCalendar();
         },
         
         // Visual row number accessor
@@ -636,14 +658,17 @@ export class AppInitializer {
   private _initializeCommandService(): void {
     console.log('[AppInitializer] 🎮 Initializing Command Service...');
     
+    // Pure DI: Use cached service references
     const service = CommandService.getInstance();
+    const controller = this.projectController!;
+    const selectionModel = SelectionModel.getInstance();
     const self = this; // Capture for closures
     
     // Build command context with all dependencies
     // NOTE: Uses lazy getter for toastService (created inside SchedulerService)
     const context: CommandContext = {
-      controller: ProjectController.getInstance(),
-      selection: SelectionModel.getInstance(),
+      controller: controller,
+      selection: selectionModel,
       historyManager: this.historyManager,
       
       // LAZY GETTER: ToastService is created inside SchedulerService
@@ -661,7 +686,6 @@ export class AppInitializer {
       
       // Helper method replacing private _getFlatList()
       getVisibleTasks(): Task[] {
-        const controller = ProjectController.getInstance();
         return controller.getVisibleTasks((id: string) => {
           const task = controller.getTaskById(id);
           return task?._collapsed ?? false;
@@ -674,7 +698,7 @@ export class AppInitializer {
     
     // PHASE 2.3: Wire state changes to notify CommandService
     // Selection changes trigger command state updates
-    SelectionModel.getInstance().state$.subscribe(() => {
+    selectionModel.state$.subscribe(() => {
       service.notifyStateChange();
     });
     

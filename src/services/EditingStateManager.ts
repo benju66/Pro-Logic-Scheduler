@@ -162,15 +162,19 @@ export class EditingStateManager {
     private debugMode: boolean = false;
 
     // ========================================================================
-    // SINGLETON
+    // SINGLETON / DI
     // ========================================================================
 
-    private constructor() {
-        // Private constructor for singleton
-    }
+    /**
+     * Constructor is public for Pure DI compatibility.
+     * Use getInstance() for singleton access or inject directly.
+     * 
+     * @see docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md
+     */
+    public constructor() {}
 
     /**
-     * Get singleton instance
+     * Get singleton instance (lazy initialization)
      */
     static getInstance(): EditingStateManager {
         if (!EditingStateManager.instance) {
@@ -178,9 +182,16 @@ export class EditingStateManager {
         }
         return EditingStateManager.instance;
     }
+    
+    /**
+     * Set the singleton instance (for testing/DI)
+     */
+    static setInstance(instance: EditingStateManager): void {
+        EditingStateManager.instance = instance;
+    }
 
     /**
-     * Reset singleton (for testing only)
+     * Reset singleton (for testing)
      */
     static resetInstance(): void {
         if (EditingStateManager.instance) {

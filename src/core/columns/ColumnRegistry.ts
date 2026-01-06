@@ -36,8 +36,16 @@ import type {
  * renderer.render(cell, ctx, column);
  * ```
  */
+/**
+ * MIGRATION NOTE (Pure DI):
+ * - Constructor is now public for DI compatibility
+ * - getInstance() retained for backward compatibility
+ * - Use setInstance() in Composition Root or inject directly
+ * 
+ * @see docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md
+ */
 export class ColumnRegistry {
-    private static instance: ColumnRegistry;
+    private static instance: ColumnRegistry | null = null;
     
     /** Registered renderers by type */
     private renderers: Map<ColumnType, IColumnRenderer> = new Map();
@@ -51,10 +59,13 @@ export class ColumnRegistry {
     /** Runtime visibility state (for dynamic column visibility like baseline columns) */
     private runtimeVisibility: Map<string, boolean> = new Map();
     
-    private constructor() {}
+    /**
+     * Constructor is public for Pure DI compatibility.
+     */
+    public constructor() {}
     
     /**
-     * Get singleton instance
+     * Get singleton instance (lazy initialization)
      */
     static getInstance(): ColumnRegistry {
         if (!ColumnRegistry.instance) {
@@ -64,10 +75,17 @@ export class ColumnRegistry {
     }
     
     /**
+     * Set the singleton instance (for testing/DI)
+     */
+    static setInstance(instance: ColumnRegistry): void {
+        ColumnRegistry.instance = instance;
+    }
+    
+    /**
      * Reset instance (for testing)
      */
     static resetInstance(): void {
-        ColumnRegistry.instance = new ColumnRegistry();
+        ColumnRegistry.instance = null;
     }
     
     // =========================================================================

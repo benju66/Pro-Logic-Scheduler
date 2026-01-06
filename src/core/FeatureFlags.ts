@@ -66,28 +66,54 @@ const DEFAULT_FLAGS: FeatureFlagConfig = {
 };
 
 /**
- * Feature Flags Singleton
+ * Feature Flags Service
  * 
  * Provides type-safe access to feature flags with persistence to localStorage.
+ * 
+ * MIGRATION NOTE (Pure DI):
+ * - Constructor is now public for DI compatibility
+ * - Static methods retained for backward compatibility
+ * - Use setInstance() in Composition Root for testing
+ * 
+ * @see docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md
  */
 export class FeatureFlags {
-    private static instance: FeatureFlags;
+    private static instance: FeatureFlags | null = null;
     private flags: FeatureFlagConfig;
     
     private static readonly STORAGE_KEY = 'pro_scheduler_feature_flags';
     
-    private constructor() {
+    /**
+     * Constructor is public for Pure DI compatibility.
+     * Use getInstance() for singleton access or inject directly for testing.
+     */
+    public constructor() {
         this.flags = this.loadFlags();
     }
     
     /**
-     * Get the singleton instance
+     * Get the singleton instance (lazy initialization)
      */
     public static getInstance(): FeatureFlags {
         if (!FeatureFlags.instance) {
             FeatureFlags.instance = new FeatureFlags();
         }
         return FeatureFlags.instance;
+    }
+    
+    /**
+     * Set the singleton instance (for testing/DI)
+     * Call this in the Composition Root to inject a configured instance.
+     */
+    public static setInstance(instance: FeatureFlags): void {
+        FeatureFlags.instance = instance;
+    }
+    
+    /**
+     * Reset the singleton instance (for testing)
+     */
+    public static resetInstance(): void {
+        FeatureFlags.instance = null;
     }
     
     /**

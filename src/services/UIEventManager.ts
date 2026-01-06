@@ -30,6 +30,10 @@ export class UIEventManager {
   public toastService: ToastService | null;  // Public for access from main.ts
   private isTauri: boolean;
   private _buttonClickHandler: ((e: MouseEvent) => void) | null = null;
+  
+  // Pure DI: Cached service references
+  private commandService: CommandService;
+  private selectionModel: SelectionModel;
 
   /**
    * Create a new UIEventManager instance
@@ -40,6 +44,10 @@ export class UIEventManager {
     this.toastService = options.toastService || null;
     this.isTauri = options.isTauri || false;
     this._buttonClickHandler = null;
+    
+    // Cache service references (singletons already wired in Composition Root)
+    this.commandService = CommandService.getInstance();
+    this.selectionModel = SelectionModel.getInstance();
   }
 
   /**
@@ -549,10 +557,10 @@ export class UIEventManager {
           scheduler.addTask();
           break;
         case 'zoom-out':
-          CommandService.getInstance().execute('view.zoomOut');
+          this.commandService.execute('view.zoomOut');
           break;
         case 'zoom-in':
-          CommandService.getInstance().execute('view.zoomIn');
+          this.commandService.execute('view.zoomIn');
           break;
         case 'open-calendar':
           scheduler.openCalendar();
@@ -678,7 +686,7 @@ export class UIEventManager {
     
     if (scheduler) {
       scheduler.tasks = [];
-      SelectionModel.getInstance().clear();
+      this.selectionModel.clear();
       scheduler.saveData();
       scheduler.render();
     }
