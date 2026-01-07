@@ -47,7 +47,9 @@ export class ServiceContainer implements RendererServices {
     public constructor() {}
     
     /**
-     * Get singleton instance (lazy initialization)
+     * @deprecated Use constructor injection instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     static getInstance(): ServiceContainer {
         if (!ServiceContainer.instance) {
@@ -57,14 +59,18 @@ export class ServiceContainer implements RendererServices {
     }
     
     /**
-     * Set the singleton instance (for testing/DI)
+     * @deprecated Use constructor injection with mocks instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     static setInstance(instance: ServiceContainer): void {
         ServiceContainer.instance = instance;
     }
     
     /**
-     * Reset instance (for testing)
+     * @deprecated Create fresh instances in tests instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     static resetInstance(): void {
         ServiceContainer.instance = null;

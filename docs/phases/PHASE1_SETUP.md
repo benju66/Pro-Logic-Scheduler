@@ -1,7 +1,9 @@
 # Phase 1: The Safety Net (Verification) - Setup Complete
 
+> **📜 Historical Document**: This document describes Phase 1 of the WASM migration (December 2024). The migration is now complete. See [ARCHITECTURE.md](../architecture/ARCHITECTURE.md) for the current architecture using WASM Worker.
+
 ## Overview
-Phase 1 establishes a "truth" baseline to ensure the new WASM engine behaves exactly like the old Rust engine. This phase creates black-box E2E tests using Playwright.
+Phase 1 established a "truth" baseline to ensure the new WASM engine behaved like the original implementation. This phase created black-box E2E tests using Playwright.
 
 ## What Was Set Up
 
@@ -53,9 +55,8 @@ npm run dev
 This will:
 - Start the Vite dev server on `http://localhost:1420`
 - The app will run in test mode when accessed with `?test=true`
-- Test mode uses MockRustEngine (JavaScript) instead of RustEngine
 
-**Note**: For testing the actual Tauri app with RustEngine, you would need to use `tauri-driver` or WebDriverIO. The current setup tests scheduling logic using a mock engine.
+> **Note:** The current architecture uses WASM Worker for all calculations. See [ARCHITECTURE.md](../architecture/ARCHITECTURE.md).
 
 ### Step 2: Run E2E Tests
 In a **separate terminal**, run the Playwright tests:
@@ -70,7 +71,7 @@ npx playwright test
 
 The tests will:
 - Connect to `http://localhost:1420/?test=true`
-- App detects test mode and uses MockRustEngine
+- App uses WASM Worker for calculations
 - Verify scheduling logic through `window.scheduler` API
 
 ### Step 3: View Results

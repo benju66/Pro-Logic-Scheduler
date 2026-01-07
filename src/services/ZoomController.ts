@@ -106,7 +106,9 @@ export class ZoomController {
     private _disposed = false;
     
     /**
-     * Get the singleton instance
+     * @deprecated Use constructor injection instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     static getInstance(): ZoomController {
         if (!ZoomController._instance) {
@@ -116,7 +118,9 @@ export class ZoomController {
     }
     
     /**
-     * Reset the singleton (for testing)
+     * @deprecated Create fresh instances in tests instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     static resetInstance(): void {
         if (ZoomController._instance) {

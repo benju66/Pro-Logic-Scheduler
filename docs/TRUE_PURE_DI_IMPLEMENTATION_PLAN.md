@@ -872,12 +872,59 @@ _Track progress as implementation proceeds_
 | 1 | Constructor signatures | ✅ Complete | RendererFactory, ViewCoordinator, KeyboardService, SchedulerService, registerColumns.ts |
 | 2 | Composition Root | ✅ Complete | main.ts creates RendererFactory, passes to AppInitializer→SchedulerService |
 | 3 | Internal migration | ✅ Complete | Fallback pattern established, 11 calls removed, remaining are constructor fallbacks |
-| 4 | AppInitializer reduction | ⬜ Pending | |
-| 5 | Cleanup | ⬜ Pending | |
+| 4 | AppInitializer reduction | ✅ Complete | PersistenceService, SnapshotService, DataLoader, HistoryManager now injected from main.ts |
+| 5 | Deprecation + Documentation | ✅ Complete | @deprecated added to 39 methods across 13 files, ADR created |
 
 ---
 
-**Document Version:** 1.1  
-**Last Updated:** January 6, 2026  
+## 12. Maintenance Guidelines
+
+### For New Code
+
+1. **Always use constructor injection** - Pass dependencies via constructor parameters
+2. **Wire in main.ts** - Add new services to the Composition Root
+3. **Never add new getInstance() calls** - IDE will show deprecation warning
+
+### For Existing Code
+
+1. **Fallbacks are acceptable** - `|| X.getInstance()` patterns work fine
+2. **Refactor opportunistically** - When touching a file, consider removing fallbacks
+3. **Don't force migration** - Legacy patterns still work
+
+### Deprecated Methods (Do Not Use in New Code)
+
+| Method | Files | Purpose |
+|--------|-------|---------|
+| `getInstance()` | 12 singletons | Get instance - use constructor injection |
+| `setInstance()` | 11 singletons | Test injection - use constructor with mock |
+| `resetInstance()` | 12 singletons | Test cleanup - create fresh instances |
+| `getEditingStateManager()` | EditingStateManager.ts | Helper - use injection |
+| `getClipboardManager()` | ClipboardManager.ts | Helper - use injection |
+| `getTradePartnerStore()` | TradePartnerStore.ts | Helper - use injection |
+
+### Testing
+
+**Preferred: Constructor Injection**
+```typescript
+const mock = { ... } as ProjectController;
+const service = new MyService(mock);
+```
+
+**Legacy Support: setInstance()**
+```typescript
+ProjectController.setInstance(mock);
+// ... test ...
+ProjectController.resetInstance();
+```
+
+### Related Documentation
+
+- [ADR-001: Dependency Injection](adr/001-dependency-injection.md)
+- [Coding Guidelines](CODING_GUIDELINES.md)
+
+---
+
+**Document Version:** 1.3  
+**Last Updated:** January 7, 2026  
 **Author:** AI Assistant (Claude)  
-**Audit Status:** ✅ Complete
+**Migration Status:** ✅ Complete

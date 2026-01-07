@@ -26,7 +26,7 @@ Most schedulers crash because they try to sync two independent scroll areas (Gri
 
 ### 2. Native Foundation
 * **Tauri (Rust):** Provides a secure, tiny-footprint native wrapper with system-level performance.
-* **Rust CPM Engine:** High-performance Critical Path Method calculations in Rust (O(N) complexity).
+* **WASM CPM Engine:** High-performance Critical Path Method calculations in Rust compiled to WebAssembly (O(N) complexity). Runs in a Web Worker to never block the UI.
 * **SQLite:** True offline-first capability. No "loading spinners"—your data is local and instant.
 
 ---
@@ -67,7 +67,8 @@ We are executing a 4-Phase Strategy to disrupt the market:
 
 ### Phase 3: Field Utility (✅ Complete)
 * [x] **SQLite Migration:** True Offline-First reliability.
-* [x] **Rust CPM Engine:** High-performance scheduling calculations.
+* [x] **WASM CPM Engine:** High-performance scheduling calculations in Rust → WebAssembly.
+* [x] **Web Worker Architecture:** CPM calculations run in background thread, never blocking UI.
 * [x] **Desktop-Only Architecture:** Native performance, no browser fallbacks.
 * [ ] **Swipe-to-Status:** Mobile-friendly updating for Superintendents.
 * [ ] **Lookahead Views:** Auto-generated 3-week lookaheads.

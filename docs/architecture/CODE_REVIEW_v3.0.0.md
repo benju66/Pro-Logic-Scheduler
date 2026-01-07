@@ -33,10 +33,12 @@ This is a well-architected Tauri desktop application for construction project sc
 ### ✅ Strengths
 
 1. **Clear Layer Separation**
-   - `core/` - Pure business logic (CPM, DateUtils, RustEngine)
-   - `data/` - State management (TaskStore, CalendarStore, HistoryManager, DatabaseTypes)
+   - `core/` - Pure business logic (DateUtils, Column definitions, Interfaces)
+   - `src-wasm/` - WASM CPM Engine (Rust compiled to WebAssembly)
+   - `workers/` - Web Worker for background calculations
+   - `data/` - Persistence layer (HistoryManager, PersistenceService, DatabaseTypes)
    - `ui/` - Presentation layer (components, services)
-   - `services/` - Application orchestration
+   - `services/` - Application orchestration (ProjectController, SchedulerService)
    - Excellent adherence to dependency flow rules
 
 2. **TypeScript Migration Complete**

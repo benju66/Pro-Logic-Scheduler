@@ -67,7 +67,9 @@ export class SelectionModel {
     public constructor() {}
 
     /**
-     * Get the singleton instance (lazy initialization)
+     * @deprecated Use constructor injection instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     public static getInstance(): SelectionModel {
         if (!SelectionModel.instance) {
@@ -77,14 +79,18 @@ export class SelectionModel {
     }
     
     /**
-     * Set the singleton instance (for testing/DI)
+     * @deprecated Use constructor injection with mocks instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     public static setInstance(instance: SelectionModel): void {
         SelectionModel.instance = instance;
     }
     
     /**
-     * Reset the singleton instance (for testing)
+     * @deprecated Create fresh instances in tests instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     public static resetInstance(): void {
         SelectionModel.instance = null;

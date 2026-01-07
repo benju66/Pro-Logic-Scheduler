@@ -1,8 +1,10 @@
 # Phase 1: Test Mode Implementation
 
+> **📜 Historical Document**: This document describes Phase 1 of the WASM migration (December 2024). The migration is now complete. MockRustEngine has been removed - the app now uses WASM Worker for all calculations. See [ARCHITECTURE.md](../architecture/ARCHITECTURE.md) for current architecture.
+
 ## Overview
 
-Phase 1 E2E tests verify scheduling logic correctness. Since Playwright connects to the Vite dev server (`localhost:1420`) rather than the Tauri webview directly, we've implemented a **test mode** that allows the app to run with mocked Tauri APIs.
+Phase 1 E2E tests verified scheduling logic correctness. Since Playwright connects to the Vite dev server (`localhost:1420`) rather than the Tauri webview directly, a **test mode** was implemented that allows the app to run without full Tauri APIs.
 
 ## How It Works
 
@@ -63,29 +65,21 @@ The tests verify:
 
 ## Important Notes
 
-1. **Mock Engine Limitations**: MockRustEngine implements basic CPM logic but may not match Rust engine behavior exactly. The goal is to verify the **scheduling logic flow**, not exact date calculations.
+> **Update (January 2026):** The WASM migration is complete. MockRustEngine has been removed. The app now uses:
+> - **Production & Test:** WASM Worker with SchedulerEngine (Rust → WebAssembly)
+> - **Test Mode:** Bypasses Tauri-only features (file dialogs, SQLite) but uses real WASM calculations
 
-2. **Production vs Test**: 
-   - Production: Always uses RustEngine with full Tauri integration
-   - Test Mode: Uses MockRustEngine when Tauri APIs unavailable
-   - Both paths test the same scheduling logic concepts
+1. **Current Architecture**: All calculations run in WASM Worker. See [ARCHITECTURE.md](../architecture/ARCHITECTURE.md).
 
-3. **Future Enhancement**: For more accurate testing, consider using `tauri-driver` or WebDriverIO to test the actual Tauri webview with the real Rust engine.
+2. **Test Mode**: Allows app to run without full Tauri environment while still using real WASM calculations.
 
-## Files Modified
+## Files (Current Architecture)
 
-- `src/core/engines/MockRustEngine.ts` - Mock engine for testing
 - `src/utils/testMode.ts` - Test mode detection utilities
-- `src/services/SchedulerService.ts` - Engine selection logic
+- `src/workers/scheduler.worker.ts` - WASM Worker (runs calculations)
+- `src/services/ProjectController.ts` - Worker interface
 - `src/main.ts` - Test mode bypass for Tauri check
 - `src/data/PersistenceService.ts` - Skip initialization in test mode
 - `tests/e2e/scheduling_logic.spec.ts` - Uses `?test=true` parameter
 
-## Verification
-
-After tests pass, create `BASELINE_METRICS.md` with:
-- Test execution results
-- Any timing/performance metrics
-- Confirmation that scheduling logic works correctly
-
-This baseline will be used in Phase 2 to verify the WASM engine produces identical results.
+> **Note:** MockRustEngine.ts was removed after the WASM migration was complete.

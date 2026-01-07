@@ -65,7 +65,9 @@ export class ColumnRegistry {
     public constructor() {}
     
     /**
-     * Get singleton instance (lazy initialization)
+     * @deprecated Use constructor injection instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     static getInstance(): ColumnRegistry {
         if (!ColumnRegistry.instance) {
@@ -75,14 +77,18 @@ export class ColumnRegistry {
     }
     
     /**
-     * Set the singleton instance (for testing/DI)
+     * @deprecated Use constructor injection with mocks instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     static setInstance(instance: ColumnRegistry): void {
         ColumnRegistry.instance = instance;
     }
     
     /**
-     * Reset instance (for testing)
+     * @deprecated Create fresh instances in tests instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     static resetInstance(): void {
         ColumnRegistry.instance = null;

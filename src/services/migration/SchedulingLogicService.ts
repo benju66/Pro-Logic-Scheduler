@@ -78,7 +78,9 @@ export class SchedulingLogicService {
     public constructor() {}
     
     /**
-     * Get the singleton instance (lazy initialization)
+     * @deprecated Use constructor injection instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     public static getInstance(): SchedulingLogicService {
         if (!SchedulingLogicService.instance) {
@@ -88,14 +90,18 @@ export class SchedulingLogicService {
     }
     
     /**
-     * Set the singleton instance (for testing/DI)
+     * @deprecated Use constructor injection with mocks instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     public static setInstance(instance: SchedulingLogicService): void {
         SchedulingLogicService.instance = instance;
     }
     
     /**
-     * Reset the singleton instance (for testing)
+     * @deprecated Create fresh instances in tests instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     public static resetInstance(): void {
         SchedulingLogicService.instance = null;
@@ -667,6 +673,7 @@ export class SchedulingLogicService {
 }
 
 /**
- * Singleton accessor
+ * @deprecated Use constructor injection instead.
+ * @see docs/adr/001-dependency-injection.md
  */
 export const schedulingLogic = SchedulingLogicService.getInstance();

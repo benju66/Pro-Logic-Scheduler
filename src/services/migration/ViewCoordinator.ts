@@ -93,7 +93,9 @@ export class ViewCoordinator {
     }
     
     /**
-     * Get the singleton instance (lazy initialization)
+     * @deprecated Use constructor injection instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     public static getInstance(): ViewCoordinator {
         if (!ViewCoordinator.instance) {
@@ -103,7 +105,9 @@ export class ViewCoordinator {
     }
     
     /**
-     * Set the singleton instance (for testing/DI)
+     * @deprecated Use constructor injection with mocks instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     public static setInstance(instance: ViewCoordinator): void {
         ViewCoordinator.instance = instance;
@@ -452,7 +456,9 @@ export class ViewCoordinator {
     }
     
     /**
-     * Reset singleton (for testing)
+     * @deprecated Create fresh instances in tests instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     public static resetInstance(): void {
         if (ViewCoordinator.instance) {
@@ -463,6 +469,7 @@ export class ViewCoordinator {
 }
 
 /**
- * Singleton accessor
+ * @deprecated Use constructor injection instead.
+ * @see docs/adr/001-dependency-injection.md
  */
 export const viewCoordinator = ViewCoordinator.getInstance();

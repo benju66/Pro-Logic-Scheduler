@@ -92,7 +92,9 @@ export class FeatureFlags {
     }
     
     /**
-     * Get the singleton instance (lazy initialization)
+     * @deprecated Use constructor injection instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     public static getInstance(): FeatureFlags {
         if (!FeatureFlags.instance) {
@@ -102,15 +104,18 @@ export class FeatureFlags {
     }
     
     /**
-     * Set the singleton instance (for testing/DI)
-     * Call this in the Composition Root to inject a configured instance.
+     * @deprecated Use constructor injection with mocks instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     public static setInstance(instance: FeatureFlags): void {
         FeatureFlags.instance = instance;
     }
     
     /**
-     * Reset the singleton instance (for testing)
+     * @deprecated Create fresh instances in tests instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     public static resetInstance(): void {
         FeatureFlags.instance = null;

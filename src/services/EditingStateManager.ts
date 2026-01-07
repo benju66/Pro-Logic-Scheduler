@@ -174,7 +174,9 @@ export class EditingStateManager {
     public constructor() {}
 
     /**
-     * Get singleton instance (lazy initialization)
+     * @deprecated Use constructor injection instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     static getInstance(): EditingStateManager {
         if (!EditingStateManager.instance) {
@@ -184,14 +186,18 @@ export class EditingStateManager {
     }
     
     /**
-     * Set the singleton instance (for testing/DI)
+     * @deprecated Use constructor injection with mocks instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     static setInstance(instance: EditingStateManager): void {
         EditingStateManager.instance = instance;
     }
 
     /**
-     * Reset singleton (for testing)
+     * @deprecated Create fresh instances in tests instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     static resetInstance(): void {
         if (EditingStateManager.instance) {
@@ -449,8 +455,10 @@ export class EditingStateManager {
 // ============================================================================
 
 /**
- * Get the singleton instance
+ * @deprecated Use constructor injection instead.
  * Shorthand for EditingStateManager.getInstance()
+ * 
+ * @see docs/adr/001-dependency-injection.md
  */
 export function getEditingStateManager(): EditingStateManager {
     return EditingStateManager.getInstance();

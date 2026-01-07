@@ -66,7 +66,9 @@ export class CommandService implements ICommandService {
     }
 
     /**
-     * Get the singleton instance (lazy initialization)
+     * @deprecated Use constructor injection instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     static getInstance(): CommandService {
         if (!CommandService.instance) {
@@ -76,14 +78,18 @@ export class CommandService implements ICommandService {
     }
     
     /**
-     * Set the singleton instance (for testing/DI)
+     * @deprecated Use constructor injection with mocks instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     static setInstance(instance: CommandService): void {
         CommandService.instance = instance;
     }
 
     /**
-     * Reset the singleton instance (for testing)
+     * @deprecated Create fresh instances in tests instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     static resetInstance(): void {
         CommandService.instance = null;

@@ -39,7 +39,9 @@ export class ClipboardManager {
     public constructor() {}
 
     /**
-     * Get the singleton instance (lazy initialization)
+     * @deprecated Use constructor injection instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     static getInstance(): ClipboardManager {
         if (!ClipboardManager.instance) {
@@ -49,14 +51,18 @@ export class ClipboardManager {
     }
     
     /**
-     * Set the singleton instance (for testing/DI)
+     * @deprecated Use constructor injection with mocks instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     static setInstance(instance: ClipboardManager): void {
         ClipboardManager.instance = instance;
     }
     
     /**
-     * Reset the singleton instance (for testing)
+     * @deprecated Create fresh instances in tests instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     static resetInstance(): void {
         ClipboardManager.instance = null;
@@ -137,7 +143,10 @@ export class ClipboardManager {
     }
 }
 
-// Convenience function
+/**
+ * @deprecated Use constructor injection instead.
+ * @see docs/adr/001-dependency-injection.md
+ */
 export function getClipboardManager(): ClipboardManager {
     return ClipboardManager.getInstance();
 }

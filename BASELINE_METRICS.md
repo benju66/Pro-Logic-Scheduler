@@ -65,20 +65,19 @@ Verifies task hierarchy relationships are maintained after indentation operation
 
 ## Technical Notes
 
-- Tests run against `MockRustEngine` (JavaScript mock) via Vite dev server
+- Tests run against WASM Worker via Vite dev server
 - Test mode enabled via `?test=true` URL parameter
-- MockRustEngine implements iterative forward-pass CPM calculation
-- Production uses `RustEngine` with full Tauri/WASM integration
+- Production uses WASM Worker with SchedulerEngine (see Phase 2-4 below)
 
 ## Files Created/Modified for Phase 1
 
 - `playwright.config.ts` - Playwright configuration
 - `tests/e2e/scheduling_logic.spec.ts` - Black box test suite
 - `tests/fixtures/reference_project.json` - Reference dataset
-- `src/core/engines/MockRustEngine.ts` - Mock engine for testing
 - `src/utils/testMode.ts` - Test mode detection utilities
 - `src/main.ts` - Added test mode bypass for Tauri check
-- `src/services/SchedulerService.ts` - Engine selection based on test mode
+
+> **Note:** MockRustEngine was used during Phase 1 but has since been removed. The WASM Worker is now used for all calculations.
 
 ---
 

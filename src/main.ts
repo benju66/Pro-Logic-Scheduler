@@ -22,6 +22,12 @@ import { FeatureFlags } from './core/FeatureFlags';
 import { createRendererFactory } from './ui/factories';
 import type { ToastType } from './types';
 
+// Phase 4 Pure DI: Import persistence layer services
+import { PersistenceService } from './data/PersistenceService';
+import { SnapshotService } from './data/SnapshotService';
+import { DataLoader } from './data/DataLoader';
+import { HistoryManager } from './data/HistoryManager';
+
 // Import Unified Scheduler V2 styles
 import './ui/components/scheduler/styles/scheduler.css';
 import './styles/trade-partners.css';
@@ -122,17 +128,32 @@ async function initApp(): Promise<void> {
             editingStateManager
         });
         
+        // =====================================================================
+        // Level 4: Persistence Layer Services (Phase 4 Pure DI)
+        // Services are created here but initialized by AppInitializer.
+        // The init() methods handle Tauri detection internally.
+        // =====================================================================
+        const persistenceService = new PersistenceService();
+        const snapshotService = new SnapshotService();
+        const dataLoader = new DataLoader();
+        const historyManager = new HistoryManager({ maxHistory: 50 });
+        
         console.log('[Composition Root] ✅ Services initialized');
         
         // =====================================================================
         // END COMPOSITION ROOT
-        // AppInitializer will wire remaining dependencies (persistence, UI, etc.)
-        // Pass rendererFactory for SchedulerService to use.
+        // AppInitializer orchestrates initialization sequence with injected deps.
+        // @see docs/TRUE_PURE_DI_IMPLEMENTATION_PLAN.md - Phase 4
         // =====================================================================
         
         appInitializer = new AppInitializer({ 
             isTauri: tauriAvailable,
-            rendererFactory  // Pass to AppInitializer for SchedulerService
+            rendererFactory,
+            // Phase 4 Pure DI: Inject persistence layer services
+            persistenceService,
+            snapshotService,
+            dataLoader,
+            historyManager
         });
         
         // Expose AppInitializer for E2E testing

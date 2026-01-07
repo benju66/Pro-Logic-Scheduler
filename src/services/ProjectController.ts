@@ -88,7 +88,16 @@ export class ProjectController {
     }
 
     /**
-     * Get the singleton instance (lazy initialization)
+     * @deprecated Use constructor injection instead. This method exists for backward
+     * compatibility and testing only.
+     * 
+     * **Preferred:** Pass ProjectController via constructor
+     * ```typescript
+     * constructor(private controller: ProjectController) {}
+     * ```
+     * 
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     public static getInstance(): ProjectController {
         if (!ProjectController.instance) {
@@ -98,15 +107,22 @@ export class ProjectController {
     }
     
     /**
-     * Set the singleton instance (for testing/DI)
-     * Call this in the Composition Root to inject a configured instance.
+     * @deprecated Use constructor injection with mocks instead.
+     * This method exists for Composition Root wiring and legacy test support.
+     * 
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     public static setInstance(instance: ProjectController): void {
         ProjectController.instance = instance;
     }
     
     /**
-     * Reset the singleton instance (for testing)
+     * @deprecated Create fresh instances in tests instead.
+     * This method exists for legacy test isolation.
+     * 
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
      */
     public static resetInstance(): void {
         ProjectController.instance = null;

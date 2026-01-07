@@ -34,11 +34,22 @@ import { getClipboardManager } from './ClipboardManager';
 
 /**
  * App initializer options
+ * 
+ * Phase 4 Pure DI: Services are now injected from main.ts Composition Root
+ * rather than created internally.
  */
 export interface AppInitializerOptions {
   isTauri?: boolean;
   /** RendererFactory for creating Grid/Gantt renderers with captured deps */
   rendererFactory?: import('../ui/factories').RendererFactory;
+  /** Injected PersistenceService for event queue writes (Phase 4) */
+  persistenceService?: PersistenceService;
+  /** Injected SnapshotService for periodic full saves (Phase 4) */
+  snapshotService?: SnapshotService;
+  /** Injected DataLoader for SQLite data loading (Phase 4) */
+  dataLoader?: DataLoader;
+  /** Injected HistoryManager for undo/redo (Phase 4) */
+  historyManager?: HistoryManager;
 }
 
 /**
@@ -79,21 +90,27 @@ export class AppInitializer {
   private loadedTradePartners: TradePartner[] = [];
 
   /**
-   * Get singleton instance (must be created first via constructor)
+   * @deprecated Use constructor injection instead.
+   * @see docs/adr/001-dependency-injection.md
+   * @internal
    */
   public static getInstance(): AppInitializer | null {
     return AppInitializer.instance;
   }
   
   /**
-   * Set the singleton instance (for testing/DI)
+   * @deprecated Use constructor injection with mocks instead.
+   * @see docs/adr/001-dependency-injection.md
+   * @internal
    */
   public static setInstance(instance: AppInitializer): void {
     AppInitializer.instance = instance;
   }
   
   /**
-   * Reset the singleton instance (for testing)
+   * @deprecated Create fresh instances in tests instead.
+   * @see docs/adr/001-dependency-injection.md
+   * @internal
    */
   public static resetInstance(): void {
     AppInitializer.instance = null;
@@ -108,6 +125,12 @@ export class AppInitializer {
     this.rendererFactory = options.rendererFactory || null;
     this.scheduler = null;
     this.statsService = null;
+    
+    // Phase 4 Pure DI: Store injected services from Composition Root
+    this.persistenceService = options.persistenceService || null;
+    this.snapshotService = options.snapshotService || null;
+    this.dataLoader = options.dataLoader || null;
+    this.historyManager = options.historyManager || null;
     
     // Store singleton reference
     AppInitializer.instance = this;
@@ -201,6 +224,10 @@ export class AppInitializer {
   /**
    * PHASE 6: Initialize the entire persistence layer
    * This sets up PersistenceService, SnapshotService, DataLoader, and ProjectController
+   * 
+   * Phase 4 Pure DI: Services are now injected from Composition Root.
+   * Fallback to creating services if not injected (backward compatibility).
+   * 
    * @private
    */
   private async _initializePersistenceLayer(): Promise<void> {
@@ -215,9 +242,11 @@ export class AppInitializer {
       // Initialize controller with empty state for development/testing
       await this.projectController.initialize([], { workingDays: [1, 2, 3, 4, 5], exceptions: {} });
       
-      // Still initialize HistoryManager for undo/redo in non-Tauri mode
+      // Phase 4 Pure DI: Use injected HistoryManager or create fallback
       console.log('[AppInitializer] Initializing HistoryManager (non-Tauri)...');
-      this.historyManager = new HistoryManager({ maxHistory: 50 });
+      if (!this.historyManager) {
+        this.historyManager = new HistoryManager({ maxHistory: 50 });
+      }
       this.projectController.setHistoryManager(this.historyManager);
       console.log('[AppInitializer] ✅ HistoryManager initialized');
       
@@ -226,21 +255,28 @@ export class AppInitializer {
     }
     
     try {
+      // Phase 4 Pure DI: Use injected services or create fallbacks
       // 1. Initialize PersistenceService (event queue for writes)
       console.log('[AppInitializer] Initializing PersistenceService...');
-      this.persistenceService = new PersistenceService();
+      if (!this.persistenceService) {
+        this.persistenceService = new PersistenceService();
+      }
       await this.persistenceService.init();
       console.log('[AppInitializer] ✅ PersistenceService initialized');
       
       // 2. Initialize SnapshotService (periodic full saves)
       console.log('[AppInitializer] Initializing SnapshotService...');
-      this.snapshotService = new SnapshotService();
+      if (!this.snapshotService) {
+        this.snapshotService = new SnapshotService();
+      }
       await this.snapshotService.init();
       console.log('[AppInitializer] ✅ SnapshotService initialized');
       
       // 3. Load data from SQLite via DataLoader
       console.log('[AppInitializer] Loading data from SQLite...');
-      this.dataLoader = new DataLoader();
+      if (!this.dataLoader) {
+        this.dataLoader = new DataLoader();
+      }
       await this.dataLoader.init();
       const { tasks, calendar, tradePartners } = await this.dataLoader.loadData();
       
@@ -277,12 +313,11 @@ export class AppInitializer {
       this.snapshotService.startPeriodicSnapshots();
       console.log('[AppInitializer] ✅ SnapshotService started periodic snapshots');
       
-      // 9. Initialize HistoryManager for undo/redo (application level)
-      // Moved from SchedulerService to ensure history survives view/tab switches
+      // 9. Phase 4 Pure DI: Use injected HistoryManager or create fallback
       console.log('[AppInitializer] Initializing HistoryManager...');
-      this.historyManager = new HistoryManager({
-        maxHistory: 50
-      });
+      if (!this.historyManager) {
+        this.historyManager = new HistoryManager({ maxHistory: 50 });
+      }
       this.projectController.setHistoryManager(this.historyManager);
       console.log('[AppInitializer] ✅ HistoryManager initialized');
       

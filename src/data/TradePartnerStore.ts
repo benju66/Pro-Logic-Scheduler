@@ -187,6 +187,10 @@ export class TradePartnerStore {
 // Singleton instance
 let instance: TradePartnerStore | null = null;
 
+/**
+ * @deprecated Use constructor injection instead.
+ * @see docs/adr/001-dependency-injection.md
+ */
 export function getTradePartnerStore(): TradePartnerStore {
   if (!instance) {
     instance = new TradePartnerStore();
@@ -194,6 +198,10 @@ export function getTradePartnerStore(): TradePartnerStore {
   return instance;
 }
 
+/**
+ * @deprecated Create fresh instances in tests instead.
+ * @see docs/adr/001-dependency-injection.md
+ */
 export function resetTradePartnerStore(): void {
   instance = null;
 }
