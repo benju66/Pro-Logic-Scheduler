@@ -6,13 +6,14 @@
  * Shortcuts registered with CommandService are tried first, then legacy callbacks.
  */
 
-import { getEditingStateManager, type EditingStateChangeEvent } from '../../services/EditingStateManager';
+import { getEditingStateManager, EditingStateManager, type EditingStateChangeEvent } from '../../services/EditingStateManager';
 import { CommandService, buildShortcutFromEvent } from '../../commands';
 
 /**
  * Keyboard service options
  */
 export interface KeyboardServiceOptions {
+  // Callback options
   onUndo?: () => void;
   onRedo?: () => void;
   onDelete?: () => void;
@@ -37,6 +38,11 @@ export interface KeyboardServiceOptions {
   onLinkSelected?: () => void;
   onDrivingPath?: () => void;
   isAppReady?: () => boolean;
+  
+  // DI Dependencies (optional for backward compatibility)
+  // @see docs/TRUE_PURE_DI_IMPLEMENTATION_PLAN.md
+  editingStateManager?: EditingStateManager;
+  commandService?: CommandService;
 }
 
 /**
@@ -47,19 +53,28 @@ export class KeyboardService {
   private isEnabled: boolean;
   private _boundHandler: (e: KeyboardEvent) => void;
   private _unsubscribeEditing: (() => void) | null = null;
+  
+  // Cached service references (DI or fallback to singletons)
+  private editingStateManager: EditingStateManager;
+  private commandService: CommandService | null = null;
 
   /**
-   * @param options - Configuration
+   * @param options - Configuration (includes optional DI dependencies)
+   * @see docs/TRUE_PURE_DI_IMPLEMENTATION_PLAN.md
    */
   constructor(options: KeyboardServiceOptions = {}) {
     this.options = options;
     this.isEnabled = true;
     this._boundHandler = this._handleKeyDown.bind(this);
+    
+    // Use injected dependencies or fallback to singletons
+    this.editingStateManager = options.editingStateManager || getEditingStateManager();
+    this.commandService = options.commandService || null; // Lazy-init in _tryCommandService if needed
+    
     this._attach();
     
     // Subscribe to editing state changes
-    const editingManager = getEditingStateManager();
-    this._unsubscribeEditing = editingManager.subscribe((event) => {
+    this._unsubscribeEditing = this.editingStateManager.subscribe((event) => {
       this._onEditingStateChange(event);
     });
   }

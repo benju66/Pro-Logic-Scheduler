@@ -37,6 +37,8 @@ import { getClipboardManager } from './ClipboardManager';
  */
 export interface AppInitializerOptions {
   isTauri?: boolean;
+  /** RendererFactory for creating Grid/Gantt renderers with captured deps */
+  rendererFactory?: import('../ui/factories').RendererFactory;
 }
 
 /**
@@ -55,6 +57,7 @@ export class AppInitializer {
   private static instance: AppInitializer | null = null;
   
   private isTauri: boolean;
+  private rendererFactory: import('../ui/factories').RendererFactory | null = null;
   private scheduler: SchedulerService | null = null;
   private statsService: StatsService | null = null;
   private persistenceService: PersistenceService | null = null;
@@ -102,6 +105,7 @@ export class AppInitializer {
    */
   constructor(options: AppInitializerOptions = {}) {
     this.isTauri = options.isTauri || false;
+    this.rendererFactory = options.rendererFactory || null;
     this.scheduler = null;
     this.statsService = null;
     
@@ -428,12 +432,14 @@ export class AppInitializer {
     
     // Initialize scheduler service
     console.log('🔧 Creating SchedulerService...');
-    const options: SchedulerServiceOptions = {
+    const options = {
       gridContainer: gridContainer,
       ganttContainer: ganttContainer,
       drawerContainer: drawerContainer || undefined,
       modalContainer: modalContainer || undefined,
       isTauri: this.isTauri,
+      // Pure DI: Pass rendererFactory from Composition Root
+      rendererFactory: this.rendererFactory || undefined,
     };
     
     this.scheduler = new SchedulerService(options);

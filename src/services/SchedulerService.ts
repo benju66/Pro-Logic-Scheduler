@@ -45,6 +45,7 @@ import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport'
 import { GridRenderer } from '../ui/components/scheduler/GridRenderer';
 import { GanttRenderer } from '../ui/components/scheduler/GanttRenderer';
 import { SideDrawer } from '../ui/components/SideDrawer';
+import type { RendererFactory } from '../ui/factories';
 import type { 
     GridRendererOptions, 
     GanttRendererOptions, 
@@ -116,8 +117,8 @@ export class SchedulerService {
 
     // =========================================================================
     // INJECTED SERVICES (Pure DI Migration)
-    // These are initialized from singletons for now, will accept injection later
-    // @see docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md
+    // These can be injected via constructor or fall back to singletons
+    // @see docs/TRUE_PURE_DI_IMPLEMENTATION_PLAN.md
     // =========================================================================
     
     /** ProjectController - core data controller */
@@ -128,6 +129,12 @@ export class SchedulerService {
     
     /** CommandService - command registry */
     private commandService: CommandService;
+    
+    /** RendererFactory - creates GridRenderer/GanttRenderer with captured deps */
+    private rendererFactory: RendererFactory | null = null;
+    
+    /** ColumnRegistry - column definitions and renderer types */
+    private columnRegistry: ColumnRegistry;
 
     // Data stores
     // NOTE: taskStore and calendarStore removed - data flows through ProjectController
@@ -311,9 +318,17 @@ export class SchedulerService {
     /**
      * Create a new SchedulerService instance
      * 
-     * @param options - Configuration options
+     * @param options - Configuration options (extended with DI deps)
+     * @see docs/TRUE_PURE_DI_IMPLEMENTATION_PLAN.md
      */
-    constructor(options: SchedulerServiceOptions = {} as SchedulerServiceOptions) {
+    constructor(options: SchedulerServiceOptions & {
+        // DI Dependencies (optional for backward compatibility)
+        projectController?: ProjectController;
+        selectionModel?: SelectionModel;
+        commandService?: CommandService;
+        rendererFactory?: RendererFactory;
+        keyboardService?: KeyboardService;
+    } = {} as SchedulerServiceOptions) {
         this.options = options;
         // Use isTauri from options (provided by AppInitializer)
         // Desktop-only architecture - must be Tauri environment
@@ -321,12 +336,19 @@ export class SchedulerService {
         
         // =====================================================================
         // PURE DI: Initialize service references
-        // Using getInstance() for now - these are already wired in Composition Root
-        // Future: Accept these as constructor parameters
+        // Use injected dependencies if provided, otherwise fall back to singletons
+        // @see docs/TRUE_PURE_DI_IMPLEMENTATION_PLAN.md
         // =====================================================================
-        this.projectController = ProjectController.getInstance();
-        this.selectionModel = SelectionModel.getInstance();
-        this.commandService = CommandService.getInstance();
+        this.projectController = options.projectController || ProjectController.getInstance();
+        this.selectionModel = options.selectionModel || SelectionModel.getInstance();
+        this.commandService = options.commandService || CommandService.getInstance();
+        this.rendererFactory = options.rendererFactory || null;
+        this.columnRegistry = ColumnRegistry.getInstance(); // Cache for internal use
+        
+        // KeyboardService is injected or created in initKeyboard()
+        if (options.keyboardService) {
+            this.keyboardService = options.keyboardService;
+        }
 
         // Initialize services (async - will be awaited in init())
         // Store the promise to avoid race conditions
@@ -557,7 +579,7 @@ export class SchedulerService {
         this.columnSettingsModal = new ColumnSettingsModal({
             container: modalsContainer,
             onSave: (preferences) => this.updateColumnPreferences(preferences),
-            getColumns: () => ColumnRegistry.getInstance().getGridColumns(),
+            getColumns: () => this.columnRegistry.getGridColumns(),
             getPreferences: () => this._getColumnPreferences(),
         });
 
@@ -831,7 +853,7 @@ export class SchedulerService {
      * @private
      */
     private _getColumnDefinitions(): GridColumn[] {
-        const registry = ColumnRegistry.getInstance();
+        const registry = this.columnRegistry;
         const prefs = this._getColumnPreferences();
         return registry.getGridColumns(prefs);
     }
@@ -868,7 +890,7 @@ export class SchedulerService {
      * @private
      */
     private _getDefaultColumnPreferences(): ColumnPreferences {
-        return ColumnRegistry.getInstance().getDefaultPreferences();
+        return this.columnRegistry.getDefaultPreferences();
     }
 
     /**
@@ -1153,7 +1175,7 @@ export class SchedulerService {
         
         // STRANGLER FIG: Sync baseline column visibility with registry
         if (hasBaselineData) {
-            const registry = ColumnRegistry.getInstance();
+            const registry = this.columnRegistry;
             const baselineColumnIds = ['baselineStart', 'actualStart', 'startVariance', 'baselineFinish', 'actualFinish', 'finishVariance'];
             registry.setColumnsVisibility(baselineColumnIds, true);
         }
@@ -1184,7 +1206,7 @@ export class SchedulerService {
         this._hasBaseline = baselineCount > 0;
         
         // STRANGLER FIG: Set baseline column visibility via ColumnRegistry
-        const registry = ColumnRegistry.getInstance();
+        const registry = this.columnRegistry;
         const baselineColumnIds = ['baselineStart', 'actualStart', 'startVariance', 'baselineFinish', 'actualFinish', 'finishVariance'];
         registry.setColumnsVisibility(baselineColumnIds, this._hasBaseline);
         
@@ -1222,7 +1244,7 @@ export class SchedulerService {
         this._hasBaseline = false;
         
         // STRANGLER FIG: Hide baseline columns via ColumnRegistry
-        const registry = ColumnRegistry.getInstance();
+        const registry = this.columnRegistry;
         const baselineColumnIds = ['baselineStart', 'actualStart', 'startVariance', 'baselineFinish', 'actualFinish', 'finishVariance'];
         registry.setColumnsVisibility(baselineColumnIds, false);
         
@@ -3527,7 +3549,7 @@ export class SchedulerService {
      * v3.0: Used by Columns tab in Settings
      */
     getColumnDefinitionsForSettings(): GridColumn[] {
-        return ColumnRegistry.getInstance().getGridColumns();
+        return this.columnRegistry.getGridColumns();
     }
 
     /**

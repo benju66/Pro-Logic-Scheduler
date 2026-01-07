@@ -17,7 +17,7 @@ import { SelectionModel } from '../../../services/SelectionModel';
 import flatpickr from 'flatpickr';
 import type { Instance } from 'flatpickr/dist/types/instance';
 import { createSharedPickerOptions, destroyDatePicker, parseFlexibleDate, formatDateISO, formatDateForDisplay } from './datepicker/DatePickerConfig';
-import { getEditingStateManager } from '../../../services/EditingStateManager';
+import { getEditingStateManager, EditingStateManager } from '../../../services/EditingStateManager';
 import { getTaskFieldValue } from '../../../types';
 
 /**
@@ -76,11 +76,13 @@ export class GridRenderer {
     // Services (injected or singleton fallback for migration)
     private controller: ProjectController;
     private selectionModel: SelectionModel;
+    private editingStateManager: EditingStateManager;
 
     constructor(
         options: GridRendererOptions,
         controller?: ProjectController,
-        selectionModel?: SelectionModel
+        selectionModel?: SelectionModel,
+        editingStateManager?: EditingStateManager
     ) {
         this.container = options.container;
         this.rowHeight = options.rowHeight;
@@ -88,6 +90,7 @@ export class GridRenderer {
         // Inject services or fallback to singletons (migration-friendly)
         this.controller = controller || ProjectController.getInstance();
         this.selectionModel = selectionModel || SelectionModel.getInstance();
+        this.editingStateManager = editingStateManager || getEditingStateManager();
 
         // Merge with defaults
         this.options = {

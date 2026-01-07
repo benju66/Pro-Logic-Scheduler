@@ -3,10 +3,24 @@
  * @module core/columns/registerColumns
  * 
  * Registers all default renderers and column definitions.
+ * 
+ * PURE DI MIGRATION:
+ * All functions now accept optional deps parameter for explicit injection.
+ * Falls back to singletons for backward compatibility.
+ * 
+ * @see docs/TRUE_PURE_DI_IMPLEMENTATION_PLAN.md - Section 5.6
  */
 
 import { ColumnRegistry } from './ColumnRegistry';
 import { ServiceContainer } from './ServiceContainer';
+
+/**
+ * Dependencies for column system functions (optional for backward compatibility)
+ */
+export interface ColumnSystemDependencies {
+    columnRegistry?: ColumnRegistry;
+    serviceContainer?: ServiceContainer;
+}
 
 // Import all renderers
 import { TextRenderer } from './renderers/TextRenderer';
@@ -30,9 +44,11 @@ import { DEFAULT_COLUMNS } from './definitions/defaultColumns';
 /**
  * Register all default renderers
  * Call this once during app initialization
+ * 
+ * @param deps - Optional dependencies (uses singletons if not provided)
  */
-export function registerDefaultRenderers(): void {
-    const registry = ColumnRegistry.getInstance();
+export function registerDefaultRenderers(deps?: ColumnSystemDependencies): void {
+    const registry = deps?.columnRegistry || ColumnRegistry.getInstance();
     
     console.log('[ColumnRegistry] Registering default renderers...');
     
@@ -64,9 +80,11 @@ export function registerDefaultRenderers(): void {
 /**
  * Register all default column definitions
  * Call this once during app initialization
+ * 
+ * @param deps - Optional dependencies (uses singletons if not provided)
  */
-export function registerDefaultColumns(): void {
-    const registry = ColumnRegistry.getInstance();
+export function registerDefaultColumns(deps?: ColumnSystemDependencies): void {
+    const registry = deps?.columnRegistry || ColumnRegistry.getInstance();
     
     console.log('[ColumnRegistry] Registering default columns...');
     
@@ -78,17 +96,23 @@ export function registerDefaultColumns(): void {
 /**
  * Configure service container with app services
  * Call this after services are available
+ * 
+ * @param options - Service implementations
+ * @param deps - Optional dependencies (uses singletons if not provided)
  */
-export function configureServices(options: {
-    getTradePartner: (id: string) => { id: string; name: string; color: string } | undefined;
-    calculateVariance: (task: import('../../types').Task) => { start: number | null; finish: number | null };
-    isEditingCell: (taskId: string, field: string) => boolean;
-    openDatePicker: (taskId: string, field: string, anchorEl: HTMLElement, currentValue: string) => void;
-    onDateChange: (taskId: string, field: string, value: string) => void;
-    getCalendar: () => import('../../types').Calendar | null;
-    getVisualRowNumber?: (task: import('../../types').Task) => number | null;
-}): void {
-    const services = ServiceContainer.getInstance();
+export function configureServices(
+    options: {
+        getTradePartner: (id: string) => { id: string; name: string; color: string } | undefined;
+        calculateVariance: (task: import('../../types').Task) => { start: number | null; finish: number | null };
+        isEditingCell: (taskId: string, field: string) => boolean;
+        openDatePicker: (taskId: string, field: string, anchorEl: HTMLElement, currentValue: string) => void;
+        onDateChange: (taskId: string, field: string, value: string) => void;
+        getCalendar: () => import('../../types').Calendar | null;
+        getVisualRowNumber?: (task: import('../../types').Task) => number | null;
+    },
+    deps?: ColumnSystemDependencies
+): void {
+    const services = deps?.serviceContainer || ServiceContainer.getInstance();
     
     console.log('[ServiceContainer] Configuring services...');
     
@@ -113,12 +137,14 @@ export function configureServices(options: {
 /**
  * Initialize the entire column system
  * Convenience function that registers everything
+ * 
+ * @param deps - Optional dependencies (uses singletons if not provided)
  */
-export function initializeColumnSystem(): void {
-    registerDefaultRenderers();
-    registerDefaultColumns();
+export function initializeColumnSystem(deps?: ColumnSystemDependencies): void {
+    registerDefaultRenderers(deps);
+    registerDefaultColumns(deps);
     
-    const registry = ColumnRegistry.getInstance();
+    const registry = deps?.columnRegistry || ColumnRegistry.getInstance();
     const stats = registry.getStats();
     
     console.log(`[ColumnSystem] Initialized: ${stats.renderers} renderers, ${stats.columns} columns`);

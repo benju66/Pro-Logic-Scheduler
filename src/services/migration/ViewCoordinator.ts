@@ -75,10 +75,21 @@ export class ViewCoordinator {
     
     /**
      * Constructor is public for Pure DI compatibility.
+     * 
+     * @param deps - Optional dependencies for full DI (Phase 1 migration)
+     * @see docs/TRUE_PURE_DI_IMPLEMENTATION_PLAN.md
      */
-    public constructor() {
-        // Lazy-initialize service references from singletons for now
-        // Future: Accept as constructor parameters
+    public constructor(deps?: {
+        projectController?: ProjectController;
+        selectionModel?: SelectionModel;
+    }) {
+        // Accept injected dependencies or defer to initSubscriptions() fallback
+        if (deps?.projectController) {
+            this.projectController = deps.projectController;
+        }
+        if (deps?.selectionModel) {
+            this.selectionModel = deps.selectionModel;
+        }
     }
     
     /**
@@ -124,9 +135,13 @@ export class ViewCoordinator {
     public initSubscriptions(): void {
         this.dispose(); // Clean up any existing subscriptions
         
-        // Cache service references (Pure DI - using singletons for now)
-        this.projectController = ProjectController.getInstance();
-        this.selectionModel = SelectionModel.getInstance();
+        // Cache service references (Pure DI - use injected deps or fallback to singletons)
+        if (!this.projectController) {
+            this.projectController = ProjectController.getInstance();
+        }
+        if (!this.selectionModel) {
+            this.selectionModel = SelectionModel.getInstance();
+        }
         
         const controller = this.projectController;
         const selection = this.selectionModel;

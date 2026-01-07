@@ -19,6 +19,9 @@ export interface UIEventManagerOptions {
   getScheduler?: () => SchedulerService | null;
   toastService?: ToastService | null;
   isTauri?: boolean;
+  // DI Dependencies (optional for backward compatibility)
+  commandService?: CommandService;
+  selectionModel?: SelectionModel;
 }
 
 /**
@@ -45,9 +48,9 @@ export class UIEventManager {
     this.isTauri = options.isTauri || false;
     this._buttonClickHandler = null;
     
-    // Cache service references (singletons already wired in Composition Root)
-    this.commandService = CommandService.getInstance();
-    this.selectionModel = SelectionModel.getInstance();
+    // Cache service references (use injected deps or fallback to singletons)
+    this.commandService = options.commandService || CommandService.getInstance();
+    this.selectionModel = options.selectionModel || SelectionModel.getInstance();
   }
 
   /**

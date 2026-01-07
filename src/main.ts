@@ -19,6 +19,7 @@ import { CommandService } from './commands';
 import { ColumnRegistry } from './core/columns/ColumnRegistry';
 import { ServiceContainer } from './core/columns/ServiceContainer';
 import { FeatureFlags } from './core/FeatureFlags';
+import { createRendererFactory } from './ui/factories';
 import type { ToastType } from './types';
 
 // Import Unified Scheduler V2 styles
@@ -109,14 +110,30 @@ async function initApp(): Promise<void> {
         const commandService = new CommandService();
         CommandService.setInstance(commandService);
         
+        // =====================================================================
+        // Level 3: Renderer Factory (captures deps in closure)
+        // This prevents prop-drilling - SchedulerService doesn't need to know
+        // about EditingStateManager since it's captured in the factory.
+        // @see docs/TRUE_PURE_DI_IMPLEMENTATION_PLAN.md - Section 3.1
+        // =====================================================================
+        const rendererFactory = createRendererFactory({
+            projectController,
+            selectionModel,
+            editingStateManager
+        });
+        
         console.log('[Composition Root] ✅ Services initialized');
         
         // =====================================================================
         // END COMPOSITION ROOT
         // AppInitializer will wire remaining dependencies (persistence, UI, etc.)
+        // Pass rendererFactory for SchedulerService to use.
         // =====================================================================
         
-        appInitializer = new AppInitializer({ isTauri: tauriAvailable });
+        appInitializer = new AppInitializer({ 
+            isTauri: tauriAvailable,
+            rendererFactory  // Pass to AppInitializer for SchedulerService
+        });
         
         // Expose AppInitializer for E2E testing
         (window as any).appInitializer = appInitializer;
@@ -128,7 +145,7 @@ async function initApp(): Promise<void> {
             (window as any).scheduler = scheduler;
             
             // Expose ProjectController for new architecture tests
-            (window as any).projectController = ProjectController.getInstance();
+            (window as any).projectController = projectController;
 
             // Initialize keyboard shortcuts (after scheduler is fully initialized)
             scheduler.initKeyboard();
@@ -144,8 +161,8 @@ async function initApp(): Promise<void> {
             // Make UIEventManager available globally for window functions (backward compatibility)
             window.uiEventManager = uiEventManager;
             
-            // Initialize zoom controls
-            initZoomControls();
+            // Initialize zoom controls (pass commandService for DI)
+            initZoomControls(commandService);
         }).catch(error => {
             console.error('[main] FATAL: App initialization failed:', error);
             document.body.innerHTML = `
@@ -375,7 +392,7 @@ window.showToast = showToast as (message: string, type?: string) => void;
 // ================================================================
 // ZOOM CONTROLS
 // ================================================================
-function initZoomControls(): void {
+function initZoomControls(commandService: CommandService): void {
     const zoomInBtn = document.getElementById('zoom-in-btn');
     const zoomOutBtn = document.getElementById('zoom-out-btn');
     const fitToViewBtn = document.getElementById('fit-to-view-btn');
@@ -392,24 +409,24 @@ function initZoomControls(): void {
         });
     }
     
-    // Zoom in - use Command Registry
+    // Zoom in - use injected CommandService (Pure DI)
     zoomInBtn?.addEventListener('click', () => {
-        CommandService.getInstance().execute('view.zoomIn');
+        commandService.execute('view.zoomIn');
     });
     
-    // Zoom out - use Command Registry
+    // Zoom out - use injected CommandService (Pure DI)
     zoomOutBtn?.addEventListener('click', () => {
-        CommandService.getInstance().execute('view.zoomOut');
+        commandService.execute('view.zoomOut');
     });
     
-    // Fit to view - use Command Registry
+    // Fit to view - use injected CommandService (Pure DI)
     fitToViewBtn?.addEventListener('click', () => {
-        CommandService.getInstance().execute('view.fitToView');
+        commandService.execute('view.fitToView');
     });
     
-    // Reset zoom - use Command Registry
+    // Reset zoom - use injected CommandService (Pure DI)
     resetZoomBtn?.addEventListener('click', () => {
-        CommandService.getInstance().execute('view.resetZoom');
+        commandService.execute('view.resetZoom');
     });
     
     // Keyboard shortcuts for zoom are now handled by CommandService via KeyboardService

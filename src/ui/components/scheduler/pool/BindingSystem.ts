@@ -32,14 +32,20 @@ export class BindingSystem {
     private projectController: ProjectController;
     private columnRegistry: ColumnRegistry;
 
-    constructor(columns: GridColumn[]) {
+    constructor(
+        columns: GridColumn[],
+        deps?: {
+            projectController?: ProjectController;
+            columnRegistry?: ColumnRegistry;
+        }
+    ) {
         this.columnMap = new Map();
         columns.forEach(col => {
             this.columnMap.set(col.field, col);
         });
-        // Cache service references (singletons already wired in Composition Root)
-        this.projectController = ProjectController.getInstance();
-        this.columnRegistry = ColumnRegistry.getInstance();
+        // Cache service references (use injected deps or fallback to singletons)
+        this.projectController = deps?.projectController || ProjectController.getInstance();
+        this.columnRegistry = deps?.columnRegistry || ColumnRegistry.getInstance();
     }
     
     /**
