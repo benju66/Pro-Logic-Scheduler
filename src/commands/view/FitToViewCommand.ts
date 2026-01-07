@@ -2,19 +2,34 @@ import type { Command, CommandResult } from '../types';
 import { ZoomController } from '../../services/ZoomController';
 
 /**
- * Fit To View Command
- * Adjusts zoom to fit the entire timeline in the visible area
+ * Create Fit To View Command with injected ZoomController
+ * 
+ * MIGRATION NOTE (Pure DI):
+ * - Factory function captures ZoomController dependency
+ * - Enables unit testing with mock ZoomController
+ * 
+ * @param zoomController - Injected ZoomController instance
+ * @returns Command object with captured dependency
+ * @see docs/adr/001-dependency-injection.md
  */
-export const FitToViewCommand: Command = {
-  id: 'view.fitToView',
-  label: 'Fit to View',
-  category: 'view',
-  icon: '⬜',
-  description: 'Fit the entire timeline in view',
-  canExecute: () => true, // Always available
-  execute: (): CommandResult => {
-    const controller = ZoomController.getInstance();
-    controller.fitToView();
-    return { success: true };
-  },
-};
+export function createFitToViewCommand(zoomController: ZoomController): Command {
+  return {
+    id: 'view.fitToView',
+    label: 'Fit to View',
+    category: 'view',
+    icon: '⬜',
+    description: 'Fit the entire timeline in view',
+    canExecute: () => true, // Always available
+    execute: (): CommandResult => {
+      zoomController.fitToView();
+      return { success: true };
+    },
+  };
+}
+
+/**
+ * @deprecated Use createFitToViewCommand(zoomController) factory instead.
+ * Kept for backward compatibility during migration.
+ * @see docs/adr/001-dependency-injection.md
+ */
+export const FitToViewCommand: Command = createFitToViewCommand(ZoomController.getInstance());

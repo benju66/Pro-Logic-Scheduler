@@ -4,11 +4,23 @@
  * 
  * Central export for the Command Registry system.
  * 
- * Usage:
+ * Usage (Pure DI - recommended):
+ * ```typescript
+ * import { CommandService, registerAllCommands } from './commands';
+ * import { ZoomController } from '../services/ZoomController';
+ * 
+ * // During app init (with explicit dependencies):
+ * const commandService = new CommandService();
+ * const zoomController = new ZoomController();
+ * commandService.setContext({ ... });
+ * registerAllCommands({ commandService, zoomController });
+ * ```
+ * 
+ * Usage (Legacy - backward compatible):
  * ```typescript
  * import { CommandService, registerAllCommands } from './commands';
  * 
- * // During app init:
+ * // During app init (uses singletons):
  * const service = CommandService.getInstance();
  * service.setContext({ ... });
  * registerAllCommands();
@@ -17,6 +29,8 @@
  * await service.execute('task.delete');
  * await service.executeShortcut('Ctrl+Z');
  * ```
+ * 
+ * @see docs/adr/001-dependency-injection.md
  */
 
 // Types
@@ -39,12 +53,26 @@ export { IndentCommand, OutdentCommand, MoveUpCommand, MoveDownCommand } from '.
 export { UndoCommand, RedoCommand } from './edit';
 export { CopyCommand, CutCommand, PasteCommand } from './clipboard';
 export { SelectAllCommand, EscapeCommand } from './selection';
-export { CollapseCommand, ExpandCommand, ToggleCollapseCommand, ZoomInCommand, ZoomOutCommand, FitToViewCommand, ResetZoomCommand } from './view';
+export { 
+    CollapseCommand, 
+    ExpandCommand, 
+    ToggleCollapseCommand, 
+    ZoomInCommand, 
+    ZoomOutCommand, 
+    FitToViewCommand, 
+    ResetZoomCommand,
+    // Factory functions for Pure DI
+    createZoomInCommand,
+    createZoomOutCommand,
+    createFitToViewCommand,
+    createResetZoomCommand
+} from './view';
 export { LinkSelectedCommand, UnlinkCommand } from './dependency';
 
 // Debug command for testing
 import type { Command } from './types';
 import { CommandService } from './CommandService';
+import { ZoomController } from '../services/ZoomController';
 
 // Import commands for registration
 import { DeleteSelectedCommand, InsertBelowCommand, InsertAboveCommand, AddChildCommand } from './task';
@@ -52,8 +80,26 @@ import { IndentCommand, OutdentCommand, MoveUpCommand, MoveDownCommand } from '.
 import { UndoCommand, RedoCommand } from './edit';
 import { CopyCommand, CutCommand, PasteCommand } from './clipboard';
 import { SelectAllCommand, EscapeCommand } from './selection';
-import { CollapseCommand, ExpandCommand, ToggleCollapseCommand, ZoomInCommand, ZoomOutCommand, FitToViewCommand, ResetZoomCommand } from './view';
+import { 
+    CollapseCommand, 
+    ExpandCommand, 
+    ToggleCollapseCommand,
+    createZoomInCommand,
+    createZoomOutCommand,
+    createFitToViewCommand,
+    createResetZoomCommand
+} from './view';
 import { LinkSelectedCommand, UnlinkCommand } from './dependency';
+
+/**
+ * Dependencies for command registration (optional for backward compatibility)
+ * 
+ * @see docs/adr/001-dependency-injection.md
+ */
+export interface RegisterCommandsDependencies {
+    commandService?: CommandService;
+    zoomController?: ZoomController;
+}
 
 /**
  * Debug command for verifying the command system works.
@@ -89,9 +135,18 @@ export const DebugHelloCommand: Command = {
 /**
  * Register all commands with the CommandService.
  * Call this once during app initialization after setting context.
+ * 
+ * MIGRATION NOTE (Pure DI):
+ * - Accepts optional dependencies for testing and explicit injection
+ * - Falls back to getInstance() for backward compatibility
+ * - Zoom commands use factory functions to capture ZoomController
+ * 
+ * @param deps - Optional dependencies (uses singletons if not provided)
+ * @see docs/adr/001-dependency-injection.md
  */
-export function registerAllCommands(): void {
-    const service = CommandService.getInstance();
+export function registerAllCommands(deps?: RegisterCommandsDependencies): void {
+    const service = deps?.commandService || CommandService.getInstance();
+    const zoomController = deps?.zoomController || ZoomController.getInstance();
 
     // Task commands
     service.register(DeleteSelectedCommand);
@@ -118,14 +173,16 @@ export function registerAllCommands(): void {
     service.register(SelectAllCommand);
     service.register(EscapeCommand);
 
-    // View commands
+    // View commands (non-zoom)
     service.register(CollapseCommand);
     service.register(ExpandCommand);
     service.register(ToggleCollapseCommand);
-    service.register(ZoomInCommand);
-    service.register(ZoomOutCommand);
-    service.register(FitToViewCommand);
-    service.register(ResetZoomCommand);
+    
+    // View commands (zoom) - use factory functions with injected ZoomController
+    service.register(createZoomInCommand(zoomController));
+    service.register(createZoomOutCommand(zoomController));
+    service.register(createFitToViewCommand(zoomController));
+    service.register(createResetZoomCommand(zoomController));
 
     // Dependency commands
     service.register(LinkSelectedCommand);

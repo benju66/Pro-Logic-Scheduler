@@ -56,7 +56,7 @@ export class KeyboardService {
   
   // Cached service references (DI or fallback to singletons)
   private editingStateManager: EditingStateManager;
-  private commandService: CommandService | null = null;
+  private commandService: CommandService;
 
   /**
    * @param options - Configuration (includes optional DI dependencies)
@@ -69,7 +69,7 @@ export class KeyboardService {
     
     // Use injected dependencies or fallback to singletons
     this.editingStateManager = options.editingStateManager || getEditingStateManager();
-    this.commandService = options.commandService || null; // Lazy-init in _tryCommandService if needed
+    this.commandService = options.commandService || CommandService.getInstance();
     
     this._attach();
     
@@ -315,10 +315,17 @@ export class KeyboardService {
   /**
    * Try to execute a shortcut via CommandService.
    * Returns true if command was found and executed.
+   * 
+   * MIGRATION NOTE (Pure DI):
+   * - Uses cached commandService from constructor injection
+   * - Falls back to getInstance() in constructor if not provided
+   * 
    * @private
+   * @see docs/adr/001-dependency-injection.md
    */
   private _tryCommandService(shortcut: string, e: KeyboardEvent): boolean {
-    const commandService = CommandService.getInstance();
+    // Use cached commandService (injected or fallback from constructor)
+    const commandService = this.commandService;
     
     // Check if this shortcut is registered
     if (!commandService.hasShortcut(shortcut)) {

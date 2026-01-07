@@ -24,6 +24,13 @@ import { getTaskFieldValue } from '../../../types';
  * - Service container access
  * - Default getValue implementation
  * - Common utility methods
+ * 
+ * MIGRATION NOTE (Pure DI):
+ * - Constructor accepts optional ServiceContainer for testing
+ * - Falls back to getInstance() for backward compatibility
+ * - Subclasses don't need to change (they call super() with no args)
+ * 
+ * @see docs/adr/001-dependency-injection.md
  */
 export abstract class BaseRenderer implements IColumnRenderer {
     /** The column type this renderer handles */
@@ -32,8 +39,8 @@ export abstract class BaseRenderer implements IColumnRenderer {
     /** Service container for dependency injection */
     protected services: ServiceContainer;
     
-    constructor() {
-        this.services = ServiceContainer.getInstance();
+    constructor(services?: ServiceContainer) {
+        this.services = services || ServiceContainer.getInstance();
     }
     
     /**

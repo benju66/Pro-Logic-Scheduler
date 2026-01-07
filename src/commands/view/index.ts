@@ -1,7 +1,9 @@
 export { CollapseCommand } from './CollapseCommand';
 export { ExpandCommand } from './ExpandCommand';
 export { ToggleCollapseCommand } from './ToggleCollapseCommand';
-export { ZoomInCommand } from './ZoomInCommand';
-export { ZoomOutCommand } from './ZoomOutCommand';
-export { FitToViewCommand } from './FitToViewCommand';
-export { ResetZoomCommand } from './ResetZoomCommand';
+
+// Zoom commands - export both factory functions and legacy constants
+export { ZoomInCommand, createZoomInCommand } from './ZoomInCommand';
+export { ZoomOutCommand, createZoomOutCommand } from './ZoomOutCommand';
+export { FitToViewCommand, createFitToViewCommand } from './FitToViewCommand';
+export { ResetZoomCommand, createResetZoomCommand } from './ResetZoomCommand';

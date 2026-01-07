@@ -29,6 +29,7 @@ import { getTradePartnerStore } from '../data/TradePartnerStore';
 import { HistoryManager } from '../data/HistoryManager';
 import { Subscription, skip, debounceTime } from 'rxjs';
 import { CommandService, registerAllCommands, CommandUIBinding } from '../commands';
+import { ZoomController } from './ZoomController';
 import type { CommandContext } from '../commands';
 import { getClipboardManager } from './ClipboardManager';
 
@@ -735,7 +736,11 @@ export class AppInitializer {
     };
     
     service.setContext(context);
-    registerAllCommands();
+    
+    // Pure DI: Pass ZoomController to registerAllCommands
+    // ZoomController is already wired in main.ts Composition Root
+    const zoomController = ZoomController.getInstance();
+    registerAllCommands({ commandService: service, zoomController });
     
     // PHASE 2.3: Wire state changes to notify CommandService
     // Selection changes trigger command state updates

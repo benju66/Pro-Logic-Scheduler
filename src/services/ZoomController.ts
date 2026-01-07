@@ -68,6 +68,13 @@ export interface IZoomableGantt {
 /**
  * ZoomController - Manages Gantt chart zoom operations
  * 
+ * MIGRATION NOTE (Pure DI):
+ * - Constructor is public for DI compatibility
+ * - getInstance() retained for backward compatibility
+ * - Use setInstance() in Composition Root or inject directly
+ * 
+ * @see docs/adr/001-dependency-injection.md
+ * 
  * Usage:
  * ```typescript
  * const controller = new ZoomController();
@@ -115,6 +122,15 @@ export class ZoomController {
             ZoomController._instance = new ZoomController();
         }
         return ZoomController._instance;
+    }
+    
+    /**
+     * @deprecated Use constructor injection with mocks instead.
+     * @see docs/adr/001-dependency-injection.md
+     * @internal
+     */
+    static setInstance(instance: ZoomController): void {
+        ZoomController._instance = instance;
     }
     
     /**

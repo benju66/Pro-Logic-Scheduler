@@ -2,20 +2,35 @@ import type { Command, CommandResult } from '../types';
 import { ZoomController } from '../../services/ZoomController';
 
 /**
- * Reset Zoom Command
- * Resets zoom to 100% (default for current view mode)
+ * Create Reset Zoom Command with injected ZoomController
+ * 
+ * MIGRATION NOTE (Pure DI):
+ * - Factory function captures ZoomController dependency
+ * - Enables unit testing with mock ZoomController
+ * 
+ * @param zoomController - Injected ZoomController instance
+ * @returns Command object with captured dependency
+ * @see docs/adr/001-dependency-injection.md
  */
-export const ResetZoomCommand: Command = {
-  id: 'view.resetZoom',
-  label: 'Reset Zoom (100%)',
-  category: 'view',
-  shortcut: 'Ctrl+0',
-  icon: '↺',
-  description: 'Reset zoom to 100%',
-  canExecute: () => true, // Always available
-  execute: (): CommandResult => {
-    const controller = ZoomController.getInstance();
-    controller.resetZoom();
-    return { success: true };
-  },
-};
+export function createResetZoomCommand(zoomController: ZoomController): Command {
+  return {
+    id: 'view.resetZoom',
+    label: 'Reset Zoom (100%)',
+    category: 'view',
+    shortcut: 'Ctrl+0',
+    icon: '↺',
+    description: 'Reset zoom to 100%',
+    canExecute: () => true, // Always available
+    execute: (): CommandResult => {
+      zoomController.resetZoom();
+      return { success: true };
+    },
+  };
+}
+
+/**
+ * @deprecated Use createResetZoomCommand(zoomController) factory instead.
+ * Kept for backward compatibility during migration.
+ * @see docs/adr/001-dependency-injection.md
+ */
+export const ResetZoomCommand: Command = createResetZoomCommand(ZoomController.getInstance());

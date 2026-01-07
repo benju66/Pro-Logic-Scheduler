@@ -19,6 +19,9 @@ import { CommandService } from './commands';
 import { ColumnRegistry } from './core/columns/ColumnRegistry';
 import { ServiceContainer } from './core/columns/ServiceContainer';
 import { FeatureFlags } from './core/FeatureFlags';
+import { ZoomController } from './services/ZoomController';
+import { SchedulingLogicService } from './services/migration/SchedulingLogicService';
+import { ViewCoordinator } from './services/migration/ViewCoordinator';
 import { createRendererFactory } from './ui/factories';
 import type { ToastType } from './types';
 
@@ -115,6 +118,21 @@ async function initApp(): Promise<void> {
         // Level 2: Command system
         const commandService = new CommandService();
         CommandService.setInstance(commandService);
+        
+        // Level 2: Zoom controller (stateless, no deps)
+        const zoomController = new ZoomController();
+        ZoomController.setInstance(zoomController);
+        
+        // Level 2: Scheduling logic (stateless, no deps)
+        const schedulingLogicService = new SchedulingLogicService();
+        SchedulingLogicService.setInstance(schedulingLogicService);
+        
+        // Level 2: View coordinator (depends on ProjectController, SelectionModel)
+        const viewCoordinator = new ViewCoordinator({
+            projectController,
+            selectionModel
+        });
+        ViewCoordinator.setInstance(viewCoordinator);
         
         // =====================================================================
         // Level 3: Renderer Factory (captures deps in closure)

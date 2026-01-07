@@ -102,14 +102,26 @@ export class SchedulerViewport {
 
     /**
      * Constructor (NO SINGLETON)
+     * 
+     * MIGRATION NOTE (Pure DI):
+     * - Accepts optional service dependencies for testing
+     * - Falls back to getInstance() for backward compatibility
+     * 
+     * @see docs/adr/001-dependency-injection.md
      */
-    constructor(container: HTMLElement, options: SchedulerViewportOptions = {}) {
+    constructor(
+        container: HTMLElement, 
+        options: SchedulerViewportOptions & {
+            projectController?: ProjectController;
+            selectionModel?: SelectionModel;
+        } = {}
+    ) {
         this.container = container;
         this.options = options;
 
-        // Initialize services (singletons ensure shared state across app)
-        this.controller = ProjectController.getInstance();
-        this.selectionModel = SelectionModel.getInstance();
+        // Initialize services (use injected deps or fallback to singletons)
+        this.controller = options.projectController || ProjectController.getInstance();
+        this.selectionModel = options.selectionModel || SelectionModel.getInstance();
 
         this.rowHeight = options.rowHeight ?? ROW_HEIGHT;
         this.headerHeight = options.headerHeight ?? HEADER_HEIGHT;
