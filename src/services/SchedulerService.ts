@@ -20,7 +20,6 @@
  */
 
 import { DateUtils } from '../core/DateUtils';
-import { LINK_TYPES, CONSTRAINT_TYPES } from '../core/Constants';
 import { OperationQueue } from '../core/OperationQueue';
 import { ColumnRegistry } from '../core/columns';
 import { calculateVariance as calculateVarianceFn } from '../core/calculations';
@@ -92,22 +91,6 @@ export class SchedulerService {
      * Storage key for localStorage persistence
      */
     static readonly STORAGE_KEY = 'pro_scheduler_v10';
-
-    /**
-     * Link types supported
-     * @deprecated Use LINK_TYPES from core/Constants instead
-     */
-    static get LINK_TYPES(): readonly string[] {
-        return LINK_TYPES;
-    }
-
-    /**
-     * Constraint types supported
-     * @deprecated Use CONSTRAINT_TYPES from core/Constants instead
-     */
-    static get CONSTRAINT_TYPES(): readonly string[] {
-        return CONSTRAINT_TYPES;
-    }
 
     // =========================================================================
     // INSTANCE PROPERTIES
