@@ -171,7 +171,9 @@ async function initApp(): Promise<void> {
             persistenceService,
             snapshotService,
             dataLoader,
-            historyManager
+            historyManager,
+            // Phase 5 Pure DI: Inject scheduling logic service
+            schedulingLogicService
         });
         
         // Expose AppInitializer for E2E testing

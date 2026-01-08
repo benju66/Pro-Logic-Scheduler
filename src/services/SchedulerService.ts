@@ -39,6 +39,7 @@ import { SelectionModel } from './SelectionModel';
 import { AppInitializer } from './AppInitializer';
 import { getEditingStateManager, type EditingStateChangeEvent } from './EditingStateManager';
 import { ZoomController, type IZoomableGantt, ZOOM_CONFIG } from './ZoomController';
+import { SchedulingLogicService } from './migration/SchedulingLogicService';
 import { CommandService } from '../commands';
 import { getTaskFieldValue } from '../types';
 import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport';
@@ -133,6 +134,9 @@ export class SchedulerService {
     /** RendererFactory - creates GridRenderer/GanttRenderer with captured deps */
     private rendererFactory: RendererFactory | null = null;
     
+    /** SchedulingLogicService - scheduling business logic */
+    private schedulingLogicService: SchedulingLogicService;
+    
     /** ColumnRegistry - column definitions and renderer types */
     private columnRegistry: ColumnRegistry;
 
@@ -182,115 +186,6 @@ export class SchedulerService {
     private _dataChangeCallbacks: Array<() => void> = [];
 
     // =========================================================================
-    // SELECTION HELPERS (Delegating to SelectionModel)
-    // =========================================================================
-
-    /**
-     * Clear all selection
-     */
-    private _sel_clear(): void {
-        this.selectionModel.clear();
-    }
-
-    /**
-     * Add task to selection
-     */
-    private _sel_add(id: string): void {
-        this.selectionModel.addToSelection([id]);
-    }
-
-    /**
-     * Remove task from selection
-     */
-    private _sel_delete(id: string): void {
-        this.selectionModel.removeFromSelection([id]);
-    }
-
-    /**
-     * Replace entire selection
-     */
-    private _sel_set(ids: string[], focusId?: string | null): void {
-        const focus = focusId ?? (ids.length > 0 ? ids[ids.length - 1] : null);
-        this.selectionModel.setSelection(new Set(ids), focus, ids);
-    }
-
-    /**
-     * Set focused task
-     */
-    private _sel_setFocused(id: string | null, field?: string): void {
-        this.selectionModel.setFocus(id, field ?? undefined);
-    }
-
-    /**
-     * Set anchor for range selection
-     * Note: SelectionModel manages anchor internally via select() calls
-     */
-    private _sel_setAnchor(_id: string | null): void {
-        // SelectionModel handles anchor internally via select() calls
-        // This is a no-op for now but kept for API compatibility
-    }
-
-    /**
-     * Get selection count
-     */
-    private _sel_count(): number {
-        return this.selectionModel.getSelectionCount();
-    }
-
-    /**
-     * Check if task is selected
-     */
-    private _sel_has(id: string): boolean {
-        return this.selectionModel.isSelected(id);
-    }
-
-    /**
-     * Get selected IDs as array
-     */
-    private _sel_toArray(): string[] {
-        return this.selectionModel.getSelectedIds();
-    }
-
-    /**
-     * Select a single task (convenience method - clear, add, focus, anchor)
-     * This is the most common selection pattern in the codebase.
-     */
-    private _sel_selectSingle(id: string): void {
-        this.selectionModel.setSelection(new Set([id]), id, [id]);
-    }
-
-    /**
-     * Get focused task ID
-     */
-    private _sel_getFocused(): string | null {
-        return this.selectionModel.getFocusedId();
-    }
-
-    /**
-     * Get anchor ID
-     */
-    private _sel_getAnchor(): string | null {
-        return this.selectionModel.getAnchorId();
-    }
-
-    /**
-     * Get focused column
-     */
-    private _sel_getFocusedColumn(): string | null {
-        return this.selectionModel.getFocusedField();
-    }
-
-    /**
-     * Set focused column
-     */
-    private _sel_setFocusedColumn(field: string | null): void {
-        this.selectionModel.setFocusedField(field);
-    }
-
-    // =========================================================================
-    // END SELECTION HELPERS
-    // =========================================================================
-
     // View state
     public viewMode: ViewMode = 'Week';  // Public for access from StatsService
     
@@ -328,6 +223,7 @@ export class SchedulerService {
         commandService?: CommandService;
         rendererFactory?: RendererFactory;
         keyboardService?: KeyboardService;
+        schedulingLogicService?: SchedulingLogicService;
     } = {} as SchedulerServiceOptions) {
         this.options = options;
         // Use isTauri from options (provided by AppInitializer)
@@ -343,6 +239,7 @@ export class SchedulerService {
         this.selectionModel = options.selectionModel || SelectionModel.getInstance();
         this.commandService = options.commandService || CommandService.getInstance();
         this.rendererFactory = options.rendererFactory || null;
+        this.schedulingLogicService = options.schedulingLogicService || SchedulingLogicService.getInstance();
         this.columnRegistry = ColumnRegistry.getInstance(); // Cache for internal use
         
         // KeyboardService is injected or created in initKeyboard()
@@ -1433,37 +1330,37 @@ export class SchedulerService {
         }
         
         // Selection logic here
-        if (e.shiftKey && this._sel_getAnchor()) {
+        if (e.shiftKey && this.selectionModel.getAnchorId()) {
             // Range selection
             const visibleTasks = this.projectController.getVisibleTasks((id) => {
                 const task = this.projectController.getTaskById(id);
                 return task?._collapsed || false;
             });
-            const anchorIndex = visibleTasks.findIndex(t => t.id === this._sel_getAnchor());
+            const anchorIndex = visibleTasks.findIndex(t => t.id === this.selectionModel.getAnchorId());
             const targetIndex = visibleTasks.findIndex(t => t.id === taskId);
             
             if (anchorIndex !== -1 && targetIndex !== -1) {
                 const start = Math.min(anchorIndex, targetIndex);
                 const end = Math.max(anchorIndex, targetIndex);
                 const rangeIds = visibleTasks.slice(start, end + 1).map(t => t.id);
-                this._sel_set(rangeIds, taskId);
+                this.selectionModel.setSelection(new Set(rangeIds), taskId, rangeIds);
             }
         } else if (e.ctrlKey || e.metaKey) {
             // Toggle selection
-            if (this._sel_has(taskId)) {
+            if (this.selectionModel.isSelected(taskId)) {
                 // Removing
-                this._sel_delete(taskId);
+                this.selectionModel.removeFromSelection([taskId]);
             } else {
                 // Adding
-                this._sel_add(taskId);
+                this.selectionModel.addToSelection([taskId]);
             }
-            this._sel_setAnchor(taskId);
+            // Note: _sel_setAnchor was a no-op, removed
         } else {
             // Single selection
-            this._sel_selectSingle(taskId);
+            this.selectionModel.setSelection(new Set([taskId]), taskId, [taskId]);
         }
 
-        this._sel_setFocused(taskId, this._lastClickedField);
+        this.selectionModel.setFocus(taskId, this._lastClickedField);
         this._updateSelection();
         this._updateHeaderCheckboxState();
     }
@@ -1478,557 +1375,9 @@ export class SchedulerService {
         this.openDrawer(taskId);
     }
 
-    /**
-     * Apply task edit with scheduling triangle logic
-     * 
-     * Centralizes the CPM-aware edit logic used by both grid and drawer:
-     * - Duration edit → Update duration, CPM recalculates end
-     * - Start edit → Apply SNET constraint
-     * - End edit → Apply FNLT constraint
-     * - Actuals → Update without affecting CPM
-     * - Constraints → Update and trigger recalculation
-     * 
-     * @private
-     * @param taskId - Task ID
-     * @param field - Field name
-     * @param value - New value
-     * @returns Object indicating what follow-up actions are needed
-     */
-    /**
-     * Apply date change immediately (called from SideDrawer)
-     * 
-     * Behavior depends on scheduling mode:
-     * - AUTO: Apply constraints (SNET for start, FNLT for end)
-     * - MANUAL: Update dates directly without constraints
-     * 
-     * @private
-     * @param taskId - Task ID
-     * @param field - 'start', 'end', 'actualStart', or 'actualFinish'
-     * @param value - New date value (ISO format: YYYY-MM-DD)
-     */
-    private async _applyDateChangeImmediate(taskId: string, field: string, value: string): Promise<void> {
-        const task = this.projectController.getTaskById(taskId);
-        if (!task) return;
-        
-        const isParent = this.projectController.isParent(taskId);
-        if (isParent) return; // Parents don't have direct date edits
-        
-        // Validate date format
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-            console.warn('[SchedulerService] Invalid date format:', value);
-            return;
-        }
-        
-        const isManual = task.schedulingMode === 'Manual';
-        const calendar = this.projectController.getCalendar();
-        
-        // ═══════════════════════════════════════════════════════════════════════
-        // SCHEDULED DATE EDITS (start, end)
-        // ═══════════════════════════════════════════════════════════════════════
-        
-        if (field === 'start') {
-            if (isManual) {
-                // MANUAL MODE: Update start directly, recalculate end from duration
-                // Validation: End must always be >= Start (push End forward)
-                const newEnd = DateUtils.addWorkDays(value, task.duration - 1, calendar);
-                
-                const updates: Partial<Task> = { 
-                    start: value,
-                    end: newEnd  // Always recalculate to ensure End >= Start
-                };
-                this.projectController.updateTask(taskId, updates);
-                
-                // NOTE: Removed engine sync - ProjectController handles via Worker
-                
-                this.toastService.info('Manual task dates updated');
-            } else {
-                // AUTO MODE: Apply SNET constraint
-                const updates: Partial<Task> = { 
-                    start: value,
-                    constraintType: 'snet' as ConstraintType,
-                    constraintDate: value 
-                };
-                this.projectController.updateTask(taskId, updates);
-                
-                // NOTE: Removed engine sync - ProjectController handles via Worker
-                
-                this.toastService.info('Start constraint (SNET) applied');
-            }
-            
-            // Update GridRenderer.data synchronously so _bindCell() has fresh data
-            this._updateGridDataSync();
-            // NOTE: Do NOT call recalculateAll() or render() here - let _handleCellChange handle it
-            // This prevents double recalculation which causes race conditions
-            return;
-        }
-        
-        if (field === 'end') {
-            if (isManual) {
-                // MANUAL MODE: Update end directly, recalculate duration
-                const effectiveStart = task.actualStart || task.start;
-                if (!effectiveStart) {
-                    this.toastService.warning('Cannot set end date: Task has no start date');
-                    return;
-                }
-                
-                // ═══════════════════════════════════════════════════════════
-                // VALIDATION: End must be >= Start (even in Manual mode)
-                // If user tries to set End before Start, reject with warning
-                // ═══════════════════════════════════════════════════════════
-                if (value < effectiveStart) {
-                    this.toastService.warning('End date cannot be before start date');
-                    return;
-                }
-                
-                const newDuration = DateUtils.calcWorkDays(effectiveStart, value, calendar);
-                
-                const updates: Partial<Task> = { 
-                    end: value,
-                    duration: Math.max(1, newDuration)
-                };
-                this.projectController.updateTask(taskId, updates);
-                
-                // NOTE: Removed engine sync - ProjectController handles via Worker
-                
-                this.toastService.info('Manual task dates updated');
-            } else {
-                // AUTO MODE: Apply FNLT constraint (deadline)
-                // FIX: Recalculate duration based on start and new end date
-                const effectiveStart = task.actualStart || task.start;
-                let newDuration = task.duration; // Default to current duration
-                
-                if (effectiveStart) {
-                    newDuration = DateUtils.calcWorkDays(effectiveStart, value, calendar);
-                }
-                
-                const updates: Partial<Task> = { 
-                    end: value,
-                    duration: Math.max(1, newDuration), // Ensure duration is calculated and set
-                    constraintType: 'fnlt' as ConstraintType,
-                    constraintDate: value 
-                };
-                this.projectController.updateTask(taskId, updates);
-                
-                // NOTE: Removed engine sync - ProjectController handles via Worker
-                
-                // Warn if deadline is before current start
-                if (task.start && value < task.start) {
-                    this.toastService.warning('Deadline is earlier than start date - schedule may be impossible');
-                } else {
-                    this.toastService.info('Finish deadline (FNLT) applied');
-                }
-            }
-            
-            // Update GridRenderer.data synchronously so _bindCell() has fresh data
-            this._updateGridDataSync();
-            // NOTE: Do NOT call recalculateAll() or render() here - let _handleCellChange handle it
-            // This prevents double recalculation which causes race conditions
-            return;
-        }
-        
-        // ═══════════════════════════════════════════════════════════════════════
-        // ACTUAL DATE EDITS (actualStart, actualFinish) - Same for both modes
-        // ═══════════════════════════════════════════════════════════════════════
-        
-        if (field === 'actualStart') {
-            // DRIVER MODE + ANCHOR: actualStart drives schedule and locks history
-            const calendar = this.projectController.getCalendar();
-            const updates: Partial<Task> = {
-                actualStart: value,
-                start: value,
-                constraintType: 'snet' as ConstraintType,
-                constraintDate: value,
-            };
-            
-            if (task.actualFinish) {
-                updates.duration = DateUtils.calcWorkDays(value, task.actualFinish, calendar);
-            }
-            
-            this.projectController.updateTask(taskId, updates);
-            // NOTE: Removed engine sync - ProjectController handles via Worker
-            
-            this.toastService.info('Task started - schedule locked with SNET constraint');
-            if (ENABLE_LEGACY_RECALC) {
-                this.recalculateAll();
-                this.render();
-            }
-            return;
-            
-        } else if (field === 'actualFinish') {
-            // DRIVER MODE + COMPLETION: actualFinish closes out the task
-            const effectiveStart = task.actualStart || task.start;
-            
-            if (effectiveStart && value < effectiveStart) {
-                this.toastService.warning('Actual finish cannot be before start date');
-                return;
-            }
-            
-            const calendar = this.projectController.getCalendar();
-            const actualDuration = effectiveStart
-                ? DateUtils.calcWorkDays(effectiveStart, value, calendar)
-                : task.duration;
-            
-            const updates: Partial<Task> = {
-                actualFinish: value,
-                end: value,
-                progress: 100,
-                remainingDuration: 0,
-                duration: actualDuration,
-            };
-            
-            // Auto-populate actualStart with full Anchor logic
-            if (!task.actualStart) {
-                if (task.start) {
-                    updates.actualStart = task.start;
-                    updates.start = task.start;
-                    updates.constraintType = 'snet' as ConstraintType;
-                    updates.constraintDate = task.start;
-                } else {
-                    // SAFETY NET: Cannot finish a task that has no start
-                    this.toastService.warning('Cannot mark finished: Task has no Start Date.');
-                    return;
-                }
-            }
-            
-            this.projectController.updateTask(taskId, updates);
-            // NOTE: Removed engine sync - ProjectController handles via Worker
-            
-            this.toastService.success('Task complete');
-            if (ENABLE_LEGACY_RECALC) {
-                this.recalculateAll();
-                this.render();
-            }
-            return;
-        }
-        
-        // Recalculate and render
-        if (ENABLE_LEGACY_RECALC) {
-            this.recalculateAll();
-            this.render();
-        }
-    }
-
-    /**
-     * Apply a task edit (called from grid cell change handler)
-     * @private
-     * @param taskId - Task ID
-     * @param field - Field name
-     * @param value - New value
-     * @returns Object indicating what follow-up actions are needed
-     */
-    private async _applyTaskEdit(taskId: string, field: string, value: unknown): Promise<{ 
-        needsRecalc: boolean; 
-        needsRender: boolean;
-        success: boolean;
-    }> {
-        const task = this.projectController.getTaskById(taskId);
-        if (!task) {
-            return { needsRecalc: false, needsRender: false, success: false };
-        }
-        
-        const isParent = this.projectController.isParent(taskId);
-        let needsRecalc = false;
-        let needsRender = false;
-
-        switch (field) {
-            case 'duration':
-                // ═══════════════════════════════════════════════════════════════
-                // CHANGE-TIME: Accept raw value, no validation
-                // Validation happens at commit-time (blur/Enter) in GridRenderer
-                // This prevents "fighting back" during typing
-                // ═══════════════════════════════════════════════════════════════
-                const rawValue = String(value).trim();
-                
-                // Parse without coercion - empty/invalid values are valid during editing
-                const parsedDuration = parseInt(rawValue);
-                
-                // Only update store if we have a valid positive number
-                // Invalid values (empty, NaN) are ignored - DOM keeps user's input
-                if (!isNaN(parsedDuration) && parsedDuration >= 1) {
-                    this.projectController.updateTask(taskId, { duration: parsedDuration });
-                    
-                    // CRITICAL: Await engine update to ensure it completes before recalculation
-                    // This prevents race condition where recalculateAll() runs before engine
-                    // has processed the duration update, causing the user's input to be overwritten
-                    // NOTE: Removed engine sync - ProjectController handles via Worker
-                    
-                    needsRecalc = true;
-                }
-                // If invalid, no store update - editing guard preserves DOM value
-                break;
-                
-            case 'start':
-                // Start edit: User is setting a start constraint
-                if (value && !isParent) {
-                    const startValue = String(value);
-                    
-                    // Validate date format
-                    if (!/^\d{4}-\d{2}-\d{2}$/.test(startValue)) {
-                        console.warn('[SchedulerService] Invalid date format:', startValue);
-                        return { needsRecalc: false, needsRender: false, success: false };
-                    }
-                    
-                    // ═══════════════════════════════════════════════════════════════
-                    // FIX: Apply date change IMMEDIATELY
-                    // Calendar selection is a discrete action - no debounce needed
-                    // The editing guard in BindingSystem protects typed input
-                    // ═══════════════════════════════════════════════════════════════
-                    await this._applyDateChangeImmediate(taskId, 'start', startValue);
-                    needsRecalc = true;
-                }
-                break;
-                
-            case 'end':
-                // End edit: User is setting a finish constraint
-                if (value && !isParent) {
-                    const endValue = String(value);
-                    
-                    if (!/^\d{4}-\d{2}-\d{2}$/.test(endValue)) {
-                        console.warn('[SchedulerService] Invalid date format:', endValue);
-                        return { needsRecalc: false, needsRender: false, success: false };
-                    }
-                    
-                    // FIX: Apply immediately (same as start)
-                    await this._applyDateChangeImmediate(taskId, 'end', endValue);
-                    needsRecalc = true;
-                }
-                break;
-                
-            case 'actualStart':
-                // ═══════════════════════════════════════════════════════════════════
-                // DRIVER MODE + ANCHOR: actualStart drives schedule and locks history
-                // ═══════════════════════════════════════════════════════════════════
-                if (value && !isParent) {
-                    const actualStartValue = String(value);
-                    
-                    // Validate date format
-                    if (!/^\d{4}-\d{2}-\d{2}$/.test(actualStartValue)) {
-                        console.warn('[SchedulerService] Invalid date format for actualStart:', actualStartValue);
-                        return { needsRecalc: false, needsRender: false, success: false };
-                    }
-
-                    // Build atomic update
-                    // CRITICAL: Lock with SNET so CPM respects historical fact
-                    const updates: Partial<Task> = {
-                        actualStart: actualStartValue,
-                        start: actualStartValue,
-                        constraintType: 'snet' as ConstraintType,
-                        constraintDate: actualStartValue,
-                    };
-
-                    // If task was already finished, recalculate duration for consistency
-                    if (task.actualFinish) {
-                        updates.duration = DateUtils.calcWorkDays(
-                            actualStartValue,
-                            task.actualFinish,
-                            this.projectController.getCalendar()
-                        );
-                    }
-
-                    // Atomic update
-                    this.projectController.updateTask(taskId, updates);
-
-                    // NOTE: Removed engine sync - ProjectController handles via Worker
-
-                    this.toastService.info('Task started - schedule locked with SNET constraint');
-                    needsRecalc = true;
-                    
-                } else if (!value && !isParent) {
-                    // Clearing actualStart
-                    // NOTE: We preserve the constraint - user may have wanted SNET anyway
-                    // They can manually remove it if needed
-                    this.projectController.updateTask(taskId, { actualStart: null });
-                    // NOTE: Removed engine sync - ProjectController handles via Worker
-                    
-                    this.toastService.info('Actual start cleared. Start constraint preserved.');
-                    needsRecalc = true;
-                }
-                break;
-                
-            case 'actualFinish':
-                // ═══════════════════════════════════════════════════════════════════
-                // DRIVER MODE + COMPLETION: actualFinish closes out the task
-                // ═══════════════════════════════════════════════════════════════════
-                if (value && !isParent) {
-                    const actualFinishValue = String(value);
-                    
-                    // Validate date format
-                    if (!/^\d{4}-\d{2}-\d{2}$/.test(actualFinishValue)) {
-                        console.warn('[SchedulerService] Invalid date format for actualFinish:', actualFinishValue);
-                        return { needsRecalc: false, needsRender: false, success: false };
-                    }
-
-                    // Determine effective start for validation and duration calc
-                    const effectiveStart = task.actualStart || task.start;
-
-                    // Validation: finish cannot be before start
-                    if (effectiveStart && actualFinishValue < effectiveStart) {
-                        this.toastService.warning('Actual finish cannot be before start date');
-                        return { needsRecalc: false, needsRender: false, success: false };
-                    }
-
-                    // Calculate actual duration
-                    const calendar = this.projectController.getCalendar();
-                    const actualDuration = effectiveStart
-                        ? DateUtils.calcWorkDays(effectiveStart, actualFinishValue, calendar)
-                        : task.duration;
-
-                    // Build atomic update
-                    const updates: Partial<Task> = {
-                        actualFinish: actualFinishValue,
-                        end: actualFinishValue,
-                        progress: 100,
-                        remainingDuration: 0,  // CRITICAL: Zero out for Earned Value calculations
-                        duration: actualDuration,
-                    };
-
-                    // 1. Auto-populate actualStart if not set
-                    if (!task.actualStart) {
-                        if (task.start) {
-                            // Apply "Anchor Logic" to the implied start
-                            updates.actualStart = task.start;
-                            updates.start = task.start;
-                            updates.constraintType = 'snet' as ConstraintType;
-                            updates.constraintDate = task.start;
-                        } else {
-                            // SAFETY NET: Cannot finish a task that has no start
-                            this.toastService.warning('Cannot mark finished: Task has no Start Date.');
-                            return { needsRecalc: false, needsRender: false, success: false };
-                        }
-                    }
-
-                    // Atomic update
-                    this.projectController.updateTask(taskId, updates);
-
-                    // NOTE: Removed engine sync - ProjectController handles via Worker
-
-                    // User feedback with duration variance
-                    const plannedDuration = task.duration || 0;
-                    const variance = actualDuration - plannedDuration;
-                    
-                    if (variance > 0) {
-                        this.toastService.info(
-                            `Task complete - took ${variance} day${variance !== 1 ? 's' : ''} longer than planned`
-                        );
-                    } else if (variance < 0) {
-                        this.toastService.success(
-                            `Task complete - finished ${Math.abs(variance)} day${Math.abs(variance) !== 1 ? 's' : ''} early!`
-                        );
-                    } else {
-                        this.toastService.success('Task complete - on schedule');
-                    }
-
-                    needsRecalc = true;
-                    
-                } else if (!value && !isParent) {
-                    // Clearing actualFinish - task is no longer complete
-                    this.projectController.updateTask(taskId, { 
-                        actualFinish: null,
-                        progress: 0,
-                        remainingDuration: task.duration // Reset remaining work
-                    });
-                    
-                    // NOTE: Removed engine sync - ProjectController handles via Worker
-                    
-                    this.toastService.info('Task reopened');
-                    needsRecalc = true;
-                }
-                break;
-                
-            case 'constraintType':
-                // Constraint type change: if set to ASAP, clear constraint date
-                const constraintValue = String(value);
-                if (constraintValue === 'asap') {
-                    this.projectController.updateTask(taskId, { 
-                        constraintType: 'asap',
-                        constraintDate: null 
-                    });
-                    this.toastService.info('Constraint removed - task will schedule based on dependencies');
-                } else {
-                    // For other constraint types, just update
-                    this.projectController.updateTask(taskId, { constraintType: constraintValue as ConstraintType });
-                }
-                needsRecalc = true;
-                break;
-                
-            case 'constraintDate':
-                // Constraint date change
-                this.projectController.updateTask(taskId, { constraintDate: String(value) || null });
-                needsRecalc = true;
-                break;
-                
-            case 'tradePartnerIds':
-                // Trade partner assignments - display only, doesn't affect CPM
-                this.projectController.updateTask(taskId, { tradePartnerIds: Array.isArray(value) ? value as string[] : [] });
-                
-                // NOTE: Removed engine sync - ProjectController handles via Worker
-                
-                needsRender = true;
-                break;
-                
-            case 'schedulingMode':
-                // ═══════════════════════════════════════════════════════════
-                // SCHEDULING MODE CHANGE
-                // Auto → Manual: Preserve current dates, task becomes "pinned"
-                // Manual → Auto: Convert current Start to SNET constraint
-                //                (preserves user intent, prevents jarring date jumps)
-                // ═══════════════════════════════════════════════════════════
-                const newMode = String(value) as 'Auto' | 'Manual';
-                
-                // Validate mode value
-                if (newMode !== 'Auto' && newMode !== 'Manual') {
-                    console.warn('[SchedulerService] Invalid scheduling mode:', value);
-                    return { needsRecalc: false, needsRender: false, success: false };
-                }
-                
-                // Parent tasks cannot be Manual
-                if (isParent && newMode === 'Manual') {
-                    this.toastService.warning('Parent tasks cannot be manually scheduled');
-                    return { needsRecalc: false, needsRender: false, success: false };
-                }
-                
-                // Skip if no change
-                if (task.schedulingMode === newMode) {
-                    return { needsRecalc: false, needsRender: false, success: true };
-                }
-                
-                if (newMode === 'Auto' && task.schedulingMode === 'Manual') {
-                    // ═══════════════════════════════════════════════════════
-                    // MANUAL → AUTO TRANSITION
-                    // Convert current Start to SNET constraint to preserve user intent
-                    // This prevents the task from "snapping back" unexpectedly
-                    // User can remove the constraint later if they want ASAP behavior
-                    // ═══════════════════════════════════════════════════════
-                    const updates: Partial<Task> = {
-                        schedulingMode: 'Auto',
-                        constraintType: 'snet' as ConstraintType,
-                        constraintDate: task.start || null
-                    };
-                    
-                    this.projectController.updateTask(taskId, updates);
-                    // NOTE: Removed engine sync - ProjectController handles via Worker
-                    
-                    this.toastService.info('Task is now auto-scheduled with SNET constraint (remove constraint for ASAP)');
-                } else {
-                    // AUTO → MANUAL: Simple mode change, dates preserved
-                    this.projectController.updateTask(taskId, { schedulingMode: newMode });
-                    // NOTE: Removed engine sync - ProjectController handles via Worker
-                    
-                    this.toastService.info('Task is now manually scheduled - dates are fixed');
-                }
-                
-                // Recalculate to apply new mode behavior
-                needsRecalc = true;
-                break;
-                
-            default:
-                // All other fields - simple update (name, notes, progress, etc.)
-                this.projectController.updateTask(taskId, { [field]: value } as Partial<Task>);
-                needsRender = true;
-        }
-        
-        return { needsRecalc, needsRender, success: true };
-    }
+    // NOTE: _applyDateChangeImmediate and _applyTaskEdit have been removed.
+    // All scheduling logic is now handled by SchedulingLogicService.applyEdit()
+    // @see src/services/migration/SchedulingLogicService.ts
 
     /**
      * Handle cell change with proper scheduling triangle logic
@@ -2053,52 +1402,28 @@ export class SchedulerService {
         
         this.saveCheckpoint();
         
-        // CRITICAL: Await task edit to ensure engine updates complete before recalculation
-        const result = await this._applyTaskEdit(taskId, field, value);
+        // Use SchedulingLogicService for all task edit business logic
+        const result = this.schedulingLogicService.applyEdit(taskId, field, value, {
+            controller: this.projectController,
+            calendar: this.projectController.getCalendar(),
+        });
+        
+        // Show toast message if provided
+        if (result.message) {
+            switch (result.messageType) {
+                case 'success': this.toastService?.success(result.message); break;
+                case 'warning': this.toastService?.warning(result.message); break;
+                case 'error': this.toastService?.error(result.message); break;
+                default: this.toastService?.info(result.message);
+            }
+        }
         
         if (!result.success) {
             return;
         }
         
-        // Handle follow-up actions
-        if (result.needsRecalc) {
-            if (ENABLE_LEGACY_RECALC) {
-                // LEGACY: Await recalculation to prevent transaction conflicts and visual flash
-                // This ensures:
-                // 1. Recalculation completes before saveData() (prevents transaction errors)
-                // 2. _applyCalculationResult() updates data synchronously before render() (prevents flash)
-                await this.recalculateAll();
-                // Note: render() is already called by _applyCalculationResult(), so we don't need to call it again
-                // Save data after recalculation completes to avoid transaction conflicts
-                this.saveData();
-            }
-            // NEW: With ENABLE_LEGACY_RECALC=false, ProjectController.updateTask() triggers
-            // Worker calculation, and reactive saveData subscription handles persistence
-        } else if (result.needsRender) {
-            // Update GridRenderer.data synchronously BEFORE render() so that when _bindCell()
-            // is called during the render cycle, it has the correct task structure.
-            this._updateGridDataSync();
-            
-            // Update GanttRenderer.data synchronously BEFORE render() to eliminate flash
-            this._updateGanttDataSync();
-            
-            if (ENABLE_LEGACY_RECALC) {
-                this.render();
-                this.saveData();
-            }
-        } else {
-            // Update GridRenderer.data synchronously BEFORE render() so that when _bindCell()
-            // is called during the render cycle, it has the correct task structure.
-            this._updateGridDataSync();
-            
-            // Update GanttRenderer.data synchronously BEFORE render() to eliminate flash
-            this._updateGanttDataSync();
-            
-            if (ENABLE_LEGACY_RECALC) {
-                // Even if no recalc/render needed, save the data
-                this.saveData();
-            }
-        }
+        // NOTE: With ENABLE_LEGACY_RECALC=false, ProjectController.updateTask() triggers
+        // Worker calculation, and reactive saveData subscription handles persistence
     }
 
     /**
@@ -2121,7 +1446,7 @@ export class SchedulerService {
         // - Scrolling to it
         
         // We need to temporarily set focusedId so addTask creates sibling at correct level
-        this._sel_setFocused(lastTaskId);
+        this.selectionModel.setFocus(lastTaskId);
         
         // Add the task - this will create it as a sibling of lastTask
         this.addTask().then((newTask) => {
@@ -2210,28 +1535,24 @@ export class SchedulerService {
     private async _handleDrawerUpdate(taskId: string, field: string, value: unknown): Promise<void> {
         this.saveCheckpoint();
         
-        const result = await this._applyTaskEdit(taskId, field, value);
+        // Use SchedulingLogicService for all task edit business logic
+        const result = this.schedulingLogicService.applyEdit(taskId, field, value, {
+            controller: this.projectController,
+            calendar: this.projectController.getCalendar(),
+        });
+        
+        // Show toast message if provided
+        if (result.message) {
+            switch (result.messageType) {
+                case 'success': this.toastService?.success(result.message); break;
+                case 'warning': this.toastService?.warning(result.message); break;
+                case 'error': this.toastService?.error(result.message); break;
+                default: this.toastService?.info(result.message);
+            }
+        }
         
         if (!result.success) {
             return;
-        }
-        
-        // Handle follow-up actions
-        if (result.needsRecalc) {
-            if (ENABLE_LEGACY_RECALC) {
-                this.recalculateAll();
-                this.saveData();
-                this.render();
-            }
-        } else if (result.needsRender) {
-            if (ENABLE_LEGACY_RECALC) {
-                this.render();
-                this.saveData();
-            }
-        } else {
-            if (ENABLE_LEGACY_RECALC) {
-                this.saveData();
-            }
         }
         
         // Sync drawer with updated values (dates may have changed from CPM)
@@ -2260,13 +1581,7 @@ export class SchedulerService {
         this.saveCheckpoint();
         this.projectController.updateTask(taskId, { dependencies });
         
-        // NOTE: Removed engine sync - ProjectController handles via Worker
-        
-        if (ENABLE_LEGACY_RECALC) {
-            this.recalculateAll();
-            this.saveData();
-            this.render();
-        }
+        // NOTE: ProjectController handles recalc/save via Worker
     }
 
     /**
@@ -2278,13 +1593,7 @@ export class SchedulerService {
         this.saveCheckpoint();
         this.projectController.updateCalendar(calendar);
         
-        // NOTE: Removed engine sync - ProjectController handles via Worker
-        
-        if (ENABLE_LEGACY_RECALC) {
-            this.recalculateAll();
-            this.saveData();
-            this.render();
-        }
+        // NOTE: ProjectController handles recalc/save via Worker
         this.toastService.success('Calendar updated. Recalculating schedule...');
     }
 
@@ -2470,15 +1779,7 @@ export class SchedulerService {
         // NOTE: Descendants keep their parentId unchanged (they stay as children of their original parent)
         // They will automatically move with their parent because the hierarchy is preserved
         
-        // =========================================================================
-        // RECALCULATE, SAVE, AND RENDER
-        // =========================================================================
-        
-        if (ENABLE_LEGACY_RECALC) {
-            this.recalculateAll();
-            this.saveData();
-            this.render();
-        }
+        // NOTE: ProjectController handles recalc/save via Worker
         
         // =========================================================================
         // USER FEEDBACK
@@ -2509,11 +1810,7 @@ export class SchedulerService {
         const duration = DateUtils.calcWorkDays(start, end, calendar);
         
         this.projectController.updateTask(task.id, { start, end, duration });
-        if (ENABLE_LEGACY_RECALC) {
-            this.recalculateAll();
-            this.saveData();
-            this.render();
-        }
+        // NOTE: ProjectController handles recalc/save via Worker
     }
 
     // =========================================================================
@@ -2553,16 +1850,16 @@ export class SchedulerService {
         if (visibleTasks.length === 0) return;
         
         // Initialize focused column if not set
-        const currentFocusedColumn = this._sel_getFocusedColumn();
+        const currentFocusedColumn = this.selectionModel.getFocusedField();
         if (!currentFocusedColumn) {
-            this._sel_setFocusedColumn(editableColumns[0]); // Default to first editable column (name)
+            this.selectionModel.setFocusedField(editableColumns[0]); // Default to first editable column (name)
         }
         
-        const focused = this._sel_getFocused();
+        const focused = this.selectionModel.getFocusedId();
         let currentRowIndex = focused 
             ? visibleTasks.findIndex(t => t.id === focused)
             : 0;
-        const focusedCol = this._sel_getFocusedColumn();
+        const focusedCol = this.selectionModel.getFocusedField();
         let currentColIndex = focusedCol ? editableColumns.indexOf(focusedCol as typeof editableColumns[number]) : -1;
         if (currentColIndex === -1) currentColIndex = 0;
         
@@ -2594,21 +1891,21 @@ export class SchedulerService {
         
         // Update row selection (for up/down movement)
         if (direction === 'up' || direction === 'down') {
-            if (shiftKey && this._sel_getAnchor()) {
+            if (shiftKey && this.selectionModel.getAnchorId()) {
                 // Extend selection range
-                const anchorIndex = visibleTasks.findIndex(t => t.id === this._sel_getAnchor());
+                const anchorIndex = visibleTasks.findIndex(t => t.id === this.selectionModel.getAnchorId());
                 const start = Math.min(anchorIndex, newRowIndex);
                 const end = Math.max(anchorIndex, newRowIndex);
                 
                 const rangeIds = visibleTasks.slice(start, end + 1).map(t => t.id);
-                this._sel_set(rangeIds, newTaskId);
+                this.selectionModel.setSelection(new Set(rangeIds), newTaskId, rangeIds);
             } else if (!shiftKey) {
                 // Single selection
-                this._sel_selectSingle(newTaskId);
+                this.selectionModel.setSelection(new Set([newTaskId]), newTaskId, [newTaskId]);
             }
         }
         
-        this._sel_setFocused(newTaskId, newColumn);
+        this.selectionModel.setFocus(newTaskId, newColumn);
         this._updateSelection();
         
         // Update cell highlight (visual only, no input focus)
@@ -2624,7 +1921,7 @@ export class SchedulerService {
      * @param key - 'ArrowLeft' or 'ArrowRight'
      */
     private _handleArrowCollapse(key: 'ArrowLeft' | 'ArrowRight'): void {
-        const focusedId = this._sel_getFocused();
+        const focusedId = this.selectionModel.getFocusedId();
         if (!focusedId) return;
         
         const task = this.projectController.getTaskById(focusedId);
@@ -2718,7 +2015,7 @@ export class SchedulerService {
      * Returns the primary selection (last selected task)
      */
     public getSelectedTask(): Task | null {
-        const focusedId = this._sel_getFocused();
+        const focusedId = this.selectionModel.getFocusedId();
         if (!focusedId) return null;
         return this.projectController.getTaskById(focusedId) || null;
     }
@@ -2800,7 +2097,7 @@ export class SchedulerService {
             
             // Determine parent
             let parentId: string | null = taskData.parentId ?? null;
-            const currentFocusedId = this._sel_getFocused();
+            const currentFocusedId = this.selectionModel.getFocusedId();
             if (currentFocusedId && taskData.parentId === undefined) {
                 const focusedTask = controller.getTaskById(currentFocusedId);
                 if (focusedTask) {
@@ -2837,11 +2134,11 @@ export class SchedulerService {
             controller.addTask(task);
             
             // Update UI state
-            this._sel_selectSingle(task.id);
+            this.selectionModel.setSelection(new Set([task.id]), task.id, [task.id]);
             
             // Pass focusCell: true to focus the name input for immediate editing
             if (this.grid) {
-                this.grid.setSelection(this.selectedIds, this._sel_getFocused(), { focusCell: true, focusField: 'name' });
+                this.grid.setSelection(this.selectedIds, this.selectionModel.getFocusedId(), { focusCell: true, focusField: 'name' });
             }
             if (this.gantt) {
                 this.gantt.setSelection(this.selectedIds);
@@ -2873,9 +2170,9 @@ export class SchedulerService {
         controller.deleteTask(taskId);
         
         // Update UI state
-        this._sel_delete(taskId);
-        if (this._sel_getFocused() === taskId) {
-            this._sel_setFocused(null);
+        this.selectionModel.removeFromSelection([taskId]);
+        if (this.selectionModel.getFocusedId() === taskId) {
+            this.selectionModel.setFocus(null);
         }
 
         // NOTE: Removed recalculateAll(), engine sync, saveData(), render()
@@ -3110,7 +2407,7 @@ export class SchedulerService {
         const blankRow = controller.createBlankRow(newSortKey, task.parentId);
         
         // Select the new blank row
-        this._sel_selectSingle(blankRow.id);
+        this.selectionModel.setSelection(new Set([blankRow.id]), blankRow.id, [blankRow.id]);
         
         // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
         
@@ -3143,7 +2440,7 @@ export class SchedulerService {
         const blankRow = controller.createBlankRow(newSortKey, task.parentId);
         
         // Select the new blank row
-        this._sel_selectSingle(blankRow.id);
+        this.selectionModel.setSelection(new Set([blankRow.id]), blankRow.id, [blankRow.id]);
         
         // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
         
@@ -3172,8 +2469,8 @@ export class SchedulerService {
         if (!wokenTask) return;
         
         // Update selection state
-        this._sel_selectSingle(taskId);
-        this._sel_setFocused(taskId, 'name');
+        this.selectionModel.setSelection(new Set([taskId]), taskId, [taskId]);
+        this.selectionModel.setFocus(taskId, 'name');
         
         // NOTE: Removed recalculateAll(), render() - ProjectController handles via Worker
         
@@ -3226,7 +2523,7 @@ export class SchedulerService {
         });
         
         // Ensure task is selected
-        this._sel_selectSingle(taskId);
+        this.selectionModel.setSelection(new Set([taskId]), taskId, [taskId]);
         this._updateSelection();
     }
 
@@ -3235,7 +2532,7 @@ export class SchedulerService {
      * Processes top-level selections only (children move with parents)
      */
     indentSelected(): void {
-        if (this._sel_count() === 0) {
+        if (this.selectionModel.getSelectionCount() === 0) {
             this.toastService?.info('No tasks selected');
             return;
         }
@@ -3243,7 +2540,7 @@ export class SchedulerService {
         this.saveCheckpoint();
         
         const list = this._getFlatList();
-        const selectedIds = new Set(this._sel_toArray());
+        const selectedIds = new Set(this.selectionModel.getSelectedIds());
         
         // Get top-level selected tasks (parent not in selection)
         const topLevelSelected = list.filter(task =>
@@ -3285,11 +2582,7 @@ export class SchedulerService {
         }
         
         if (indentedCount > 0) {
-            if (ENABLE_LEGACY_RECALC) {
-                this.recalculateAll();
-                this.saveData();
-                this.render();
-            }
+            // NOTE: ProjectController handles recalc/save via Worker
             this.toastService?.success(`Indented ${indentedCount} task${indentedCount > 1 ? 's' : ''}`);
         }
     }
@@ -3299,7 +2592,7 @@ export class SchedulerService {
      * Processes top-level selections only (children move with parents)
      */
     outdentSelected(): void {
-        if (this._sel_count() === 0) {
+        if (this.selectionModel.getSelectionCount() === 0) {
             this.toastService?.info('No tasks selected');
             return;
         }
@@ -3307,7 +2600,7 @@ export class SchedulerService {
         this.saveCheckpoint();
         
         const list = this._getFlatList();
-        const selectedIds = new Set(this._sel_toArray());
+        const selectedIds = new Set(this.selectionModel.getSelectedIds());
         const allTasks = this.projectController.getTasks();
         
         // Get top-level selected tasks
@@ -3342,11 +2635,7 @@ export class SchedulerService {
         }
         
         if (outdentedCount > 0) {
-            if (ENABLE_LEGACY_RECALC) {
-                this.recalculateAll();
-                this.saveData();
-                this.render();
-            }
+            // NOTE: ProjectController handles recalc/save via Worker
             this.toastService?.success(`Outdented ${outdentedCount} task${outdentedCount > 1 ? 's' : ''}`);
         }
     }
@@ -3356,13 +2645,13 @@ export class SchedulerService {
      * Shows confirmation for multiple tasks or parent tasks
      */
     async deleteSelected(): Promise<void> {
-        if (this._sel_count() === 0) {
+        if (this.selectionModel.getSelectionCount() === 0) {
             this.toastService?.info('No tasks selected');
             return;
         }
         
-        const selectedCount = this._sel_count();
-        const selectedArray = this._sel_toArray();
+        const selectedCount = this.selectionModel.getSelectionCount();
+        const selectedArray = this.selectionModel.getSelectedIds();
         const hasParents = selectedArray.some(id => this.projectController.isParent(id));
         
         // Confirm for multiple tasks or parent tasks
@@ -3383,27 +2672,23 @@ export class SchedulerService {
         this.saveCheckpoint();
         
         const editingManager = getEditingStateManager();
-        const idsToDelete = this._sel_toArray();
+        const idsToDelete = this.selectionModel.getSelectedIds();
         
         for (const taskId of idsToDelete) {
             if (editingManager.isEditingTask(taskId)) {
                 editingManager.exitEditMode('task-deleted');
             }
             this.projectController.deleteTask(taskId);
-            this._sel_delete(taskId);
+            this.selectionModel.removeFromSelection([taskId]);
             // NOTE: Removed engine sync - ProjectController handles via Worker
         }
         
-        const currentFocusedId = this._sel_getFocused();
+        const currentFocusedId = this.selectionModel.getFocusedId();
         if (currentFocusedId && idsToDelete.includes(currentFocusedId)) {
-            this._sel_setFocused(null);
+            this.selectionModel.setFocus(null);
         }
         
-        if (ENABLE_LEGACY_RECALC) {
-            this.recalculateAll();
-            this.saveData();
-            this.render();
-        }
+        // NOTE: ProjectController handles recalc/save via Worker
         
         this.toastService?.success(`Deleted ${idsToDelete.length} task${idsToDelete.length > 1 ? 's' : ''}`);
     }
@@ -3616,7 +2901,7 @@ export class SchedulerService {
         
         // Keep focus on moved task
         if (this.grid) {
-            const currentFocusedId = this._sel_getFocused();
+            const currentFocusedId = this.selectionModel.getFocusedId();
             if (currentFocusedId) {
                 requestAnimationFrame(() => {
                     this.grid!.scrollToTask(currentFocusedId);
@@ -3638,8 +2923,8 @@ export class SchedulerService {
             // Exiting edit mode
             
             // Re-highlight the cell visually
-            const currentFocusedId = this._sel_getFocused();
-            const currentFocusedColumn = this._sel_getFocusedColumn();
+            const currentFocusedId = this.selectionModel.getFocusedId();
+            const currentFocusedColumn = this.selectionModel.getFocusedField();
             if (currentFocusedId && currentFocusedColumn && this.grid) {
                 this.grid.highlightCell(currentFocusedId, currentFocusedColumn);
             }
@@ -3673,8 +2958,8 @@ export class SchedulerService {
             
             // If we moved to a new row, update checkbox selection
             if (prevTaskId && newTaskId !== prevTaskId) {
-                this._sel_selectSingle(newTaskId);
-                this._sel_setFocused(newTaskId, newState.context.field);
+                this.selectionModel.setSelection(new Set([newTaskId]), newTaskId, [newTaskId]);
+                this.selectionModel.setFocus(newTaskId, newState.context.field);
                 this._updateSelection();
             }
         }
@@ -3684,8 +2969,8 @@ export class SchedulerService {
      * Enter edit mode for the currently highlighted cell
      */
     enterEditMode(): void {
-        const focusedId = this._sel_getFocused();
-        const focusedColumn = this._sel_getFocusedColumn();
+        const focusedId = this.selectionModel.getFocusedId();
+        const focusedColumn = this.selectionModel.getFocusedField();
         if (!focusedId || !focusedColumn) return;
         
         const editingManager = getEditingStateManager();
@@ -3732,10 +3017,10 @@ export class SchedulerService {
      */
     private _updateSelection(): void {
         if (this.grid) {
-            this.grid.setSelection(new Set(this._sel_toArray()), this._sel_getFocused());
+            this.grid.setSelection(new Set(this.selectionModel.getSelectedIds()), this.selectionModel.getFocusedId());
         }
         if (this.gantt) {
-            this.gantt.setSelection(new Set(this._sel_toArray()));
+            this.gantt.setSelection(new Set(this.selectionModel.getSelectedIds()));
         }
         // Update header checkbox state
         this._updateHeaderCheckboxState();
@@ -3776,7 +3061,7 @@ export class SchedulerService {
         }
 
         // Count how many visible tasks are selected
-        const selectedCount = visibleTasks.filter(t => this._sel_has(t.id)).length;
+        const selectedCount = visibleTasks.filter(t => this.selectionModel.isSelected(t.id)).length;
 
         if (selectedCount === 0) {
             // None selected
@@ -3808,12 +3093,12 @@ export class SchedulerService {
         if (checkbox.checked) {
             // Select all visible tasks
             visibleTasks.forEach(task => {
-                this._sel_add(task.id);
+                this.selectionModel.addToSelection([task.id]);
             });
         } else {
             // Deselect all visible tasks
             visibleTasks.forEach(task => {
-                this._sel_delete(task.id);
+                this.selectionModel.removeFromSelection([task.id]);
             });
         }
 
@@ -3858,9 +3143,9 @@ export class SchedulerService {
      */
     openDrawer(taskId: string): void {
         // 1. Ensure selection is synced first (this triggers _handleSelectionChange)
-        if (this._sel_getFocused() !== taskId) {
+        if (this.selectionModel.getFocusedId() !== taskId) {
             // Select the task - this will sync data to panels via onTaskSelect
-            this._sel_selectSingle(taskId);
+            this.selectionModel.setSelection(new Set([taskId]), taskId, [taskId]);
             this._updateSelection();
         }
         
@@ -3902,8 +3187,8 @@ export class SchedulerService {
             });
             // Sync the panel with the task (panel will handle it via selection callback)
             // But we also need to ensure the task is selected
-            if (this._sel_getFocused() !== taskId) {
-                this._sel_selectSingle(taskId);
+            if (this.selectionModel.getFocusedId() !== taskId) {
+                this.selectionModel.setSelection(new Set([taskId]), taskId, [taskId]);
                 this._updateSelection();
             }
             return;
@@ -4097,7 +3382,7 @@ export class SchedulerService {
             if (this.grid) {
                 // Pass visible tasks to grid (it handles virtual scrolling)
                 this.grid.setData(tasks);
-                this.grid.setSelection(new Set(this._sel_toArray()), this._sel_getFocused());
+                this.grid.setSelection(new Set(this.selectionModel.getSelectedIds()), this.selectionModel.getFocusedId());
             }
 
             if (this.gantt) {
@@ -4470,11 +3755,7 @@ export class SchedulerService {
                 if (data.calendar) {
                     this.projectController.updateCalendar(data.calendar);
                 }
-                if (ENABLE_LEGACY_RECALC) {
-                    this.recalculateAll();
-                    this.saveData();
-                    this.render();
-                }
+                // NOTE: ProjectController handles recalc/save via Worker
                 this.toastService.success(`Loaded ${this.projectController.getTasks().length} tasks`);
             }
         } catch (err) {
@@ -4562,10 +3843,7 @@ export class SchedulerService {
             this.projectController.updateCalendar(result.calendar);
         }
         
-        if (ENABLE_LEGACY_RECALC) {
-            this.recalculateAll();
-            this.saveData();
-        }
+        // NOTE: ProjectController handles recalc/save via Worker
         this.toastService.success(`Imported ${result.tasks.length} tasks from MS Project`);
     }
 
@@ -4607,11 +3885,7 @@ export class SchedulerService {
         this.projectController.syncTasks([]);
         this._createSampleData();
         
-        if (ENABLE_LEGACY_RECALC) {
-            this.recalculateAll();
-            await this.saveData();
-            this.render();
-        }
+        // NOTE: ProjectController handles recalc/save via Worker
         
         this.toastService.success('All data cleared - starting fresh');
     }
@@ -4725,11 +3999,7 @@ export class SchedulerService {
         }
         
         this.projectController.syncTasks(tasks);
-        if (ENABLE_LEGACY_RECALC) {
-            this.recalculateAll();
-            this.saveData();
-            this.render();
-        }
+        // NOTE: ProjectController handles recalc/save via Worker
         
         this.toastService?.success(`Generated ${count} tasks`);
     }
@@ -4767,13 +4037,17 @@ export class SchedulerService {
         
         this.saveCheckpoint();
         
-        const result = await this._applyTaskEdit(taskId, 'schedulingMode', mode);
+        // Use SchedulingLogicService for scheduling mode changes
+        const result = this.schedulingLogicService.applyEdit(taskId, 'schedulingMode', mode, {
+            controller: this.projectController,
+            calendar: this.projectController.getCalendar(),
+        });
         
-        if (result.success && result.needsRecalc) {
-            if (ENABLE_LEGACY_RECALC) {
-                this.recalculateAll();
-                this.saveData();
-                this.render();
+        if (result.message) {
+            switch (result.messageType) {
+                case 'success': this.toastService?.success(result.message); break;
+                case 'warning': this.toastService?.warning(result.message); break;
+                default: this.toastService?.info(result.message);
             }
         }
     }

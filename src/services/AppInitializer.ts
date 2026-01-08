@@ -51,6 +51,8 @@ export interface AppInitializerOptions {
   dataLoader?: DataLoader;
   /** Injected HistoryManager for undo/redo (Phase 4) */
   historyManager?: HistoryManager;
+  /** Injected SchedulingLogicService for scheduling business logic */
+  schedulingLogicService?: import('./migration/SchedulingLogicService').SchedulingLogicService;
 }
 
 /**
@@ -77,6 +79,7 @@ export class AppInitializer {
   private dataLoader: DataLoader | null = null;
   private projectController: ProjectController | null = null;
   private historyManager: HistoryManager | null = null;
+  private schedulingLogicService: import('./migration/SchedulingLogicService').SchedulingLogicService | null = null;
   
   // Reactive saveData subscription - saves after calculations complete
   private saveDataSubscription: Subscription | null = null;
@@ -132,6 +135,7 @@ export class AppInitializer {
     this.snapshotService = options.snapshotService || null;
     this.dataLoader = options.dataLoader || null;
     this.historyManager = options.historyManager || null;
+    this.schedulingLogicService = options.schedulingLogicService || null;
     
     // Store singleton reference
     AppInitializer.instance = this;
@@ -476,6 +480,8 @@ export class AppInitializer {
       isTauri: this.isTauri,
       // Pure DI: Pass rendererFactory from Composition Root
       rendererFactory: this.rendererFactory || undefined,
+      // Pure DI: Pass schedulingLogicService from Composition Root
+      schedulingLogicService: this.schedulingLogicService || undefined,
     };
     
     this.scheduler = new SchedulerService(options);
