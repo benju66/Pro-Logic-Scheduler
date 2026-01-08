@@ -1,5 +1,5 @@
 import type { Command, CommandResult } from '../types';
-import { ZoomController } from '../../services/ZoomController';
+import type { ZoomController } from '../../services/ZoomController';
 
 /**
  * Create Fit To View Command with injected ZoomController
@@ -27,9 +27,3 @@ export function createFitToViewCommand(zoomController: ZoomController): Command 
   };
 }
 
-/**
- * @deprecated Use createFitToViewCommand(zoomController) factory instead.
- * Kept for backward compatibility during migration.
- * @see docs/adr/001-dependency-injection.md
- */
-export const FitToViewCommand: Command = createFitToViewCommand(ZoomController.getInstance());

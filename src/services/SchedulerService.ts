@@ -36,7 +36,7 @@ import { OrderingService } from './OrderingService';
 import { ProjectController } from './ProjectController';
 import { SelectionModel } from './SelectionModel';
 import { AppInitializer } from './AppInitializer';
-import { getEditingStateManager, type EditingStateChangeEvent } from './EditingStateManager';
+import { EditingStateManager, getEditingStateManager, type EditingStateChangeEvent } from './EditingStateManager';
 import { ZoomController, type IZoomableGantt, ZOOM_CONFIG } from './ZoomController';
 import { SchedulingLogicService } from './migration/SchedulingLogicService';
 import { CommandService } from '../commands';
@@ -122,6 +122,9 @@ export class SchedulerService {
     
     /** ColumnRegistry - column definitions and renderer types */
     private columnRegistry: ColumnRegistry;
+    
+    /** EditingStateManager - tracks cell editing state */
+    private editingStateManager: EditingStateManager;
 
     // Data stores
     // NOTE: taskStore and calendarStore removed - data flows through ProjectController
@@ -207,6 +210,13 @@ export class SchedulerService {
         rendererFactory?: RendererFactory;
         keyboardService?: KeyboardService;
         schedulingLogicService?: SchedulingLogicService;
+        // Pure DI: Additional injectable services
+        columnRegistry?: ColumnRegistry;
+        zoomController?: ZoomController;
+        tradePartnerStore?: TradePartnerStore;
+        dataLoader?: DataLoader;
+        snapshotService?: SnapshotService;
+        editingStateManager?: EditingStateManager;
     } = {} as SchedulerServiceOptions) {
         this.options = options;
         // Use isTauri from options (provided by AppInitializer)
@@ -223,7 +233,22 @@ export class SchedulerService {
         this.commandService = options.commandService || CommandService.getInstance();
         this.rendererFactory = options.rendererFactory || null;
         this.schedulingLogicService = options.schedulingLogicService || SchedulingLogicService.getInstance();
-        this.columnRegistry = ColumnRegistry.getInstance(); // Cache for internal use
+        this.columnRegistry = options.columnRegistry || ColumnRegistry.getInstance();
+        this.editingStateManager = options.editingStateManager || getEditingStateManager();
+        
+        // Pure DI: Store injected services for use in _initServices() and init()
+        if (options.zoomController) {
+            this.zoomController = options.zoomController;
+        }
+        if (options.dataLoader) {
+            this.dataLoader = options.dataLoader;
+        }
+        if (options.snapshotService) {
+            this.snapshotService = options.snapshotService;
+        }
+        if (options.tradePartnerStore) {
+            this.tradePartnerStore = options.tradePartnerStore;
+        }
         
         // KeyboardService is injected or created in initKeyboard()
         if (options.keyboardService) {
@@ -249,33 +274,38 @@ export class SchedulerService {
      * SchedulerService now uses shared services via AppInitializer singleton.
      */
     private async _initServices(): Promise<void> {
-        // STRANGLER FIG: PersistenceService, DataLoader, SnapshotService
-        // are now initialized by AppInitializer and accessed via singleton.
-        // This prevents duplicate initialization and double snapshot timers.
-        
-        const appInitializer = AppInitializer.getInstance();
+        // Pure DI: Use injected services if available, fall back to singletons
         const controller = this.projectController;
         
         // Get reference to shared PersistenceService
         if (controller.hasPersistenceService()) {
             this.persistenceService = controller.getPersistenceService();
-            console.log('[SchedulerService] Using shared PersistenceService from AppInitializer');
+            console.log('[SchedulerService] Using shared PersistenceService');
         } else {
             console.warn('[SchedulerService] PersistenceService not available - trade partner events will not be persisted');
         }
         
-        // Get references to shared DataLoader and SnapshotService
-        if (appInitializer) {
-            this.dataLoader = appInitializer.getDataLoader();
-            this.snapshotService = appInitializer.getSnapshotService();
-            console.log('[SchedulerService] Using shared DataLoader and SnapshotService from AppInitializer');
+        // Pure DI: Use injected DataLoader and SnapshotService, or fall back to AppInitializer
+        if (!this.dataLoader || !this.snapshotService) {
+            const appInitializer = AppInitializer.getInstance();
+            if (appInitializer) {
+                this.dataLoader = this.dataLoader || appInitializer.getDataLoader();
+                this.snapshotService = this.snapshotService || appInitializer.getSnapshotService();
+                console.log('[SchedulerService] Using DataLoader/SnapshotService from AppInitializer fallback');
+            } else {
+                console.warn('[SchedulerService] AppInitializer not available - some features may be limited');
+            }
         } else {
-            console.warn('[SchedulerService] AppInitializer not available - some features may be limited');
+            console.log('[SchedulerService] Using injected DataLoader and SnapshotService');
         }
 
-        // Initialize stores (TradePartnerStore only - TaskStore/CalendarStore removed)
-        // NOTE: Task and calendar data now flows through ProjectController
-        this.tradePartnerStore = getTradePartnerStore();
+        // Pure DI: Use injected TradePartnerStore or fall back to global getter
+        if (!this.tradePartnerStore) {
+            this.tradePartnerStore = getTradePartnerStore();
+            console.log('[SchedulerService] Using TradePartnerStore from fallback');
+        } else {
+            console.log('[SchedulerService] Using injected TradePartnerStore');
+        }
         
         // Set trade partners accessor on shared persistence service
         if (this.persistenceService) {
@@ -419,9 +449,14 @@ export class SchedulerService {
         this.grid = this._createGridFacade(viewport);
         this.gantt = this._createGanttFacade(viewport);
         
-        // Initialize ZoomController with the GanttRenderer
-        // Note: ganttRenderer is exposed on the viewport for this purpose
-        this.zoomController = ZoomController.getInstance();
+        // Pure DI: Use injected ZoomController or fall back to singleton
+        if (!this.zoomController) {
+            this.zoomController = ZoomController.getInstance();
+            console.log('[SchedulerService] Using ZoomController from fallback');
+        } else {
+            console.log('[SchedulerService] Using injected ZoomController');
+        }
+        // Wire ZoomController to GanttRenderer
         const ganttRenderer = (viewport as any).ganttRenderer as IZoomableGantt | null;
         if (ganttRenderer) {
             this.zoomController.setGanttRenderer(ganttRenderer);
@@ -467,7 +502,7 @@ export class SchedulerService {
         // See main.ts - they're attached after scheduler initialization
         
         // Subscribe to editing state changes
-        const editingManager = getEditingStateManager();
+        const editingManager = this.editingStateManager;
         this._unsubscribeEditing = editingManager.subscribe((event) => {
             this._onEditingStateChange(event);
         });
@@ -1243,7 +1278,7 @@ export class SchedulerService {
      * @param tasks - Tasks array
      */
     set tasks(tasks: Task[]) {
-        const editingManager = getEditingStateManager();
+        const editingManager = this.editingStateManager;
         
         // CRITICAL: Reset editing state when replacing entire dataset
         // Unconditional reset - always safe when replacing entire dataset
@@ -1812,7 +1847,7 @@ export class SchedulerService {
      * @param shiftKey - Shift key pressed (for range selection)
      */
     private _handleCellNavigation(direction: 'up' | 'down' | 'left' | 'right', shiftKey: boolean): void {
-        const editingManager = getEditingStateManager();
+        const editingManager = this.editingStateManager;
         
         // If currently editing, don't navigate
         if (editingManager.isEditing()) {
@@ -2141,7 +2176,7 @@ export class SchedulerService {
      * Delete a task and its children
      */
     deleteTask(taskId: string): void {
-        const editingManager = getEditingStateManager();
+        const editingManager = this.editingStateManager;
         const controller = this.projectController;
         
         if (editingManager.isEditingTask(taskId)) {
@@ -2654,7 +2689,7 @@ export class SchedulerService {
         
         this.saveCheckpoint();
         
-        const editingManager = getEditingStateManager();
+        const editingManager = this.editingStateManager;
         const idsToDelete = this.selectionModel.getSelectedIds();
         
         for (const taskId of idsToDelete) {
@@ -2956,7 +2991,7 @@ export class SchedulerService {
         const focusedColumn = this.selectionModel.getFocusedField();
         if (!focusedId || !focusedColumn) return;
         
-        const editingManager = getEditingStateManager();
+        const editingManager = this.editingStateManager;
         const task = this.projectController.getTaskById(focusedId);
         const originalValue = task ? getTaskFieldValue(task, focusedColumn as GridColumn['field']) : undefined;
         
@@ -2976,7 +3011,7 @@ export class SchedulerService {
      * Now mostly handled by EditingStateManager subscription
      */
     exitEditMode(): void {
-        const editingManager = getEditingStateManager();
+        const editingManager = this.editingStateManager;
         if (editingManager.isEditing()) {
             editingManager.exitEditMode('programmatic');
         }
@@ -3390,7 +3425,7 @@ export class SchedulerService {
      * Load data from SQLite database
      */
     async loadData(): Promise<void> {
-        const editingManager = getEditingStateManager();
+        const editingManager = this.editingStateManager;
         editingManager.reset();
         console.log('[SchedulerService] 🔍 loadData() called');
         

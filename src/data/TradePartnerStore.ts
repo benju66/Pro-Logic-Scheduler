@@ -199,6 +199,15 @@ export function getTradePartnerStore(): TradePartnerStore {
 }
 
 /**
+ * Set the singleton instance (for DI from Composition Root).
+ * @deprecated Use constructor injection instead.
+ * @see docs/adr/001-dependency-injection.md
+ */
+export function setTradePartnerStore(store: TradePartnerStore): void {
+  instance = store;
+}
+
+/**
  * @deprecated Create fresh instances in tests instead.
  * @see docs/adr/001-dependency-injection.md
  */

@@ -30,6 +30,7 @@ import { PersistenceService } from './data/PersistenceService';
 import { SnapshotService } from './data/SnapshotService';
 import { DataLoader } from './data/DataLoader';
 import { HistoryManager } from './data/HistoryManager';
+import { TradePartnerStore, setTradePartnerStore } from './data/TradePartnerStore';
 
 // Import Unified Scheduler V2 styles
 import './ui/components/scheduler/styles/scheduler.css';
@@ -127,6 +128,10 @@ async function initApp(): Promise<void> {
         const schedulingLogicService = new SchedulingLogicService();
         SchedulingLogicService.setInstance(schedulingLogicService);
         
+        // Level 2: Trade partner store (data store, no deps)
+        const tradePartnerStore = new TradePartnerStore();
+        setTradePartnerStore(tradePartnerStore);
+        
         // Level 2: View coordinator (depends on ProjectController, SelectionModel)
         const viewCoordinator = new ViewCoordinator({
             projectController,
@@ -173,7 +178,14 @@ async function initApp(): Promise<void> {
             dataLoader,
             historyManager,
             // Phase 5 Pure DI: Inject scheduling logic service
-            schedulingLogicService
+            schedulingLogicService,
+            // Pure DI: Inject all services from Composition Root
+            columnRegistry,
+            zoomController,
+            tradePartnerStore,
+            projectController,
+            selectionModel,
+            commandService
         });
         
         // Expose AppInitializer for E2E testing

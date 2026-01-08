@@ -53,6 +53,18 @@ export interface AppInitializerOptions {
   historyManager?: HistoryManager;
   /** Injected SchedulingLogicService for scheduling business logic */
   schedulingLogicService?: import('./migration/SchedulingLogicService').SchedulingLogicService;
+  /** Injected ColumnRegistry for column definitions (Pure DI) */
+  columnRegistry?: import('../core/columns/ColumnRegistry').ColumnRegistry;
+  /** Injected ZoomController for zoom state management (Pure DI) */
+  zoomController?: import('./ZoomController').ZoomController;
+  /** Injected TradePartnerStore for trade partner data (Pure DI) */
+  tradePartnerStore?: import('../data/TradePartnerStore').TradePartnerStore;
+  /** Injected ProjectController for data management (Pure DI) */
+  projectController?: ProjectController;
+  /** Injected SelectionModel for selection state (Pure DI) */
+  selectionModel?: SelectionModel;
+  /** Injected CommandService for command registry (Pure DI) */
+  commandService?: import('../commands').CommandService;
 }
 
 /**
@@ -80,6 +92,11 @@ export class AppInitializer {
   private projectController: ProjectController | null = null;
   private historyManager: HistoryManager | null = null;
   private schedulingLogicService: import('./migration/SchedulingLogicService').SchedulingLogicService | null = null;
+  private columnRegistry: import('../core/columns/ColumnRegistry').ColumnRegistry | null = null;
+  private zoomController: import('./ZoomController').ZoomController | null = null;
+  private tradePartnerStore: import('../data/TradePartnerStore').TradePartnerStore | null = null;
+  private selectionModel: SelectionModel | null = null;
+  private commandService: import('../commands').CommandService | null = null;
   
   // Reactive saveData subscription - saves after calculations complete
   private saveDataSubscription: Subscription | null = null;
@@ -136,6 +153,14 @@ export class AppInitializer {
     this.dataLoader = options.dataLoader || null;
     this.historyManager = options.historyManager || null;
     this.schedulingLogicService = options.schedulingLogicService || null;
+    
+    // Pure DI: Store additional injected services
+    this.columnRegistry = options.columnRegistry || null;
+    this.zoomController = options.zoomController || null;
+    this.tradePartnerStore = options.tradePartnerStore || null;
+    this.projectController = options.projectController || null;
+    this.selectionModel = options.selectionModel || null;
+    this.commandService = options.commandService || null;
     
     // Store singleton reference
     AppInitializer.instance = this;
@@ -238,8 +263,10 @@ export class AppInitializer {
   private async _initializePersistenceLayer(): Promise<void> {
     console.log('[AppInitializer] 🗄️ Initializing persistence layer...');
     
-    // Get ProjectController singleton (will be used throughout)
-    this.projectController = ProjectController.getInstance();
+    // Pure DI: Use injected ProjectController or fallback to singleton
+    if (!this.projectController) {
+        this.projectController = ProjectController.getInstance();
+    }
     
     // Skip database operations if not in Tauri
     if (!this.isTauri) {
@@ -482,6 +509,12 @@ export class AppInitializer {
       rendererFactory: this.rendererFactory || undefined,
       // Pure DI: Pass schedulingLogicService from Composition Root
       schedulingLogicService: this.schedulingLogicService || undefined,
+      // Pure DI: Pass additional services from Composition Root
+      columnRegistry: this.columnRegistry || undefined,
+      zoomController: this.zoomController || undefined,
+      tradePartnerStore: this.tradePartnerStore || undefined,
+      dataLoader: this.dataLoader || undefined,
+      snapshotService: this.snapshotService || undefined,
     };
     
     this.scheduler = new SchedulerService(options);
@@ -706,10 +739,10 @@ export class AppInitializer {
   private _initializeCommandService(): void {
     console.log('[AppInitializer] 🎮 Initializing Command Service...');
     
-    // Pure DI: Use cached service references
-    const service = CommandService.getInstance();
+    // Pure DI: Use injected services or fallback to singletons
+    const service = this.commandService || CommandService.getInstance();
     const controller = this.projectController!;
-    const selectionModel = SelectionModel.getInstance();
+    const selectionModel = this.selectionModel || SelectionModel.getInstance();
     const self = this; // Capture for closures
     
     // Build command context with all dependencies
@@ -743,9 +776,8 @@ export class AppInitializer {
     
     service.setContext(context);
     
-    // Pure DI: Pass ZoomController to registerAllCommands
-    // ZoomController is already wired in main.ts Composition Root
-    const zoomController = ZoomController.getInstance();
+    // Pure DI: Use injected ZoomController or fallback to singleton
+    const zoomController = this.zoomController || ZoomController.getInstance();
     registerAllCommands({ commandService: service, zoomController });
     
     // PHASE 2.3: Wire state changes to notify CommandService

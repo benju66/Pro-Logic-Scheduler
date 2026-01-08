@@ -672,8 +672,3 @@ export class SchedulingLogicService {
     }
 }
 
-/**
- * @deprecated Use constructor injection instead.
- * @see docs/adr/001-dependency-injection.md
- */
-export const schedulingLogic = SchedulingLogicService.getInstance();

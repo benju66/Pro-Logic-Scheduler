@@ -57,10 +57,6 @@ export {
     CollapseCommand, 
     ExpandCommand, 
     ToggleCollapseCommand, 
-    ZoomInCommand, 
-    ZoomOutCommand, 
-    FitToViewCommand, 
-    ResetZoomCommand,
     // Factory functions for Pure DI
     createZoomInCommand,
     createZoomOutCommand,

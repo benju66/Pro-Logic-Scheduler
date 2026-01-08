@@ -1,5 +1,5 @@
 import type { Command, CommandResult } from '../types';
-import { ZoomController } from '../../services/ZoomController';
+import type { ZoomController } from '../../services/ZoomController';
 
 /**
  * Create Reset Zoom Command with injected ZoomController
@@ -28,9 +28,3 @@ export function createResetZoomCommand(zoomController: ZoomController): Command 
   };
 }
 
-/**
- * @deprecated Use createResetZoomCommand(zoomController) factory instead.
- * Kept for backward compatibility during migration.
- * @see docs/adr/001-dependency-injection.md
- */
-export const ResetZoomCommand: Command = createResetZoomCommand(ZoomController.getInstance());

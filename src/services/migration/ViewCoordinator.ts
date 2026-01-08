@@ -468,8 +468,3 @@ export class ViewCoordinator {
     }
 }
 
-/**
- * @deprecated Use constructor injection instead.
- * @see docs/adr/001-dependency-injection.md
- */
-export const viewCoordinator = ViewCoordinator.getInstance();

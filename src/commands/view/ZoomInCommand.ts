@@ -1,5 +1,5 @@
 import type { Command, CommandResult } from '../types';
-import { ZoomController } from '../../services/ZoomController';
+import type { ZoomController } from '../../services/ZoomController';
 
 /**
  * Create Zoom In Command with injected ZoomController
@@ -29,9 +29,3 @@ export function createZoomInCommand(zoomController: ZoomController): Command {
   };
 }
 
-/**
- * @deprecated Use createZoomInCommand(zoomController) factory instead.
- * Kept for backward compatibility during migration.
- * @see docs/adr/001-dependency-injection.md
- */
-export const ZoomInCommand: Command = createZoomInCommand(ZoomController.getInstance());

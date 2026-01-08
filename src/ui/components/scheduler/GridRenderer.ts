@@ -397,7 +397,7 @@ export class GridRenderer {
         // Apply visual highlight BEFORE focusing (ensures user sees which cell is active)
         this.highlightCell(taskId, field);
         
-        const editingManager = getEditingStateManager();
+        const editingManager = this.editingStateManager;
         
         const row = this.rowContainer.querySelector(`[data-task-id="${taskId}"]`) as HTMLElement | null;
         if (!row) return;
@@ -526,7 +526,7 @@ export class GridRenderer {
         // If clicking on an input or select, prevent native focus
         // This ensures we need double-click or F2 to enter edit mode
         if (target.classList.contains('vsg-input') || target.classList.contains('vsg-select')) {
-            const editingManager = getEditingStateManager();
+            const editingManager = this.editingStateManager;
             
             // If already editing this cell, allow normal focus behavior
             const row = target.closest('.vsg-row') as HTMLElement | null;
@@ -805,7 +805,7 @@ export class GridRenderer {
         this.editingRows.add(taskId);
         
         // Update EditingStateManager
-        const editingManager = getEditingStateManager();
+        const editingManager = this.editingStateManager;
         const task = this.data.find(t => t.id === taskId);
         const originalValue = task ? getTaskFieldValue(task, field as GridColumn['field']) : undefined;
         editingManager.enterEditMode({ taskId, field }, 'double-click', originalValue);
@@ -894,7 +894,7 @@ export class GridRenderer {
 
         // For date inputs, save with format conversion (fromKeyboard: false)
         if (input.classList.contains('vsg-date-input')) {
-            const editingManager = getEditingStateManager();
+            const editingManager = this.editingStateManager;
             const wasEditing = editingManager.isEditingCell(taskId, field);
             
             // FIX: Clear editing state immediately so the subsequent render 
@@ -949,7 +949,7 @@ export class GridRenderer {
                 this.editingRows.delete(taskId);
                 
                 // Update state manager only if we're actually editing this cell
-                const editingManager = getEditingStateManager();
+                const editingManager = this.editingStateManager;
                 if (editingManager.isEditingCell(taskId, field)) {
                     editingManager.exitEditMode('blur');
                 }
@@ -976,7 +976,7 @@ export class GridRenderer {
         
         // Handle Enter on blank row (wake up)
         if (e.key === 'Enter') {
-            const editingManager = getEditingStateManager();
+            const editingManager = this.editingStateManager;
             if (!editingManager.isEditing()) {
                 const focusedRow = this.rowContainer.querySelector(
                     `.vsg-row[data-task-id="${this._focusedCell?.taskId}"]`
@@ -1001,7 +1001,7 @@ export class GridRenderer {
             return; // Don't preventDefault/stopPropagation - allow event to bubble to KeyboardService
         }
         
-        const editingManager = getEditingStateManager();
+        const editingManager = this.editingStateManager;
         
         // Only in navigation mode (not editing)
         if (editingManager.isEditing()) return;
@@ -1147,7 +1147,7 @@ export class GridRenderer {
                 this.editingRows.delete(taskId);
                 
                 // Also notify state manager immediately
-                const editingManager = getEditingStateManager();
+                const editingManager = this.editingStateManager;
                 if (editingManager.isEditingCell(taskId, currentField)) {
                     editingManager.exitEditMode('tab');
                 }
@@ -1176,7 +1176,7 @@ export class GridRenderer {
             
             // Update state manager - move to next cell
             // Note: For date inputs, editing state was already cleared above before save
-            const editingManager = getEditingStateManager();
+            const editingManager = this.editingStateManager;
             const task = this.data.find(t => t.id === nextTaskId);
             const originalValue = task ? getTaskFieldValue(task, nextField as GridColumn['field']) : undefined;
             editingManager.moveToCell({ taskId: nextTaskId, field: nextField }, e.shiftKey ? 'shift-tab' : 'tab', originalValue);
@@ -1216,7 +1216,7 @@ export class GridRenderer {
             
             // 1. Save current edit
             if (target.classList.contains('vsg-date-input')) {
-                const editingManager = getEditingStateManager();
+                const editingManager = this.editingStateManager;
                 const wasEditing = editingManager.isEditingCell(taskId, currentField);
                 
                 // FIX: Clear editing state immediately so the subsequent render 
@@ -1242,7 +1242,7 @@ export class GridRenderer {
                 this.editingRows.delete(taskId);
                 
                 // Also notify state manager immediately
-                const editingManager = getEditingStateManager();
+                const editingManager = this.editingStateManager;
                 const wasEditing = editingManager.isEditingCell(taskId, currentField);
                 if (wasEditing) {
                     editingManager.exitEditMode('enter');
@@ -1290,7 +1290,7 @@ export class GridRenderer {
                 this.editingCell = null;
                 
                 // Exit edit mode via state manager
-                const editingManager = getEditingStateManager();
+                const editingManager = this.editingStateManager;
                 if (editingManager.isEditingCell(taskId, currentField)) {
                     editingManager.exitEditMode('enter');
                 }
@@ -1328,7 +1328,7 @@ export class GridRenderer {
             
             // Get original value from EditingStateManager context
             // Note: originalValue is stored when enterEditMode() is called (in click handlers, focusCell, etc.)
-            const editingManager = getEditingStateManager();
+            const editingManager = this.editingStateManager;
             const context = editingManager.getContext();
             
             // Restore original value if available (standard UX - Escape = Cancel)
@@ -1845,7 +1845,7 @@ export class GridRenderer {
      */
     destroy(): void {
         // Clear editing state if this component was editing
-        const editingManager = getEditingStateManager();
+        const editingManager = this.editingStateManager;
         if (this.editingCell && editingManager.isEditingCell(this.editingCell.taskId, this.editingCell.field)) {
             editingManager.exitEditMode('destroy');
         }
