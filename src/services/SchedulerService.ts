@@ -40,6 +40,7 @@ import { EditingStateManager, getEditingStateManager, type EditingStateChangeEve
 import { ZoomController, type IZoomableGantt, ZOOM_CONFIG } from './ZoomController';
 import { SchedulingLogicService } from './migration/SchedulingLogicService';
 import { ViewCoordinator } from './migration/ViewCoordinator';
+import { TaskOperationsService } from './scheduler/TaskOperationsService';
 import { CommandService } from '../commands';
 import { getTaskFieldValue } from '../types';
 import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport';
@@ -149,6 +150,10 @@ export class SchedulerService {
     // ViewCoordinator for reactive rendering (Phase 1 decomposition)
     // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
     private viewCoordinator: ViewCoordinator | null = null;
+    
+    // TaskOperationsService for task CRUD, hierarchy, movement (Phase 2 decomposition)
+    // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+    private taskOperations: TaskOperationsService | null = null;
 
     // UI components (initialized in init())
     public grid: VirtualScrollGridFacade | null = null;  // Public for access from AppInitializer and UIEventManager
@@ -492,6 +497,25 @@ export class SchedulerService {
         // Initialize reactive subscriptions (this activates the reactive data flow)
         this.viewCoordinator.initSubscriptions();
         console.log('[SchedulerService] ✅ ViewCoordinator initialized with reactive subscriptions');
+        
+        // ─────────────────────────────────────────────────────────────────────────────
+        // Phase 2 Decomposition: TaskOperationsService
+        // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+        // ─────────────────────────────────────────────────────────────────────────────
+        this.taskOperations = new TaskOperationsService({
+            projectController: this.projectController,
+            selectionModel: this.selectionModel,
+            editingStateManager: this.editingStateManager,
+            commandService: this.commandService,
+            toastService: this.toastService,
+            getGrid: () => this.grid,
+            getGantt: () => this.gantt,
+            saveCheckpoint: () => this.saveCheckpoint(),
+            enterEditMode: () => this.enterEditMode(),
+            isInitialized: () => this.isInitialized,
+            updateHeaderCheckboxState: () => this._updateHeaderCheckboxState(),
+        });
+        console.log('[SchedulerService] ✅ TaskOperationsService initialized');
 
         // ─────────────────────────────────────────────────────────────────────────────
         // Legacy drawer - now managed by RightSidebarManager
@@ -1478,35 +1502,20 @@ export class SchedulerService {
     /**
      * Handle Enter key pressed on the last task in the list
      * Creates a new task as a sibling and focuses the same field
+     * 
+     * Phase 2 Decomposition: Delegates to TaskOperationsService
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+     * 
      * @private
      * @param lastTaskId - The ID of the last task (where Enter was pressed)
      * @param field - The field that was being edited (to focus same field in new task)
      */
     private _handleEnterLastRow(lastTaskId: string, field: string): void {
-        // Get the last task to determine its parent (new task will be a sibling)
-        const lastTask = this.projectController.getTaskById(lastTaskId);
-        if (!lastTask) return;
-        
-        // Create new task with same parent as the last task (making it a sibling)
-        // Use addTask which already handles:
-        // - Generating sortKey (appends to end of siblings)
-        // - Setting focusCell: true
-        // - Selecting the new task
-        // - Scrolling to it
-        
-        // We need to temporarily set focusedId so addTask creates sibling at correct level
-        this.selectionModel.setFocus(lastTaskId);
-        
-        // Add the task - this will create it as a sibling of lastTask
-        this.addTask().then((newTask) => {
-            if (newTask && this.grid) {
-                // Focus the same field that was being edited (not always 'name')
-                // Use a short delay to ensure the task is rendered
-                setTimeout(() => {
-                    this.grid?.focusCell(newTask.id, field);
-                }, 100);
-            }
-        });
+        if (!this.taskOperations) {
+            console.warn('[SchedulerService] TaskOperationsService not initialized');
+            return;
+        }
+        this.taskOperations.handleEnterLastRow(lastTaskId, field);
     }
 
     /**
@@ -1649,13 +1658,8 @@ export class SchedulerService {
     /**
      * Handle row move (drag and drop)
      * 
-     * Supports three drop positions:
-     * - 'before': Insert dragged tasks before target (same parent level)
-     * - 'after': Insert dragged tasks after target (same parent level)
-     * - 'child': Make dragged tasks children of target (indent)
-     * 
-     * When dragging parent tasks, all descendants move with them.
-     * Uses fractional indexing (sortKey) to avoid renumbering other tasks.
+     * Phase 2 Decomposition: Delegates to TaskOperationsService
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      * 
      * @private
      * @param taskIds - Task IDs being moved (may include multiple selected)
@@ -1663,187 +1667,11 @@ export class SchedulerService {
      * @param position - 'before', 'after', or 'child'
      */
     private _handleRowMove(taskIds: string[], targetId: string, position: 'before' | 'after' | 'child'): void {
-        // =========================================================================
-        // VALIDATION
-        // =========================================================================
-        
-        // Guard: No tasks to move
-        if (!taskIds || taskIds.length === 0) {
+        if (!this.taskOperations) {
+            console.warn('[SchedulerService] TaskOperationsService not initialized');
             return;
         }
-        
-        // Guard: No valid target
-        const targetTask = this.projectController.getTaskById(targetId);
-        if (!targetTask) {
-            this.toastService.warning('Invalid drop target');
-            return;
-        }
-        
-        // Guard: Can't drop on self
-        if (taskIds.includes(targetId)) {
-            return;
-        }
-        
-        // =========================================================================
-        // COLLECT ALL TASKS TO MOVE (including descendants)
-        // =========================================================================
-        
-        const selectedSet = new Set(taskIds);
-        
-        // Find "top-level" selected tasks (tasks whose parent is NOT also selected)
-        // This is the same pattern used in indentSelection()
-        const topLevelSelected = taskIds
-            .map(id => this.projectController.getTaskById(id))
-            .filter((t): t is Task => t !== undefined)
-            .filter(task => !task.parentId || !selectedSet.has(task.parentId));
-        
-        if (topLevelSelected.length === 0) {
-            return;
-        }
-        
-        // Collect all tasks to move (top-level + all their descendants)
-        // This ensures parent tasks bring their children along
-        const tasksToMove = new Set<Task>();
-        const taskIdsToMove = new Set<string>();
-        
-        const collectDescendants = (task: Task): void => {
-            tasksToMove.add(task);
-            taskIdsToMove.add(task.id);
-            
-            // Recursively collect all descendants
-            this.projectController.getChildren(task.id).forEach(child => {
-                collectDescendants(child);
-            });
-        };
-        
-        topLevelSelected.forEach(task => collectDescendants(task));
-        
-        // =========================================================================
-        // VALIDATE: Prevent circular reference (can't drop parent onto descendant)
-        // =========================================================================
-        
-        if (taskIdsToMove.has(targetId)) {
-            this.toastService.warning('Cannot drop a task onto its own descendant');
-            return;
-        }
-        
-        // Also check if target is inside any task being moved
-        let checkParent = targetTask.parentId;
-        while (checkParent) {
-            if (taskIdsToMove.has(checkParent)) {
-                this.toastService.warning('Cannot drop a task onto its own descendant');
-                return;
-            }
-            const parent = this.projectController.getTaskById(checkParent);
-            checkParent = parent?.parentId ?? null;
-        }
-        
-        // =========================================================================
-        // SAVE CHECKPOINT FOR UNDO
-        // =========================================================================
-        
-        this.saveCheckpoint();
-        
-        // =========================================================================
-        // DETERMINE NEW PARENT AND SORT KEY POSITION
-        // =========================================================================
-        
-        let newParentId: string | null;
-        let beforeKey: string | null;
-        let afterKey: string | null;
-        
-        if (position === 'child') {
-            // =====================================================================
-            // CHILD POSITION: Make dragged tasks children of target
-            // =====================================================================
-            newParentId = targetId;
-            
-            // Append to end of target's children
-            const existingChildren = this.projectController.getChildren(targetId);
-            beforeKey = existingChildren.length > 0 
-                ? existingChildren[existingChildren.length - 1].sortKey ?? null 
-                : null;
-            afterKey = null;
-            
-            // If target was collapsed, expand it to show the newly added children
-            if (targetTask._collapsed) {
-                this.projectController.updateTask(targetId, { _collapsed: false });
-            }
-            
-        } else if (position === 'before') {
-            // =====================================================================
-            // BEFORE POSITION: Insert before target (same parent level)
-            // =====================================================================
-            newParentId = targetTask.parentId ?? null;
-            
-            // Get siblings at target's level
-            const siblings = this.projectController.getChildren(newParentId);
-            const targetIndex = siblings.findIndex(t => t.id === targetId);
-            
-            // beforeKey = previous sibling's key (or null if first)
-            beforeKey = targetIndex > 0 ? siblings[targetIndex - 1].sortKey ?? null : null;
-            // afterKey = target's key
-            afterKey = targetTask.sortKey ?? null;
-            
-        } else {
-            // =====================================================================
-            // AFTER POSITION: Insert after target (same parent level)
-            // =====================================================================
-            newParentId = targetTask.parentId ?? null;
-            
-            // Get siblings at target's level
-            const siblings = this.projectController.getChildren(newParentId);
-            const targetIndex = siblings.findIndex(t => t.id === targetId);
-            
-            // beforeKey = target's key
-            beforeKey = targetTask.sortKey ?? null;
-            // afterKey = next sibling's key (or null if last)
-            afterKey = targetIndex < siblings.length - 1 
-                ? siblings[targetIndex + 1].sortKey ?? null 
-                : null;
-        }
-        
-        // =========================================================================
-        // GENERATE SORT KEYS FOR MOVED TASKS
-        // =========================================================================
-        
-        // Generate keys for top-level selected tasks (they get inserted at the drop position)
-        const sortKeys = OrderingService.generateBulkKeys(
-            beforeKey,
-            afterKey,
-            topLevelSelected.length
-        );
-        
-        // =========================================================================
-        // UPDATE TOP-LEVEL TASKS (change parentId and sortKey)
-        // =========================================================================
-        
-        topLevelSelected.forEach((task, index) => {
-            this.projectController.updateTask(task.id, {
-                parentId: newParentId,
-                sortKey: sortKeys[index]
-            });
-        });
-        
-        // NOTE: Descendants keep their parentId unchanged (they stay as children of their original parent)
-        // They will automatically move with their parent because the hierarchy is preserved
-        
-        // NOTE: ProjectController handles recalc/save via Worker
-        
-        // =========================================================================
-        // USER FEEDBACK
-        // =========================================================================
-        
-        const totalMoved = tasksToMove.size;
-        const topLevelCount = topLevelSelected.length;
-        
-        if (totalMoved === 1) {
-            this.toastService.success('Task moved');
-        } else if (totalMoved === topLevelCount) {
-            this.toastService.success(`Moved ${totalMoved} tasks`);
-        } else {
-            this.toastService.success(`Moved ${topLevelCount} task(s) with ${totalMoved - topLevelCount} children`);
-        }
+        this.taskOperations.handleRowMove(taskIds, targetId, position);
     }
 
     /**
@@ -2133,102 +1961,30 @@ export class SchedulerService {
     /**
      * Add a new task - ALWAYS appends to bottom of siblings
      * Uses fractional indexing for bulletproof ordering
+     * 
+     * Phase 2 Decomposition: Delegates to TaskOperationsService
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     addTask(taskData: Partial<Task> = {}): Promise<Task | undefined> {
-        if (!this.isInitialized) {
+        if (!this.taskOperations) {
+            console.warn('[SchedulerService] TaskOperationsService not initialized');
             return Promise.resolve(undefined);
         }
-        
-        const controller = this.projectController;
-        
-        return this.operationQueue.enqueue(async () => {
-            this.saveCheckpoint();
-            
-            // Determine parent
-            let parentId: string | null = taskData.parentId ?? null;
-            const currentFocusedId = this.selectionModel.getFocusedId();
-            if (currentFocusedId && taskData.parentId === undefined) {
-                const focusedTask = controller.getTaskById(currentFocusedId);
-                if (focusedTask) {
-                    parentId = focusedTask.parentId ?? null;
-                }
-            }
-            
-            // Generate sort key (now guaranteed to see latest state)
-            const lastSortKey = controller.getLastSortKey(parentId);
-            const sortKey = OrderingService.generateAppendKey(lastSortKey);
-            
-            const today = DateUtils.today();
-            const taskId = `task_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            
-            const task: Task = {
-                id: taskId,
-                rowType: 'task',  // Explicitly set rowType
-                name: taskData.name || 'New Task',
-                start: taskData.start || today,
-                end: taskData.end || today,
-                duration: taskData.duration || 1,
-                parentId: parentId,
-                dependencies: taskData.dependencies || [],
-                progress: taskData.progress || 0,
-                constraintType: taskData.constraintType || 'asap',
-                constraintDate: taskData.constraintDate || null,
-                notes: taskData.notes || '',
-                level: 0,
-                sortKey: sortKey,
-                _collapsed: false,
-            } as Task;
-            
-            // Fire-and-forget to ProjectController (handles optimistic update + worker + persistence)
-            controller.addTask(task);
-            
-            // Update UI state
-            this.selectionModel.setSelection(new Set([task.id]), task.id, [task.id]);
-            
-            // Pass focusCell: true to focus the name input for immediate editing
-            if (this.grid) {
-                this.grid.setSelection(this.selectedIds, this.selectionModel.getFocusedId(), { focusCell: true, focusField: 'name' });
-            }
-            if (this.gantt) {
-                this.gantt.setSelection(this.selectedIds);
-            }
-            this._updateHeaderCheckboxState();
-            
-            // NOTE: Removed recalculateAll(), engine sync, saveData(), render()
-            // ProjectController handles these via Worker + optimistic updates
-            // SchedulerViewport subscribes to controller.tasks$ and auto-renders
-            
-            this.toastService?.success('Task added');
-            return task;
-        });
+        return this.taskOperations.addTask(taskData);
     }
 
     /**
      * Delete a task and its children
+     * 
+     * Phase 2 Decomposition: Delegates to TaskOperationsService
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     deleteTask(taskId: string): void {
-        const editingManager = this.editingStateManager;
-        const controller = this.projectController;
-        
-        if (editingManager.isEditingTask(taskId)) {
-            editingManager.exitEditMode('task-deleted');
+        if (!this.taskOperations) {
+            console.warn('[SchedulerService] TaskOperationsService not initialized');
+            return;
         }
-        
-        // Fire-and-forget to ProjectController (handles optimistic update + worker + persistence)
-        // ProjectController.deleteTask() also handles descendants
-        controller.deleteTask(taskId);
-        
-        // Update UI state
-        this.selectionModel.removeFromSelection([taskId]);
-        if (this.selectionModel.getFocusedId() === taskId) {
-            this.selectionModel.setFocus(null);
-        }
-
-        // NOTE: Removed recalculateAll(), engine sync, saveData(), render()
-        // ProjectController handles these via Worker + optimistic updates
-        // SchedulerViewport subscribes to controller.tasks$ and auto-renders
-        
-        this.toastService.success('Task deleted');
+        this.taskOperations.deleteTask(taskId);
     }
 
     /**
@@ -2242,95 +1998,44 @@ export class SchedulerService {
 
     /**
      * Toggle collapse state
-     * @param taskId - Task ID
+     * 
+     * Phase 2 Decomposition: Delegates to TaskOperationsService
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     toggleCollapse(taskId: string): void {
-        // PHASE 2: Delegate to CommandService
-        this.commandService.execute('view.toggleCollapse', { args: { taskId } });
+        if (!this.taskOperations) {
+            console.warn('[SchedulerService] TaskOperationsService not initialized');
+            return;
+        }
+        this.taskOperations.toggleCollapse(taskId);
     }
 
     /**
      * Indent a task (make it a child of previous sibling)
+     * 
+     * Phase 2 Decomposition: Delegates to TaskOperationsService
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     indent(taskId: string): void {
-        const controller = this.projectController;
-        const task = controller.getTaskById(taskId);
-        if (!task) return;
-
-        const list = controller.getVisibleTasks((id) => {
-            const t = controller.getTaskById(id);
-            return t?._collapsed || false;
-        });
-        
-        const idx = list.findIndex(t => t.id === taskId);
-        if (idx <= 0) return;
-        
-        const prev = list[idx - 1];
-        const taskDepth = controller.getDepth(taskId);
-        const prevDepth = controller.getDepth(prev.id);
-        
-        if (prevDepth < taskDepth) return;
-        
-        let newParentId: string | null = null;
-        
-        if (prevDepth === taskDepth) {
-            newParentId = prev.id;
-        } else {
-            let curr: Task | undefined = prev;
-            while (curr && controller.getDepth(curr.id) > taskDepth) {
-                curr = curr.parentId ? controller.getTaskById(curr.parentId) : undefined;
-            }
-            if (curr) {
-                newParentId = curr.id;
-            }
+        if (!this.taskOperations) {
+            console.warn('[SchedulerService] TaskOperationsService not initialized');
+            return;
         }
-        
-        if (newParentId !== null) {
-            // Generate new sort key for new parent's children
-            const newSortKey = OrderingService.generateAppendKey(
-                controller.getLastSortKey(newParentId)
-            );
-            
-            // Fire-and-forget to ProjectController
-            controller.moveTask(taskId, newParentId, newSortKey);
-            
-            // NOTE: Removed recalculateAll(), saveData(), render()
-        }
+        this.taskOperations.indent(taskId);
     }
 
     /**
      * Outdent a task (move to parent's level)
+     * 
+     * Phase 2 Decomposition: Delegates to TaskOperationsService
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     outdent(taskId: string): void {
-        const controller = this.projectController;
-        const task = controller.getTaskById(taskId);
-        if (!task || !task.parentId) return;
-
-        const parent = controller.getTaskById(task.parentId);
-        const newParentId = parent ? parent.parentId : null;
-        
-        // Generate sort key to insert after former parent
-        const siblings = controller.getChildren(newParentId);
-        const parentIndex = siblings.findIndex(t => t.id === task.parentId);
-        
-        let newSortKey: string;
-        if (parentIndex >= 0 && parentIndex < siblings.length - 1) {
-            // Insert between parent and next sibling
-            newSortKey = OrderingService.generateInsertKey(
-                siblings[parentIndex].sortKey ?? null,
-                siblings[parentIndex + 1].sortKey ?? null
-            );
-        } else {
-            // Insert at end
-            newSortKey = OrderingService.generateAppendKey(
-                controller.getLastSortKey(newParentId)
-            );
+        if (!this.taskOperations) {
+            console.warn('[SchedulerService] TaskOperationsService not initialized');
+            return;
         }
-        
-        // Fire-and-forget to ProjectController
-        controller.moveTask(taskId, newParentId, newSortKey);
-        
-        // NOTE: Removed recalculateAll(), saveData(), render()
+        this.taskOperations.outdent(taskId);
     }
 
     /**
@@ -2436,126 +2141,59 @@ export class SchedulerService {
 
     /**
      * Insert blank row above a task
+     * 
+     * Phase 2 Decomposition: Delegates to TaskOperationsService
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     insertBlankRowAbove(taskId: string): void {
-        const controller = this.projectController;
-        const task = controller.getTaskById(taskId);
-        if (!task) return;
-        
-        this.saveCheckpoint();
-        
-        // Get siblings to find sort key position
-        const siblings = controller.getChildren(task.parentId);
-        const taskIndex = siblings.findIndex(s => s.id === taskId);
-        
-        const beforeKey = taskIndex > 0 ? siblings[taskIndex - 1].sortKey : null;
-        const afterKey = task.sortKey;
-        
-        const newSortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
-        // Fire-and-forget to ProjectController
-        const blankRow = controller.createBlankRow(newSortKey, task.parentId);
-        
-        // Select the new blank row
-        this.selectionModel.setSelection(new Set([blankRow.id]), blankRow.id, [blankRow.id]);
-        
-        // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
-        
-        // Scroll to and highlight the new row
-        if (this.grid) {
-            this.grid.scrollToTask(blankRow.id);
-            this.grid.highlightCell(blankRow.id, 'name');
+        if (!this.taskOperations) {
+            console.warn('[SchedulerService] TaskOperationsService not initialized');
+            return;
         }
+        this.taskOperations.insertBlankRowAbove(taskId);
     }
 
     /**
      * Insert blank row below a task
+     * 
+     * Phase 2 Decomposition: Delegates to TaskOperationsService
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     insertBlankRowBelow(taskId: string): void {
-        const controller = this.projectController;
-        const task = controller.getTaskById(taskId);
-        if (!task) return;
-        
-        this.saveCheckpoint();
-        
-        // Get siblings to find sort key position
-        const siblings = controller.getChildren(task.parentId);
-        const taskIndex = siblings.findIndex(s => s.id === taskId);
-        
-        const beforeKey = task.sortKey;
-        const afterKey = taskIndex < siblings.length - 1 ? siblings[taskIndex + 1].sortKey : null;
-        
-        const newSortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
-        // Fire-and-forget to ProjectController
-        const blankRow = controller.createBlankRow(newSortKey, task.parentId);
-        
-        // Select the new blank row
-        this.selectionModel.setSelection(new Set([blankRow.id]), blankRow.id, [blankRow.id]);
-        
-        // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
-        
-        // Scroll to and highlight the new row
-        if (this.grid) {
-            this.grid.scrollToTask(blankRow.id);
-            this.grid.highlightCell(blankRow.id, 'name');
+        if (!this.taskOperations) {
+            console.warn('[SchedulerService] TaskOperationsService not initialized');
+            return;
         }
+        this.taskOperations.insertBlankRowBelow(taskId);
     }
 
     /**
      * Wake up a blank row (convert to task and enter edit mode)
      * Called when user double-clicks a blank row
+     * 
+     * Phase 2 Decomposition: Delegates to TaskOperationsService
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     wakeUpBlankRow(taskId: string): void {
-        const controller = this.projectController;
-        const task = controller.getTaskById(taskId);
-        if (!task || !controller.isBlankRow(taskId)) {
+        if (!this.taskOperations) {
+            console.warn('[SchedulerService] TaskOperationsService not initialized');
             return;
         }
-        
-        this.saveCheckpoint();
-        
-        // Fire-and-forget to ProjectController
-        const wokenTask = controller.wakeUpBlankRow(taskId);
-        if (!wokenTask) return;
-        
-        // Update selection state
-        this.selectionModel.setSelection(new Set([taskId]), taskId, [taskId]);
-        this.selectionModel.setFocus(taskId, 'name');
-        
-        // NOTE: Removed recalculateAll(), render() - ProjectController handles via Worker
-        
-        // Wait for the next paint frame before focusing (allows reactive update to propagate)
-        requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                this.enterEditMode();
-            });
-        });
+        this.taskOperations.wakeUpBlankRow(taskId);
     }
 
     /**
      * Convert a blank row to a task
+     * 
+     * Phase 2 Decomposition: Delegates to TaskOperationsService
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     convertBlankToTask(taskId: string): void {
-        const controller = this.projectController;
-        
-        if (!controller.isBlankRow(taskId)) {
-            this.toastService?.error('Only blank rows can be converted');
+        if (!this.taskOperations) {
+            console.warn('[SchedulerService] TaskOperationsService not initialized');
             return;
         }
-        
-        this.saveCheckpoint();
-        
-        // Fire-and-forget to ProjectController
-        const task = controller.wakeUpBlankRow(taskId, 'New Task');
-        if (!task) return;
-        
-        // NOTE: Removed recalculateAll(), saveData(), render() - ProjectController handles via Worker
-        
-        // Focus the name field for immediate editing
-        if (this.grid) {
-            setTimeout(() => {
-                this.grid?.focusCell(taskId, 'name');
-            }, 50);
-        }
+        this.taskOperations.convertBlankToTask(taskId);
     }
 
     /**
@@ -2579,167 +2217,46 @@ export class SchedulerService {
     /**
      * Indent all selected tasks
      * Processes top-level selections only (children move with parents)
+     * 
+     * Phase 2 Decomposition: Delegates to TaskOperationsService
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     indentSelected(): void {
-        if (this.selectionModel.getSelectionCount() === 0) {
-            this.toastService?.info('No tasks selected');
+        if (!this.taskOperations) {
+            console.warn('[SchedulerService] TaskOperationsService not initialized');
             return;
         }
-        
-        this.saveCheckpoint();
-        
-        const list = this._getFlatList();
-        const selectedIds = new Set(this.selectionModel.getSelectedIds());
-        
-        // Get top-level selected tasks (parent not in selection)
-        const topLevelSelected = list.filter(task =>
-            selectedIds.has(task.id) &&
-            (!task.parentId || !selectedIds.has(task.parentId))
-        );
-        
-        // Process in visual order (top to bottom)
-        let indentedCount = 0;
-        for (const task of topLevelSelected) {
-            const idx = list.findIndex(t => t.id === task.id);
-            if (idx <= 0) continue;
-            
-            const prev = list[idx - 1];
-            const taskDepth = this.projectController.getDepth(task.id);
-            const prevDepth = this.projectController.getDepth(prev.id);
-            
-            // Can only indent if prev is at same or higher depth
-            if (prevDepth < taskDepth) continue;
-            
-            let newParentId: string | null = null;
-            if (prevDepth === taskDepth) {
-                newParentId = prev.id;
-            } else {
-                let curr: Task | undefined = prev;
-                while (curr && this.projectController.getDepth(curr.id) > taskDepth) {
-                    curr = curr.parentId ? this.projectController.getTaskById(curr.parentId) : undefined;
-                }
-                if (curr) newParentId = curr.id;
-            }
-            
-            if (newParentId !== null) {
-                const newSortKey = OrderingService.generateAppendKey(
-                    this.projectController.getLastSortKey(newParentId)
-                );
-                this.projectController.moveTask(task.id, newParentId, newSortKey);
-                indentedCount++;
-            }
-        }
-        
-        if (indentedCount > 0) {
-            // NOTE: ProjectController handles recalc/save via Worker
-            this.toastService?.success(`Indented ${indentedCount} task${indentedCount > 1 ? 's' : ''}`);
-        }
+        this.taskOperations.indentSelected();
     }
 
     /**
      * Outdent all selected tasks
      * Processes top-level selections only (children move with parents)
+     * 
+     * Phase 2 Decomposition: Delegates to TaskOperationsService
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     outdentSelected(): void {
-        if (this.selectionModel.getSelectionCount() === 0) {
-            this.toastService?.info('No tasks selected');
+        if (!this.taskOperations) {
+            console.warn('[SchedulerService] TaskOperationsService not initialized');
             return;
         }
-        
-        this.saveCheckpoint();
-        
-        const list = this._getFlatList();
-        const selectedIds = new Set(this.selectionModel.getSelectedIds());
-        const allTasks = this.projectController.getTasks();
-        
-        // Get top-level selected tasks
-        const topLevelSelected = list.filter(task =>
-            selectedIds.has(task.id) &&
-            (!task.parentId || !selectedIds.has(task.parentId))
-        );
-        
-        let outdentedCount = 0;
-        for (const task of topLevelSelected) {
-            if (!task.parentId) continue; // Already at root
-            
-            const currentParent = allTasks.find(t => t.id === task.parentId);
-            const grandparentId = currentParent ? currentParent.parentId : null;
-            
-            // Position after former parent among its siblings
-            const auntsUncles = this.projectController.getChildren(grandparentId);
-            const formerParentIndex = auntsUncles.findIndex(t => t.id === currentParent?.id);
-            
-            const beforeKey = currentParent?.sortKey ?? null;
-            const afterKey = formerParentIndex < auntsUncles.length - 1
-                ? auntsUncles[formerParentIndex + 1].sortKey
-                : null;
-            
-            const newSortKey = OrderingService.generateInsertKey(beforeKey, afterKey);
-            
-            this.projectController.updateTask(task.id, {
-                parentId: grandparentId,
-                sortKey: newSortKey
-            });
-            outdentedCount++;
-        }
-        
-        if (outdentedCount > 0) {
-            // NOTE: ProjectController handles recalc/save via Worker
-            this.toastService?.success(`Outdented ${outdentedCount} task${outdentedCount > 1 ? 's' : ''}`);
-        }
+        this.taskOperations.outdentSelected();
     }
 
     /**
      * Delete all selected tasks
      * Shows confirmation for multiple tasks or parent tasks
+     * 
+     * Phase 2 Decomposition: Delegates to TaskOperationsService
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     async deleteSelected(): Promise<void> {
-        if (this.selectionModel.getSelectionCount() === 0) {
-            this.toastService?.info('No tasks selected');
+        if (!this.taskOperations) {
+            console.warn('[SchedulerService] TaskOperationsService not initialized');
             return;
         }
-        
-        const selectedCount = this.selectionModel.getSelectionCount();
-        const selectedArray = this.selectionModel.getSelectedIds();
-        const hasParents = selectedArray.some(id => this.projectController.isParent(id));
-        
-        // Confirm for multiple tasks or parent tasks
-        if (selectedCount > 1 || hasParents) {
-            const childCount = hasParents
-                ? selectedArray.reduce((sum, id) => 
-                    sum + this._getAllDescendants(id).size, 0)
-                : 0;
-            
-            const message = hasParents
-                ? `Delete ${selectedCount} task${selectedCount > 1 ? 's' : ''} and ${childCount} child task${childCount !== 1 ? 's' : ''}?`
-                : `Delete ${selectedCount} tasks?`;
-            
-            const confirmed = await this._confirmAction(message, 'Delete');
-            if (!confirmed) return;
-        }
-        
-        this.saveCheckpoint();
-        
-        const editingManager = this.editingStateManager;
-        const idsToDelete = this.selectionModel.getSelectedIds();
-        
-        for (const taskId of idsToDelete) {
-            if (editingManager.isEditingTask(taskId)) {
-                editingManager.exitEditMode('task-deleted');
-            }
-            this.projectController.deleteTask(taskId);
-            this.selectionModel.removeFromSelection([taskId]);
-            // NOTE: Removed engine sync - ProjectController handles via Worker
-        }
-        
-        const currentFocusedId = this.selectionModel.getFocusedId();
-        if (currentFocusedId && idsToDelete.includes(currentFocusedId)) {
-            this.selectionModel.setFocus(null);
-        }
-        
-        // NOTE: ProjectController handles recalc/save via Worker
-        
-        this.toastService?.success(`Deleted ${idsToDelete.length} task${idsToDelete.length > 1 ? 's' : ''}`);
+        return this.taskOperations.deleteSelected();
     }
 
     /**
@@ -2939,24 +2456,16 @@ export class SchedulerService {
     /**
      * Move the focused task up (before previous sibling)
      * Only modifies the moved task's sortKey
+     * 
+     * Phase 2 Decomposition: Delegates to TaskOperationsService
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     moveSelectedTasks(direction: number): void {
-        // PHASE 2: Delegate to CommandService
-        if (direction === -1) {
-            this.commandService.execute('hierarchy.moveUp');
-        } else {
-            this.commandService.execute('hierarchy.moveDown');
+        if (!this.taskOperations) {
+            console.warn('[SchedulerService] TaskOperationsService not initialized');
+            return;
         }
-        
-        // Keep focus on moved task
-        if (this.grid) {
-            const currentFocusedId = this.selectionModel.getFocusedId();
-            if (currentFocusedId) {
-                requestAnimationFrame(() => {
-                    this.grid!.scrollToTask(currentFocusedId);
-                });
-            }
-        }
+        this.taskOperations.moveSelectedTasks(direction);
     }
 
     /**
