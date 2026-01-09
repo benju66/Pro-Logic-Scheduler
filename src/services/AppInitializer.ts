@@ -65,6 +65,8 @@ export interface AppInitializerOptions {
   selectionModel?: SelectionModel;
   /** Injected CommandService for command registry (Pure DI) */
   commandService?: import('../commands').CommandService;
+  /** Injected ViewCoordinator for reactive rendering (Phase 1 decomposition) */
+  viewCoordinator?: import('./migration/ViewCoordinator').ViewCoordinator;
 }
 
 /**
@@ -97,6 +99,7 @@ export class AppInitializer {
   private tradePartnerStore: import('../data/TradePartnerStore').TradePartnerStore | null = null;
   private selectionModel: SelectionModel | null = null;
   private commandService: import('../commands').CommandService | null = null;
+  private viewCoordinator: import('./migration/ViewCoordinator').ViewCoordinator | null = null;
   
   // Reactive saveData subscription - saves after calculations complete
   private saveDataSubscription: Subscription | null = null;
@@ -161,6 +164,7 @@ export class AppInitializer {
     this.projectController = options.projectController || null;
     this.selectionModel = options.selectionModel || null;
     this.commandService = options.commandService || null;
+    this.viewCoordinator = options.viewCoordinator || null;
     
     // Store singleton reference
     AppInitializer.instance = this;
@@ -515,6 +519,8 @@ export class AppInitializer {
       tradePartnerStore: this.tradePartnerStore || undefined,
       dataLoader: this.dataLoader || undefined,
       snapshotService: this.snapshotService || undefined,
+      // Phase 1 decomposition: ViewCoordinator for reactive rendering
+      viewCoordinator: this.viewCoordinator || undefined,
     };
     
     this.scheduler = new SchedulerService(options);

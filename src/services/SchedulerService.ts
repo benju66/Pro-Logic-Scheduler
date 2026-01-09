@@ -39,6 +39,7 @@ import { AppInitializer } from './AppInitializer';
 import { EditingStateManager, getEditingStateManager, type EditingStateChangeEvent } from './EditingStateManager';
 import { ZoomController, type IZoomableGantt, ZOOM_CONFIG } from './ZoomController';
 import { SchedulingLogicService } from './migration/SchedulingLogicService';
+import { ViewCoordinator } from './migration/ViewCoordinator';
 import { CommandService } from '../commands';
 import { getTaskFieldValue } from '../types';
 import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport';
@@ -144,6 +145,10 @@ export class SchedulerService {
     
     // Zoom controller (extracted from this class for SRP)
     private zoomController: ZoomController | null = null;
+    
+    // ViewCoordinator for reactive rendering (Phase 1 decomposition)
+    // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+    private viewCoordinator: ViewCoordinator | null = null;
 
     // UI components (initialized in init())
     public grid: VirtualScrollGridFacade | null = null;  // Public for access from AppInitializer and UIEventManager
@@ -217,6 +222,8 @@ export class SchedulerService {
         dataLoader?: DataLoader;
         snapshotService?: SnapshotService;
         editingStateManager?: EditingStateManager;
+        // Phase 1 decomposition: ViewCoordinator for reactive rendering
+        viewCoordinator?: ViewCoordinator;
     } = {} as SchedulerServiceOptions) {
         this.options = options;
         // Use isTauri from options (provided by AppInitializer)
@@ -253,6 +260,11 @@ export class SchedulerService {
         // KeyboardService is injected or created in initKeyboard()
         if (options.keyboardService) {
             this.keyboardService = options.keyboardService;
+        }
+        
+        // Phase 1 decomposition: ViewCoordinator for reactive rendering
+        if (options.viewCoordinator) {
+            this.viewCoordinator = options.viewCoordinator;
         }
 
         // Initialize services (async - will be awaited in init())
@@ -461,6 +473,25 @@ export class SchedulerService {
         if (ganttRenderer) {
             this.zoomController.setGanttRenderer(ganttRenderer);
         }
+        
+        // ─────────────────────────────────────────────────────────────────────────────
+        // Phase 1 Decomposition: Wire ViewCoordinator for reactive rendering
+        // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+        // ─────────────────────────────────────────────────────────────────────────────
+        if (!this.viewCoordinator) {
+            // Fall back to singleton if not injected
+            this.viewCoordinator = ViewCoordinator.getInstance();
+            console.log('[SchedulerService] Using ViewCoordinator from fallback');
+        } else {
+            console.log('[SchedulerService] Using injected ViewCoordinator');
+        }
+        
+        // Set component references so ViewCoordinator can update them
+        this.viewCoordinator.setComponents(this.grid, this.gantt);
+        
+        // Initialize reactive subscriptions (this activates the reactive data flow)
+        this.viewCoordinator.initSubscriptions();
+        console.log('[SchedulerService] ✅ ViewCoordinator initialized with reactive subscriptions');
 
         // ─────────────────────────────────────────────────────────────────────────────
         // Legacy drawer - now managed by RightSidebarManager
@@ -3379,9 +3410,26 @@ export class SchedulerService {
 
     /**
      * Render all views
+     * 
+     * Phase 1 Decomposition: Now delegates to ViewCoordinator for reactive rendering.
+     * ViewCoordinator handles visual row numbering, data updates, and render scheduling.
+     * 
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md - Phase 1
      */
     render(): void {
-        // Batch renders for performance
+        // Phase 1: Delegate to ViewCoordinator for reactive rendering
+        // ViewCoordinator handles:
+        // - Visual row number assignment (assignVisualRowNumbers)
+        // - Grid data updates (_updateGridData)
+        // - Gantt data updates (_updateGanttData)
+        // - Batched rendering via requestAnimationFrame
+        if (this.viewCoordinator) {
+            this.viewCoordinator.forceUpdate();
+            return;
+        }
+        
+        // Legacy fallback (only if ViewCoordinator not initialized)
+        // This should rarely execute after init() completes
         if (this._renderScheduled) return;
         
         this._renderScheduled = true;

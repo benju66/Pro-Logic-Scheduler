@@ -185,7 +185,9 @@ async function initApp(): Promise<void> {
             tradePartnerStore,
             projectController,
             selectionModel,
-            commandService
+            commandService,
+            // Phase 1 decomposition: ViewCoordinator for reactive rendering
+            viewCoordinator
         });
         
         // Expose AppInitializer for E2E testing

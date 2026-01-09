@@ -294,6 +294,11 @@ export class ViewCoordinator {
         if (!this.grid || !this.projectController) return;
         
         const controller = this.projectController;
+        
+        // Assign visual row numbers before building grid data
+        // This ensures row numbers are current before rendering
+        this.assignVisualRowNumbers();
+        
         const visibleTasks = controller.getVisibleTasks(id => {
             const task = controller.getTaskById(id);
             return task?._collapsed || false;
@@ -310,6 +315,66 @@ export class ViewCoordinator {
         }));
         
         this.grid.data = gridData;
+    }
+    
+    // =========================================================================
+    // VISUAL ROW NUMBERING
+    // =========================================================================
+    
+    /**
+     * Assign visual row numbers to tasks, skipping blank and phantom rows.
+     * This enables "logical numbering" in the UI where blank rows don't 
+     * consume numbers in the sequence.
+     * 
+     * CRITICAL: Uses hierarchical traversal (not flat getAll()) to ensure
+     * numbers follow visual tree order. getAll() returns insertion order,
+     * which doesn't match the display order determined by parentId + sortKey.
+     * 
+     * Note: Traverses ALL tasks including collapsed children. This ensures
+     * row numbers remain stable when collapsing/expanding (standard scheduling
+     * software behavior - row numbers don't change based on visibility).
+     * 
+     * Called before each render to ensure row numbers are always current.
+     * 
+     * Moved from SchedulerService._assignVisualRowNumbers() as part of 
+     * Phase 1 decomposition.
+     * 
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md - Phase 1
+     */
+    public assignVisualRowNumbers(): void {
+        if (!this.projectController) return;
+        
+        const controller = this.projectController;
+        let counter = 1;
+        
+        /**
+         * Recursive traversal following visual tree order
+         * @param parentId - Parent task ID (null for root level)
+         */
+        const traverse = (parentId: string | null): void => {
+            // getChildren returns tasks SORTED by sortKey - this is critical
+            const children = controller.getChildren(parentId);
+            
+            for (const task of children) {
+                // 1. Assign number based on row type
+                if (task.rowType === 'blank' || task.rowType === 'phantom') {
+                    // Blank and phantom rows don't get a visual number
+                    task._visualRowNumber = null;
+                } else {
+                    // Regular tasks get sequential numbers
+                    task._visualRowNumber = counter++;
+                }
+                
+                // 2. Recurse into children (regardless of collapsed state)
+                // This ensures number continuity even for hidden tasks
+                if (controller.isParent(task.id)) {
+                    traverse(task.id);
+                }
+            }
+        };
+        
+        // Start traversal from root level (parentId = null)
+        traverse(null);
     }
     
     /**
