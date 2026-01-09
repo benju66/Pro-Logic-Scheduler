@@ -53,6 +53,8 @@ export interface GridAccessor {
     getScrollTop?: () => number;
     /** Set scroll position */
     setScrollTop?: (value: number) => void;
+    /** Update column definitions (Phase 9 - ColumnPreferencesService) */
+    updateColumns?: (columns: import('../../types').GridColumn[]) => void;
 }
 
 /**

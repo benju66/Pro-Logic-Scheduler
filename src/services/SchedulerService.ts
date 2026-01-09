@@ -41,6 +41,13 @@ import { ZoomController, type IZoomableGantt, ZOOM_CONFIG } from './ZoomControll
 import { SchedulingLogicService } from './migration/SchedulingLogicService';
 import { ViewCoordinator } from './migration/ViewCoordinator';
 import { TaskOperationsService } from './scheduler/TaskOperationsService';
+import { ViewStateService } from './scheduler/ViewStateService';
+import { ContextMenuService } from './scheduler/ContextMenuService';
+import { ModalCoordinator } from './scheduler/ModalCoordinator';
+import { FileOperationsService } from './scheduler/FileOperationsService';
+import { BaselineService } from './scheduler/BaselineService';
+import { TradePartnerService } from './scheduler/TradePartnerService';
+import { ColumnPreferencesService } from './scheduler/ColumnPreferencesService';
 import { CommandService } from '../commands';
 import { getTaskFieldValue } from '../types';
 import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport';
@@ -154,6 +161,35 @@ export class SchedulerService {
     // TaskOperationsService for task CRUD, hierarchy, movement (Phase 2 decomposition)
     // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
     private taskOperations: TaskOperationsService | null = null;
+    
+    // ViewStateService for view mode, navigation, edit mode (Phase 3 decomposition)
+    // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+    private viewStateService: ViewStateService | null = null;
+    
+    // ContextMenuService for right-click context menus (Phase 4 decomposition)
+    // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+    private contextMenuService: ContextMenuService | null = null;
+    
+    // ModalCoordinator for modals and panels (Phase 5 decomposition)
+    // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+    private modalCoordinator: ModalCoordinator | null = null;
+    
+    // FileOperationsService for file I/O (Phase 6 decomposition)
+    // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+    private fileOperationsService: FileOperationsService | null = null;
+    
+    // BaselineService for baseline operations (Phase 7 decomposition)
+    // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+    private baselineService: BaselineService | null = null;
+    
+    // TradePartnerService for trade partner operations (Phase 8 decomposition)
+    // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+    private tradePartnerService: TradePartnerService | null = null;
+    
+    // ColumnPreferencesService for column management (Phase 9 decomposition)
+    // ⚠️ ENCAPSULATED LEGACY: Contains direct DOM manipulation
+    // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+    private columnPreferencesService: ColumnPreferencesService | null = null;
 
     // UI components (initialized in init())
     public grid: VirtualScrollGridFacade | null = null;  // Public for access from AppInitializer and UIEventManager
@@ -378,6 +414,25 @@ export class SchedulerService {
             throw new Error('gridContainer and ganttContainer are required');
         }
 
+        // ─────────────────────────────────────────────────────────────────────────────
+        // Phase 9 Decomposition: ColumnPreferencesService (Encapsulated Legacy)
+        // MUST be initialized early because _initializeColumnCSSVariables and 
+        // _buildGridHeader are called before the grid exists.
+        // Note: getGrid() will return undefined at this point, but these early methods
+        // don't use the grid - they only manipulate DOM elements by ID.
+        // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+        // ─────────────────────────────────────────────────────────────────────────────
+        this.columnPreferencesService = new ColumnPreferencesService({
+            projectController: this.projectController,
+            selectionModel: this.selectionModel,
+            columnRegistry: this.columnRegistry,
+            toastService: this.toastService,
+            getGrid: () => this.grid,
+            render: () => this.render(),
+            updateSelection: () => this._updateSelection(),
+        });
+        console.log('[SchedulerService] ✅ ColumnPreferencesService initialized (early - for header build)');
+
         // Initialize CSS variables for column widths (must be before header build)
         this._initializeColumnCSSVariables();
 
@@ -516,7 +571,107 @@ export class SchedulerService {
             updateHeaderCheckboxState: () => this._updateHeaderCheckboxState(),
         });
         console.log('[SchedulerService] ✅ TaskOperationsService initialized');
-
+        
+        // ─────────────────────────────────────────────────────────────────────────────
+        // Phase 3 Decomposition: ViewStateService
+        // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+        // ─────────────────────────────────────────────────────────────────────────────
+        this.viewStateService = new ViewStateService({
+            projectController: this.projectController,
+            selectionModel: this.selectionModel,
+            editingStateManager: this.editingStateManager,
+            commandService: this.commandService,
+            viewCoordinator: this.viewCoordinator,
+            getGrid: () => this.grid,
+            getGantt: () => this.gantt,
+            getColumnDefinitions: () => this._getColumnDefinitions(),
+            closeDrawer: () => this.drawer?.close(),
+            isDrawerOpen: () => this.drawer?.isDrawerOpen() ?? false,
+        });
+        // Sync initial state from SchedulerService to ViewStateService
+        this.viewStateService.viewMode = this.viewMode;
+        this.viewStateService.displaySettings.highlightDependenciesOnHover = this.displaySettings.highlightDependenciesOnHover;
+        this.viewStateService.displaySettings.drivingPathMode = this.displaySettings.drivingPathMode;
+        console.log('[SchedulerService] ✅ ViewStateService initialized');
+        
+        // ─────────────────────────────────────────────────────────────────────────────
+        // Phase 4 Decomposition: ContextMenuService
+        // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+        // ─────────────────────────────────────────────────────────────────────────────
+        this.contextMenuService = new ContextMenuService({
+            insertBlankRowAbove: (taskId) => this.insertBlankRowAbove(taskId),
+            insertBlankRowBelow: (taskId) => this.insertBlankRowBelow(taskId),
+            convertBlankToTask: (taskId) => this.convertBlankToTask(taskId),
+            deleteTask: (taskId) => this.deleteTask(taskId),
+            openProperties: (taskId) => this.openProperties(taskId),
+        });
+        console.log('[SchedulerService] ✅ ContextMenuService initialized');
+        
+        // ─────────────────────────────────────────────────────────────────────────────
+        // Phase 5 Decomposition: ModalCoordinator
+        // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+        // ─────────────────────────────────────────────────────────────────────────────
+        this.modalCoordinator = new ModalCoordinator({
+            projectController: this.projectController,
+            selectionModel: this.selectionModel,
+            columnRegistry: this.columnRegistry,
+            getOpenPanelCallbacks: () => this._openPanelCallbacks,
+            onDependenciesSave: (taskId, deps) => this._handleDependenciesSave(taskId, deps),
+            onCalendarSave: (calendar) => this._handleCalendarSave(calendar),
+            onColumnPreferencesSave: (prefs) => this.updateColumnPreferences(prefs),
+            getColumnPreferences: () => this._getColumnPreferences(),
+            updateSelection: () => this._updateSelection(),
+        });
+        // Initialize modals with container
+        const modalsContainer = modalContainer || document.body;
+        this.modalCoordinator.initialize(modalsContainer);
+        console.log('[SchedulerService] ✅ ModalCoordinator initialized');
+        
+        // ─────────────────────────────────────────────────────────────────────────────
+        // Phase 6 Decomposition: FileOperationsService
+        // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+        // ─────────────────────────────────────────────────────────────────────────────
+        this.fileOperationsService = new FileOperationsService({
+            projectController: this.projectController,
+            fileService: this.fileService,
+            toastService: this.toastService,
+            persistenceService: this.persistenceService,
+            saveCheckpoint: () => this.saveCheckpoint(),
+            saveData: () => this.saveData(),
+            createSampleData: () => this._createSampleData(),
+            storageKey: SchedulerService.STORAGE_KEY,
+        });
+        console.log('[SchedulerService] ✅ FileOperationsService initialized');
+        
+        // ─────────────────────────────────────────────────────────────────────────────
+        // Phase 7 Decomposition: BaselineService
+        // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+        // ─────────────────────────────────────────────────────────────────────────────
+        this.baselineService = new BaselineService({
+            projectController: this.projectController,
+            columnRegistry: this.columnRegistry,
+            toastService: this.toastService,
+            saveCheckpoint: () => this.saveCheckpoint(),
+            saveData: () => this.saveData(),
+            rebuildGridColumns: () => this._rebuildGridColumns(),
+            getCalendar: () => this.calendar,
+        });
+        console.log('[SchedulerService] ✅ BaselineService initialized');
+        
+        // ─────────────────────────────────────────────────────────────────────────────
+        // Phase 8 Decomposition: TradePartnerService
+        // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
+        // ─────────────────────────────────────────────────────────────────────────────
+        this.tradePartnerService = new TradePartnerService({
+            projectController: this.projectController,
+            tradePartnerStore: this.tradePartnerStore,
+            persistenceService: this.persistenceService,
+            toastService: this.toastService,
+            viewCoordinator: this.viewCoordinator,
+            notifyDataChange: () => this._notifyDataChange(),
+        });
+        console.log('[SchedulerService] ✅ TradePartnerService initialized');
+        
         // ─────────────────────────────────────────────────────────────────────────────
         // Legacy drawer - now managed by RightSidebarManager
         // ─────────────────────────────────────────────────────────────────────────────
@@ -531,18 +686,19 @@ export class SchedulerService {
         //     });
         // }
 
-        // Create modals
-        const modalsContainer = modalContainer || document.body;
+        // Legacy modal creation - now handled by ModalCoordinator (Phase 5)
+        // Keeping as fallback for backward compatibility
+        const legacyModalsContainer = modalContainer || document.body;
 
         this.dependenciesModal = new DependenciesModal({
-            container: modalsContainer,
+            container: legacyModalsContainer,
             getTasks: () => this.projectController.getTasks(),
             isParent: (id) => this.projectController.isParent(id),
             onSave: (taskId, deps) => this._handleDependenciesSave(taskId, deps),
         });
 
         this.calendarModal = new CalendarModal({
-            container: modalsContainer,
+            container: legacyModalsContainer,
             onSave: (calendar) => this._handleCalendarSave(calendar),
         });
 
@@ -782,31 +938,53 @@ export class SchedulerService {
     /**
      * Get whether dependency highlighting on hover is enabled
      * @returns True if highlighting is enabled
+     * 
+     * Phase 3 Decomposition: Delegates to ViewStateService
      */
     getHighlightDependenciesOnHover(): boolean {
+        if (!this.viewStateService) {
         return this.displaySettings.highlightDependenciesOnHover;
+        }
+        return this.viewStateService.getHighlightDependenciesOnHover();
     }
 
     /**
      * Set whether dependency highlighting on hover is enabled
      * @param enabled - True to enable highlighting
+     * 
+     * Phase 3 Decomposition: Delegates to ViewStateService
      */
     setHighlightDependenciesOnHover(enabled: boolean): void {
+        if (!this.viewStateService) {
+            this.displaySettings.highlightDependenciesOnHover = enabled;
+            return;
+        }
+        this.viewStateService.setHighlightDependenciesOnHover(enabled);
+        // Keep local copy in sync
         this.displaySettings.highlightDependenciesOnHover = enabled;
     }
 
     /**
      * Toggle driving path mode
+     * 
+     * Phase 3 Decomposition: Delegates to ViewStateService
      */
     toggleDrivingPathMode(): void {
+        if (!this.viewStateService) {
         this.displaySettings.drivingPathMode = !this.displaySettings.drivingPathMode;
         this._updateGanttDrivingPathMode();
         this.render();
+            return;
+        }
+        this.viewStateService.toggleDrivingPathMode();
+        // Keep local copy in sync
+        this.displaySettings.drivingPathMode = this.viewStateService.displaySettings.drivingPathMode;
     }
 
     /**
      * Update Gantt driving path mode display
      * @private
+     * @deprecated Phase 3: Now handled by ViewStateService
      */
     private _updateGanttDrivingPathMode(): void {
         // TODO: Implement driving path visualization in GanttRenderer
@@ -822,7 +1000,15 @@ export class SchedulerService {
      * STRANGLER FIG: Now uses ColumnRegistry instead of inline definitions
      * @private
      */
+    /**
+     * Get column definitions
+     * Phase 9 Decomposition: Delegates to ColumnPreferencesService
+     * @private
+     */
     private _getColumnDefinitions(): GridColumn[] {
+        if (this.columnPreferencesService) {
+            return this.columnPreferencesService.getColumnDefinitions();
+        }
         const registry = this.columnRegistry;
         const prefs = this._getColumnPreferences();
         return registry.getGridColumns(prefs);
@@ -833,289 +1019,74 @@ export class SchedulerService {
 
     /**
      * Get column preferences from localStorage
+     * Phase 9 Decomposition: Delegates to ColumnPreferencesService
      * @private
      */
     private _getColumnPreferences(): ColumnPreferences {
-        try {
-            const saved = localStorage.getItem('pro_scheduler_column_preferences');
-            if (saved) {
-                const parsed = JSON.parse(saved) as ColumnPreferences;
-                // Validate structure
-                if (parsed.visible && parsed.order && Array.isArray(parsed.order) && 
-                    parsed.pinned && Array.isArray(parsed.pinned)) {
-                    return parsed;
-                }
-            }
-        } catch (err) {
-            console.warn('[SchedulerService] Failed to load column preferences:', err);
-        }
-        
-        // Return defaults
-        return this._getDefaultColumnPreferences();
+        return this.columnPreferencesService!.getPreferences();
     }
 
     /**
      * Get default column preferences
-     * STRANGLER FIG: Now uses ColumnRegistry
+     * Phase 9 Decomposition: Delegates to ColumnPreferencesService
      * @private
      */
     private _getDefaultColumnPreferences(): ColumnPreferences {
-        return this.columnRegistry.getDefaultPreferences();
+        return this.columnPreferencesService!.getDefaultPreferences();
     }
 
     /**
      * Save column preferences to localStorage
+     * Phase 9 Decomposition: Delegates to ColumnPreferencesService
      * @private
      */
     private _saveColumnPreferences(prefs: ColumnPreferences): void {
-        try {
-            localStorage.setItem('pro_scheduler_column_preferences', JSON.stringify(prefs));
-        } catch (err) {
-            console.warn('[SchedulerService] Failed to save column preferences:', err);
-        }
+        this.columnPreferencesService!.savePreferences(prefs);
     }
 
     /**
      * Update column preferences and rebuild grid
+     * Phase 9 Decomposition: Delegates to ColumnPreferencesService
      * @param preferences - New column preferences
      */
     updateColumnPreferences(preferences: ColumnPreferences): void {
-        // Validate: at least one column must be visible
-        const visibleCount = Object.values(preferences.visible).filter(v => v).length;
-        if (visibleCount === 0) {
-            this.toastService?.show('At least one column must be visible', 'error');
-            return;
-        }
-        
-        // Validate: order must contain all visible columns
-        const visibleIds = Object.keys(preferences.visible).filter(id => preferences.visible[id]);
-        const orderSet = new Set(preferences.order);
-        const missingInOrder = visibleIds.filter(id => !orderSet.has(id));
-        if (missingInOrder.length > 0) {
-            // Add missing columns to end of order
-            preferences.order.push(...missingInOrder);
-        }
-        
-        // Save preferences
-        this._saveColumnPreferences(preferences);
-        
-        // Rebuild grid with new preferences
-        this._rebuildGridColumns();
-        
-        // Re-initialize column resizers (columns may have changed)
-        // Note: UIEventManager will handle this, but we trigger it here
-        setTimeout(() => {
-            const uiEventManager = (window as any).uiEventManager;
-            if (uiEventManager?.initColumnResizers) {
-                uiEventManager.initColumnResizers();
-            }
-        }, 100);
-        
-        this.toastService?.show('Column preferences saved', 'success');
+        this.columnPreferencesService!.updatePreferences(preferences);
     }
 
     /**
      * Build the grid header dynamically from column definitions
+     * Phase 9 Decomposition: Delegates to ColumnPreferencesService
      * @private
      */
     private _buildGridHeader(): void {
-        const headerContent = document.getElementById('grid-header-content');
-        if (!headerContent) {
-            console.warn('[SchedulerService] Grid header content container not found');
-            return;
-        }
-
-        const columns = this._getColumnDefinitions();
-        
-        // Clear existing header
-        headerContent.innerHTML = '';
-
-        // Build header cells from column definitions
-        columns.forEach(col => {
-            // Check if column should be visible
-            const isVisible = col.visible === undefined 
-                ? true 
-                : typeof col.visible === 'function' 
-                    ? col.visible() 
-                    : col.visible;
-
-            if (!isVisible) return;
-
-            const headerCell = document.createElement('div');
-            headerCell.className = 'grid-header-cell';
-            headerCell.setAttribute('data-field', col.field);
-            
-            // Set width using CSS variable
-            headerCell.style.width = `var(--w-${col.field}, ${col.width}px)`;
-            
-            // Set alignment
-            if (col.align === 'center' || col.align === 'right') {
-                headerCell.style.justifyContent = col.align === 'center' ? 'center' : 'flex-end';
-            } else {
-                headerCell.style.justifyContent = 'flex-start';
-            }
-
-            // Add header class if specified
-            if (col.headerClass) {
-                headerCell.classList.add(...col.headerClass.split(' '));
-            }
-
-            // Build header content based on column type
-            if (col.type === 'drag') {
-                headerCell.innerHTML = `
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.4">
-                        <circle cx="9" cy="5" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="19" r="1"/>
-                        <circle cx="15" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="19" r="1"/>
-                    </svg>
-                `;
-            } else if (col.type === 'checkbox') {
-                // Create functional checkbox for select/deselect all
-                const checkbox = document.createElement('input');
-                checkbox.type = 'checkbox';
-                checkbox.className = 'header-checkbox-select-all';
-                checkbox.title = 'Select/Deselect all visible tasks';
-                checkbox.style.cssText = `
-                    width: 14px;
-                    height: 14px;
-                    cursor: pointer;
-                    accent-color: #6366f1;
-                    outline: none;
-                    border: none;
-                `;
-                
-                // Update checkbox state based on current selection
-                this._updateHeaderCheckboxState(checkbox);
-                
-                // Handle click to select/deselect all visible tasks
-                checkbox.addEventListener('click', (e) => {
-                    e.stopPropagation();
-                    this._handleSelectAllClick(checkbox);
-                });
-                
-                headerCell.appendChild(checkbox);
-            } else {
-                // Text columns: wrap in span for truncation
-                const textSpan = document.createElement('span');
-                textSpan.className = 'grid-header-cell-text';
-                textSpan.textContent = col.label;
-                headerCell.appendChild(textSpan);
-                
-                // Check truncation after render and add tooltip if needed
-                requestAnimationFrame(() => {
-                    if (textSpan.scrollWidth > textSpan.clientWidth) {
-                        headerCell.setAttribute('title', col.label);
-                    }
-                });
-            }
-
-            // Add resizer if column is resizable
-            const isResizable = col.resizable !== undefined ? col.resizable : (col.type !== 'drag' && col.type !== 'checkbox');
-            if (isResizable) {
-                const resizer = document.createElement('div');
-                resizer.className = 'col-resizer';
-                resizer.setAttribute('data-field', col.field);
-                headerCell.appendChild(resizer);
-            }
-
-            // Apply sticky positioning for pinned columns
-            if (col.headerClass?.includes('pinned')) {
-                const pinnedIndex = columns.slice(0, columns.indexOf(col))
-                    .filter(c => c.headerClass?.includes('pinned')).length;
-                const leftOffset = this._calculateStickyLeft(pinnedIndex, columns);
-                headerCell.style.left = leftOffset;
-            }
-
-            headerContent.appendChild(headerCell);
-        });
-
-        console.log('[SchedulerService] ✅ Grid header built with', columns.length, 'columns');
-        
-        // Set up bidirectional scroll sync: header → grid
-        this._initHeaderScrollSync();
+        this.columnPreferencesService!.buildGridHeader();
     }
 
     /**
      * Calculate left offset for sticky column
+     * Phase 9 Decomposition: Delegates to ColumnPreferencesService
      * @private
      */
     private _calculateStickyLeft(pinnedIndex: number, columns: GridColumn[]): string {
-        const prefs = this._getColumnPreferences();
-        const pinnedColumns = columns.filter(c => prefs.pinned.includes(c.id)).slice(0, pinnedIndex);
-        
-        if (pinnedColumns.length === 0) return '0px';
-        
-        // Build calc() expression using CSS variables
-        const widths = pinnedColumns.map(col => `var(--w-${col.field}, ${col.width || 100}px)`);
-        return `calc(${widths.join(' + ')})`;
+        return this.columnPreferencesService!.calculateStickyLeft(pinnedIndex, columns);
     }
 
     /**
      * Initialize header scroll sync (header → grid)
+     * Phase 9 Decomposition: Delegates to ColumnPreferencesService
      * @private
      */
     private _initHeaderScrollSync(): void {
-        const header = document.getElementById('grid-header');
-        const gridContainer = document.getElementById('grid-container');
-        if (!header || !gridContainer) return;
-        
-        // Sync header horizontal scroll with grid-container horizontal scroll
-        // The grid-container now handles its own horizontal scrolling
-        let isSyncing = false;
-        
-        gridContainer.addEventListener('scroll', () => {
-            if (isSyncing) return;
-            isSyncing = true;
-            header.scrollLeft = gridContainer.scrollLeft;
-            isSyncing = false;
-        }, { passive: true });
-        
-        header.addEventListener('scroll', () => {
-            if (isSyncing) return;
-            isSyncing = true;
-            gridContainer.scrollLeft = header.scrollLeft;
-            isSyncing = false;
-        }, { passive: true });
+        this.columnPreferencesService!.initHeaderScrollSync();
     }
 
     /**
      * Initialize CSS variables for column widths from column definitions
+     * Phase 9 Decomposition: Delegates to ColumnPreferencesService
      * @private
      */
     private _initializeColumnCSSVariables(): void {
-        const gridPane = document.getElementById('grid-pane');
-        if (!gridPane) {
-            console.warn('[SchedulerService] Grid pane not found for CSS variable initialization');
-            return;
-        }
-
-        const columns = this._getColumnDefinitions();
-        
-        // Load saved widths from localStorage first
-        try {
-            const saved = localStorage.getItem('pro_scheduler_column_widths');
-            if (saved) {
-                const savedWidths = JSON.parse(saved) as Record<string, number>;
-                columns.forEach(col => {
-                    if (savedWidths[col.field]) {
-                        gridPane.style.setProperty(`--w-${col.field}`, `${savedWidths[col.field]}px`);
-                        return;
-                    }
-                });
-            }
-        } catch (err) {
-            console.warn('[SchedulerService] Failed to load saved column widths:', err);
-        }
-
-        // Set default widths for columns that don't have saved values
-        columns.forEach(col => {
-            const varName = `--w-${col.field}`;
-            const currentValue = gridPane.style.getPropertyValue(varName);
-            if (!currentValue) {
-                gridPane.style.setProperty(varName, `${col.width}px`);
-            }
-        });
-
-        console.log('[SchedulerService] ✅ CSS variables initialized for', columns.length, 'columns');
+        this.columnPreferencesService!.initializeColumnCSSVariables();
     }
 
     // =========================================================================
@@ -1131,188 +1102,64 @@ export class SchedulerService {
     /**
      * Check if baseline has been set for any task
      * @returns True if baseline exists
+     * 
+     * Phase 7 Decomposition: Delegates to BaselineService
      */
     hasBaseline(): boolean {
-        if (this._hasBaseline) return true;
-        
-        // Check if any task has baseline data
-        const hasBaselineData = this.tasks.some(task => 
-            task.baselineStart !== null && task.baselineStart !== undefined ||
-            task.baselineFinish !== null && task.baselineFinish !== undefined
-        );
-        
-        this._hasBaseline = hasBaselineData;
-        
-        // STRANGLER FIG: Sync baseline column visibility with registry
-        if (hasBaselineData) {
-            const registry = this.columnRegistry;
-            const baselineColumnIds = ['baselineStart', 'actualStart', 'startVariance', 'baselineFinish', 'actualFinish', 'finishVariance'];
-            registry.setColumnsVisibility(baselineColumnIds, true);
-        }
-        
-        return hasBaselineData;
+        const result = this.baselineService!.hasBaseline();
+        this._hasBaseline = this.baselineService!.hasBaselineState;
+        return result;
     }
 
     /**
      * Set baseline from current schedule
      * Saves current start/end/duration as baseline for all tasks
+     * 
+     * Phase 7 Decomposition: Delegates to BaselineService
      */
     setBaseline(): void {
-        const isUpdate = this._hasBaseline;
-        console.log(`[SchedulerService] ${isUpdate ? 'Updating' : 'Saving'} baseline...`);
-        
-        this.saveCheckpoint();
-        
-        let baselineCount = 0;
-        this.tasks.forEach(task => {
-            if (task.start && task.end && task.duration) {
-                task.baselineStart = task.start;
-                task.baselineFinish = task.end;
-                task.baselineDuration = task.duration;
-                baselineCount++;
-            }
-        });
-        
-        this._hasBaseline = baselineCount > 0;
-        
-        // STRANGLER FIG: Set baseline column visibility via ColumnRegistry
-        const registry = this.columnRegistry;
-        const baselineColumnIds = ['baselineStart', 'actualStart', 'startVariance', 'baselineFinish', 'actualFinish', 'finishVariance'];
-        registry.setColumnsVisibility(baselineColumnIds, this._hasBaseline);
-        
-        // Rebuild grid columns to show actual/variance columns
-        this._rebuildGridColumns();
-        
-        // Update UI button visibility
-        this._updateBaselineButtonVisibility();
-        
-        this.saveData();
-        const action = isUpdate ? 'updated' : 'saved';
-        this.toastService.success(`Baseline ${action} for ${baselineCount} task${baselineCount !== 1 ? 's' : ''}`);
-        
-        console.log(`[SchedulerService] ✅ Baseline ${action} for`, baselineCount, 'tasks');
+        this.baselineService!.setBaseline();
+        this._hasBaseline = this.baselineService!.hasBaselineState;
     }
 
     /**
      * Clear baseline data from all tasks
+     * 
+     * Phase 7 Decomposition: Delegates to BaselineService
      */
     clearBaseline(): void {
-        console.log('[SchedulerService] Clearing baseline...');
-        
-        this.saveCheckpoint();
-        
-        let clearedCount = 0;
-        this.tasks.forEach(task => {
-            if (task.baselineStart !== null || task.baselineFinish !== null) {
-                task.baselineStart = null;
-                task.baselineFinish = null;
-                task.baselineDuration = undefined;
-                clearedCount++;
-            }
-        });
-        
-        this._hasBaseline = false;
-        
-        // STRANGLER FIG: Hide baseline columns via ColumnRegistry
-        const registry = this.columnRegistry;
-        const baselineColumnIds = ['baselineStart', 'actualStart', 'startVariance', 'baselineFinish', 'actualFinish', 'finishVariance'];
-        registry.setColumnsVisibility(baselineColumnIds, false);
-        
-        // Rebuild grid columns to hide actual/variance columns
-        this._rebuildGridColumns();
-        
-        // Update UI button visibility
-        this._updateBaselineButtonVisibility();
-        
-        this.saveData();
-        this.toastService.success(`Baseline cleared from ${clearedCount} task${clearedCount !== 1 ? 's' : ''}`);
-        
-        console.log('[SchedulerService] ✅ Baseline cleared from', clearedCount, 'tasks');
+        this.baselineService!.clearBaseline();
+        this._hasBaseline = this.baselineService!.hasBaselineState;
     }
 
     /**
      * Update baseline button text and menu item state based on baseline existence
-     * - Button shows "Save Baseline" or "Update Baseline"
-     * - Clear menu item is disabled when no baseline exists
+     * Phase 7 Decomposition: Delegates to BaselineService
      * @private
      */
     private _updateBaselineButtonVisibility(): void {
-        // Update toolbar button text
-        const baselineBtn = document.getElementById('baseline-btn');
-        const baselineBtnText = document.getElementById('baseline-btn-text');
-        
-        if (baselineBtn && baselineBtnText) {
-            if (this._hasBaseline) {
-                baselineBtnText.textContent = 'Update Baseline';
-                baselineBtn.title = 'Update Baseline with Current Schedule';
-            } else {
-                baselineBtnText.textContent = 'Save Baseline';
-                baselineBtn.title = 'Save Current Schedule as Baseline';
-            }
-        }
-        
-        // Update Clear Baseline menu item state
-        const clearMenuItem = document.getElementById('clear-baseline-menu-item');
-        if (clearMenuItem) {
-            if (this._hasBaseline) {
-                clearMenuItem.classList.remove('disabled');
-                clearMenuItem.removeAttribute('disabled');
-            } else {
-                clearMenuItem.classList.add('disabled');
-                clearMenuItem.setAttribute('disabled', 'true');
-            }
-        }
+        this.baselineService!.updateBaselineButtonVisibility();
     }
 
     /**
      * Calculate variance for a task
      * @param task - Task to calculate variance for
      * @returns Variance object with start and finish variances in work days
+     * 
+     * Phase 7 Decomposition: Delegates to BaselineService
      */
     calculateVariance(task: Task): { start: number | null; finish: number | null } {
-        return this._calculateVariance(task);
-    }
-
-    /**
-     * Calculate variance for a task (internal)
-     * @private
-     * @param task - Task to calculate variance for
-     * @returns Variance object with start and finish variances in work days
-     * 
-     * @see src/core/calculations/VarianceCalculator.ts for the extracted implementation
-     */
-    private _calculateVariance(task: Task): { start: number | null; finish: number | null } {
-        // Delegated to standalone module for Pure DI compatibility
-        // See: docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md - Phase 0
-        return calculateVarianceFn(task, this.calendar);
+        return this.baselineService!.calculateVariance(task);
     }
 
     /**
      * Rebuild grid columns when baseline state changes
      * Updates header and grid to show/hide actual/variance columns
+     * Phase 9 Decomposition: Delegates to ColumnPreferencesService
      * @private
      */
     private _rebuildGridColumns(): void {
-        // Rebuild header with updated column definitions
-        this._buildGridHeader();
-        
-        // Update grid columns if grid exists
-        if (this.grid) {
-            const columns = this._getColumnDefinitions();
-            this.grid.updateColumns(columns);
-        }
-        
-        // Re-render to show new columns
-        this.render();
-        
-        // Re-initialize column resizers (new columns may have been added)
-        // This will be handled by UIEventManager, but we trigger it here
-        // The resizers will be re-initialized on next interaction or we can call it explicitly
-        setTimeout(() => {
-            if (window.uiEventManager) {
-                window.uiEventManager.initColumnResizers();
-            }
-        }, 100);
+        this.columnPreferencesService!.rebuildGridColumns();
     }
 
     // =========================================================================
@@ -1525,16 +1372,12 @@ export class SchedulerService {
      * @param tradePartnerId - Trade Partner ID
      * @param e - Click event
      */
-    private _handleTradePartnerClick(_taskId: string, tradePartnerId: string, e: MouseEvent): void {
-        e.stopPropagation(); // Prevent row click from firing
-        
-        // For now, just show a toast - Phase 12 will add details panel
-        const partner = this.tradePartnerStore.get(tradePartnerId);
-        if (partner) {
-            this.toastService.info(`Trade Partner: ${partner.name}`);
-        }
-        
-        // TODO: Phase 12 - Open trade partner details panel
+    /**
+     * Handle trade partner click
+     * Phase 8 Decomposition: Delegates to TradePartnerService
+     */
+    private _handleTradePartnerClick(taskId: string, tradePartnerId: string, e: MouseEvent): void {
+        this.tradePartnerService!.handleClick(taskId, tradePartnerId, e);
     }
 
     /**
@@ -1816,34 +1659,49 @@ export class SchedulerService {
     /**
      * Handle Tab indent
      * @private
+     * 
+     * Phase 3 Decomposition: Delegates to ViewStateService
      */
     private _handleTabIndent(): void {
-        // PHASE 2: Delegate to CommandService
+        if (!this.viewStateService) {
         this.commandService.execute('hierarchy.indent');
+            return;
+        }
+        this.viewStateService.handleTabIndent();
     }
 
     /**
      * Handle Shift+Tab outdent
      * @private
+     * 
+     * Phase 3 Decomposition: Delegates to ViewStateService
      */
     private _handleTabOutdent(): void {
-        // PHASE 2: Delegate to CommandService
+        if (!this.viewStateService) {
         this.commandService.execute('hierarchy.outdent');
+            return;
+        }
+        this.viewStateService.handleTabOutdent();
     }
 
     /**
      * Handle Escape key
      * @private
+     * 
+     * Phase 3 Decomposition: Delegates to ViewStateService
      */
     private _handleEscape(): void {
-        // First check if drawer is open (UI-specific, not in command)
+        if (!this.viewStateService) {
+            // Fallback to original logic
         if (this.drawer && this.drawer.isDrawerOpen()) {
             this.drawer.close();
             return;
         }
-        
-        // PHASE 2: Delegate to CommandService for cut cancel / selection clear
         this.commandService.execute('selection.escape');
+            this._updateSelection();
+            return;
+        }
+        this.viewStateService.handleEscape();
         this._updateSelection();
     }
 
@@ -2041,12 +1899,14 @@ export class SchedulerService {
     /**
      * Context menu instance (singleton)
      * @private
+     * @deprecated Phase 4: Now managed by ContextMenuService
      */
     private _contextMenu: ContextMenu | null = null;
 
     /**
      * Get or create context menu
      * @private
+     * @deprecated Phase 4: Now managed by ContextMenuService
      */
     private _getContextMenu(): ContextMenu {
         if (!this._contextMenu) {
@@ -2057,191 +1917,67 @@ export class SchedulerService {
 
     /**
      * Show context menu for a row
+     * Phase 4 Decomposition: Delegates to ContextMenuService
      * @private
      */
-    private _showRowContextMenu(taskId: string, isBlank: boolean, anchorEl: HTMLElement, _event: MouseEvent): void {
-        const menu = this._getContextMenu();
-        
-        const items: ContextMenuItem[] = [
-            {
-                id: 'insert-above',
-                label: 'Insert Blank Row Above',
-                icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="12" y1="5" x2="12" y2="19"/>
-                    <line x1="5" y1="12" x2="19" y2="12"/>
-                </svg>`,
-            },
-            {
-                id: 'insert-below',
-                label: 'Insert Blank Row Below',
-                icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="12" y1="5" x2="12" y2="19"/>
-                    <line x1="5" y1="12" x2="19" y2="12"/>
-                </svg>`,
-            },
-            { id: 'divider-1', type: 'divider' },
-        ];
-        
-        // Convert to Task option only for blank rows
-        if (isBlank) {
-            items.push({
-                id: 'convert-to-task',
-                label: 'Convert to Task',
-                icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                    <polyline points="14 2 14 8 20 8"/>
-                    <line x1="12" y1="18" x2="12" y2="12"/>
-                    <line x1="9" y1="15" x2="15" y2="15"/>
-                </svg>`,
-            });
-            items.push({ id: 'divider-2', type: 'divider' });
-        }
-        
-        items.push({
-            id: 'delete',
-            label: 'Delete Row',
-            icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="3 6 5 6 21 6"/>
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-            </svg>`,
-            danger: true,
-        });
-        
-        items.push({ id: 'divider-3', type: 'divider' });
-        
-        items.push({
-            id: 'properties',
-            label: 'Properties...',
-            icon: `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <circle cx="12" cy="12" r="3"/>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-            </svg>`,
-        });
-        
-        menu.show(anchorEl, items, (itemId) => {
-            switch (itemId) {
-                case 'insert-above':
-                    this.insertBlankRowAbove(taskId);
-                    break;
-                case 'insert-below':
-                    this.insertBlankRowBelow(taskId);
-                    break;
-                case 'convert-to-task':
-                    this.convertBlankToTask(taskId);
-                    break;
-                case 'delete':
-                    this.deleteTask(taskId);
-                    break;
-                case 'properties':
-                    this.openProperties(taskId);
-                    break;
-            }
-        });
+    private _showRowContextMenu(taskId: string, isBlank: boolean, anchorEl: HTMLElement, event: MouseEvent): void {
+        this.contextMenuService!.showRowContextMenu(taskId, isBlank, anchorEl, event);
     }
 
     /**
      * Insert blank row above a task
-     * 
      * Phase 2 Decomposition: Delegates to TaskOperationsService
-     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     insertBlankRowAbove(taskId: string): void {
-        if (!this.taskOperations) {
-            console.warn('[SchedulerService] TaskOperationsService not initialized');
-            return;
-        }
-        this.taskOperations.insertBlankRowAbove(taskId);
+        this.taskOperations!.insertBlankRowAbove(taskId);
     }
 
     /**
      * Insert blank row below a task
-     * 
      * Phase 2 Decomposition: Delegates to TaskOperationsService
-     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     insertBlankRowBelow(taskId: string): void {
-        if (!this.taskOperations) {
-            console.warn('[SchedulerService] TaskOperationsService not initialized');
-            return;
-        }
-        this.taskOperations.insertBlankRowBelow(taskId);
+        this.taskOperations!.insertBlankRowBelow(taskId);
     }
 
     /**
      * Wake up a blank row (convert to task and enter edit mode)
-     * Called when user double-clicks a blank row
-     * 
      * Phase 2 Decomposition: Delegates to TaskOperationsService
-     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     wakeUpBlankRow(taskId: string): void {
-        if (!this.taskOperations) {
-            console.warn('[SchedulerService] TaskOperationsService not initialized');
-            return;
-        }
-        this.taskOperations.wakeUpBlankRow(taskId);
+        this.taskOperations!.wakeUpBlankRow(taskId);
     }
 
     /**
      * Convert a blank row to a task
-     * 
      * Phase 2 Decomposition: Delegates to TaskOperationsService
-     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     convertBlankToTask(taskId: string): void {
-        if (!this.taskOperations) {
-            console.warn('[SchedulerService] TaskOperationsService not initialized');
-            return;
-        }
-        this.taskOperations.convertBlankToTask(taskId);
+        this.taskOperations!.convertBlankToTask(taskId);
     }
 
     /**
      * Open properties panel for a task
+     * Phase 5 Decomposition: Delegates to ModalCoordinator
      */
     openProperties(taskId: string): void {
-        // Trigger right sidebar with details panel
-        this._openPanelCallbacks.forEach(cb => {
-            try {
-                cb('details');
-            } catch (e) {
-                console.error('[SchedulerService] Panel open callback error:', e);
-            }
-        });
-        
-        // Ensure task is selected
-        this.selectionModel.setSelection(new Set([taskId]), taskId, [taskId]);
-        this._updateSelection();
+        this.modalCoordinator!.openProperties(taskId);
     }
 
     /**
      * Indent all selected tasks
-     * Processes top-level selections only (children move with parents)
-     * 
      * Phase 2 Decomposition: Delegates to TaskOperationsService
-     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     indentSelected(): void {
-        if (!this.taskOperations) {
-            console.warn('[SchedulerService] TaskOperationsService not initialized');
-            return;
-        }
-        this.taskOperations.indentSelected();
+        this.taskOperations!.indentSelected();
     }
 
     /**
      * Outdent all selected tasks
-     * Processes top-level selections only (children move with parents)
-     * 
      * Phase 2 Decomposition: Delegates to TaskOperationsService
-     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
      */
     outdentSelected(): void {
-        if (!this.taskOperations) {
-            console.warn('[SchedulerService] TaskOperationsService not initialized');
-            return;
-        }
-        this.taskOperations.outdentSelected();
+        this.taskOperations!.outdentSelected();
     }
 
     /**
@@ -2525,8 +2261,12 @@ export class SchedulerService {
 
     /**
      * Enter edit mode for the currently highlighted cell
+     * 
+     * Phase 3 Decomposition: Delegates to ViewStateService
      */
     enterEditMode(): void {
+        if (!this.viewStateService) {
+            // Fallback to original logic
         const focusedId = this.selectionModel.getFocusedId();
         const focusedColumn = this.selectionModel.getFocusedField();
         if (!focusedId || !focusedColumn) return;
@@ -2544,17 +2284,26 @@ export class SchedulerService {
         if (this.grid) {
             this.grid.focusCell(focusedId, focusedColumn);
         }
+            return;
+        }
+        this.viewStateService.enterEditMode();
     }
 
     /**
      * Called when cell editing ends
      * Now mostly handled by EditingStateManager subscription
+     * 
+     * Phase 3 Decomposition: Delegates to ViewStateService
      */
     exitEditMode(): void {
+        if (!this.viewStateService) {
         const editingManager = this.editingStateManager;
         if (editingManager.isEditing()) {
             editingManager.exitEditMode('programmatic');
         }
+            return;
+        }
+        this.viewStateService.exitEditMode();
     }
 
     // =========================================================================
@@ -2583,8 +2332,10 @@ export class SchedulerService {
         // Update header checkbox state
         this._updateHeaderCheckboxState();
         
-        // Update driving path if mode is active
-        if (this.displaySettings.drivingPathMode) {
+        // Phase 3: Update driving path if mode is active (via ViewStateService)
+        if (this.viewStateService) {
+            this.viewStateService.updateDrivingPathIfActive();
+        } else if (this.displaySettings.drivingPathMode) {
             this._updateGanttDrivingPathMode();
         }
         
@@ -2596,72 +2347,20 @@ export class SchedulerService {
 
     /**
      * Update header checkbox state (checked/unchecked/indeterminate)
+     * Phase 9 Decomposition: Delegates to ColumnPreferencesService
      * @private
-     * @param checkbox - Optional checkbox element (if not provided, finds it)
      */
     private _updateHeaderCheckboxState(checkbox?: HTMLInputElement): void {
-        if (!checkbox) {
-            const headerCheckbox = document.querySelector('.header-checkbox-select-all') as HTMLInputElement | null;
-            if (!headerCheckbox) return;
-            checkbox = headerCheckbox;
-        }
-
-        // Get visible tasks (respecting collapse state)
-        const visibleTasks = this.projectController.getVisibleTasks((id) => {
-            const task = this.projectController.getTaskById(id);
-            return task?._collapsed || false;
-        });
-
-        if (visibleTasks.length === 0) {
-            checkbox.checked = false;
-            checkbox.indeterminate = false;
-            return;
-        }
-
-        // Count how many visible tasks are selected
-        const selectedCount = visibleTasks.filter(t => this.selectionModel.isSelected(t.id)).length;
-
-        if (selectedCount === 0) {
-            // None selected
-            checkbox.checked = false;
-            checkbox.indeterminate = false;
-        } else if (selectedCount === visibleTasks.length) {
-            // All selected
-            checkbox.checked = true;
-            checkbox.indeterminate = false;
-        } else {
-            // Some selected (indeterminate state)
-            checkbox.checked = false;
-            checkbox.indeterminate = true;
-        }
+        this.columnPreferencesService!.updateHeaderCheckboxState(checkbox);
     }
 
     /**
      * Handle select all checkbox click
+     * Phase 9 Decomposition: Delegates to ColumnPreferencesService
      * @private
-     * @param checkbox - The header checkbox element
      */
     private _handleSelectAllClick(checkbox: HTMLInputElement): void {
-        // Get visible tasks (respecting collapse state)
-        const visibleTasks = this.projectController.getVisibleTasks((id) => {
-            const task = this.projectController.getTaskById(id);
-            return task?._collapsed || false;
-        });
-
-        if (checkbox.checked) {
-            // Select all visible tasks
-            visibleTasks.forEach(task => {
-                this.selectionModel.addToSelection([task.id]);
-            });
-        } else {
-            // Deselect all visible tasks
-            visibleTasks.forEach(task => {
-                this.selectionModel.removeFromSelection([task.id]);
-            });
-        }
-
-        // Update selection state
-        this._updateSelection();
+        this.columnPreferencesService!.handleSelectAllClick(checkbox);
     }
 
     /**
@@ -2694,84 +2393,42 @@ export class SchedulerService {
 
     /**
      * Open drawer for a task
-     * Called by double-click handlers to explicitly open the panel
-     * Now uses callback system to work with RightSidebarManager
-     * 
-     * @param taskId - Task ID to show details for
+     * Phase 5 Decomposition: Delegates to ModalCoordinator
      */
     openDrawer(taskId: string): void {
-        // 1. Ensure selection is synced first (this triggers _handleSelectionChange)
-        if (this.selectionModel.getFocusedId() !== taskId) {
-            // Select the task - this will sync data to panels via onTaskSelect
-            this.selectionModel.setSelection(new Set([taskId]), taskId, [taskId]);
-            this._updateSelection();
-        }
-        
-        // 2. Request the UI to open the 'details' panel
-        this._openPanelCallbacks.forEach(cb => {
-            try {
-                cb('details');
-            } catch (e) {
-                console.error('[SchedulerService] Panel open callback error:', e);
-            }
-        });
+        this.modalCoordinator!.openDrawer(taskId);
     }
 
     /**
      * Close drawer
+     * Phase 5 Decomposition: Delegates to ModalCoordinator
      */
     closeDrawer(): void {
-        if (this.drawer) {
-            this.drawer.close();
-        }
+        this.modalCoordinator!.closeDrawer();
     }
 
     /**
      * Open dependencies modal or panel
-     * @param taskId - Task ID
+     * Phase 5 Decomposition: Delegates to ModalCoordinator
      */
     openDependencies(taskId: string): void {
-        const task = this.projectController.getTaskById(taskId);
-        if (!task) return;
-        
-        // Try to open via panel system first (if RightSidebarManager is available)
-        if (this._openPanelCallbacks.length > 0) {
-            this._openPanelCallbacks.forEach(cb => {
-                try {
-                    cb('links');
-                } catch (e) {
-                    console.error('[SchedulerService] Panel open callback error:', e);
-                }
-            });
-            // Sync the panel with the task (panel will handle it via selection callback)
-            // But we also need to ensure the task is selected
-            if (this.selectionModel.getFocusedId() !== taskId) {
-                this.selectionModel.setSelection(new Set([taskId]), taskId, [taskId]);
-                this._updateSelection();
-            }
-            return;
-        }
-        
-        // Fallback to modal mode if no panel system available
-        if (this.dependenciesModal) {
-            this.dependenciesModal.open(task);
-        }
+        this.modalCoordinator!.openDependencies(taskId);
     }
 
     /**
      * Open calendar modal
+     * Phase 5 Decomposition: Delegates to ModalCoordinator
      */
     openCalendar(): void {
-        if (!this.calendarModal) return;
-        this.calendarModal.open(this.projectController.getCalendar());
+        this.modalCoordinator!.openCalendar();
     }
 
     /**
      * Open column settings modal
+     * Phase 5 Decomposition: Delegates to ModalCoordinator
      */
     openColumnSettings(): void {
-        if (!this.columnSettingsModal) return;
-        this.columnSettingsModal.open();
+        this.modalCoordinator!.openColumnSettings();
     }
 
     // =========================================================================
@@ -3304,165 +2961,66 @@ export class SchedulerService {
 
     /**
      * Save to file
-     * @returns Promise that resolves when saved
+     * Phase 6 Decomposition: Delegates to FileOperationsService
      */
     async saveToFile(): Promise<void> {
-        try {
-            await this.fileService.saveToFile({
-                tasks: this.projectController.getTasks(),
-                calendar: this.projectController.getCalendar(),
-            });
-        } catch (err) {
-            // Error handled by FileService
-        }
+        await this.fileOperationsService!.saveToFile();
     }
 
     /**
      * Open from file
-     * @returns Promise that resolves when loaded
+     * Phase 6 Decomposition: Delegates to FileOperationsService
      */
     async openFromFile(): Promise<void> {
-        try {
-            const data = await this.fileService.openFromFile();
-            if (data) {
-                this.saveCheckpoint();
-                this.projectController.syncTasks(data.tasks || []);
-                if (data.calendar) {
-                    this.projectController.updateCalendar(data.calendar);
-                }
-                // NOTE: ProjectController handles recalc/save via Worker
-                this.toastService.success(`Loaded ${this.projectController.getTasks().length} tasks`);
-            }
-        } catch (err) {
-            // Error handled by FileService
-        }
+        await this.fileOperationsService!.openFromFile();
     }
 
     /**
      * Export as download
+     * Phase 6 Decomposition: Delegates to FileOperationsService
      */
     exportAsDownload(): void {
-        this.fileService.exportAsDownload({
-            tasks: this.projectController.getTasks(),
-            calendar: this.projectController.getCalendar(),
-        });
+        this.fileOperationsService!.exportAsDownload();
     }
 
     /**
      * Import from file
-     * @param file - File object
-     * @returns Promise that resolves when imported
+     * Phase 6 Decomposition: Delegates to FileOperationsService
      */
     async importFromFile(file: File): Promise<void> {
-        try {
-            const data = await this.fileService.importFromFile(file);
-            this.saveCheckpoint();
-            
-            // Assign sortKeys to imported tasks
-            const tasks = data.tasks || [];
-            const tasksWithSortKeys = this._assignSortKeysToImportedTasks(tasks);
-            
-            this.projectController.syncTasks(tasksWithSortKeys);
-            if (data.calendar) {
-                this.projectController.updateCalendar(data.calendar);
-            }
-            // Note: recalculateAll() and render() will be triggered automatically by _onTasksChanged()
-            this.saveData();
-            this.toastService.success(`Imported ${tasksWithSortKeys.length} tasks`);
-        } catch (err) {
-            // Error handled by FileService
-        }
+        await this.fileOperationsService!.importFromFile(file);
     }
 
     /**
      * Import from MS Project XML
-     * @param file - XML file
-     * @returns Promise that resolves when imported
+     * Phase 6 Decomposition: Delegates to FileOperationsService
      */
     async importFromMSProjectXML(file: File): Promise<void> {
-        try {
-            const data = await this.fileService.importFromMSProjectXML(file);
-            this.saveCheckpoint();
-            
-            // Assign sortKeys to imported tasks
-            const tasks = data.tasks || [];
-            const tasksWithSortKeys = this._assignSortKeysToImportedTasks(tasks);
-            
-            // Import calendar if provided
-            if (data.calendar) {
-                this.projectController.updateCalendar(data.calendar); // skipEvent=true to avoid duplicate persistence
-            }
-            
-            this.projectController.syncTasks(tasksWithSortKeys);
-            // Note: recalculateAll() and render() will be triggered automatically by _onTasksChanged()
-            this.saveData();
-            this.toastService.success(`Imported ${tasksWithSortKeys.length} tasks`);
-        } catch (err) {
-            // Error handled by FileService
-        }
+        await this.fileOperationsService!.importFromMSProjectXML(file);
     }
 
     /**
      * Import from MS Project XML content (for Tauri native dialog)
-     * 
-     * @param content - XML file content as string
+     * Phase 6 Decomposition: Delegates to FileOperationsService
      */
     async importFromMSProjectXMLContent(content: string): Promise<void> {
-        const result = await this.fileService.importFromMSProjectXMLContent(content);
-        this.saveCheckpoint();
-        
-        const tasksWithSortKeys = this._assignSortKeysToImportedTasks(result.tasks);
-        this.projectController.syncTasks(tasksWithSortKeys);
-        
-        if (result.calendar) {
-            this.projectController.updateCalendar(result.calendar);
-        }
-        
-        // NOTE: ProjectController handles recalc/save via Worker
-        this.toastService.success(`Imported ${result.tasks.length} tasks from MS Project`);
+        await this.fileOperationsService!.importFromMSProjectXMLContent(content);
     }
 
     /**
      * Export to MS Project XML
+     * Phase 6 Decomposition: Delegates to FileOperationsService
      */
     exportToMSProjectXML(): void {
-        this.fileService.exportToMSProjectXML({
-            tasks: this.projectController.getTasks(),
-            calendar: this.projectController.getCalendar(),
-        });
+        this.fileOperationsService!.exportToMSProjectXML();
     }
 
     /**
      * Clear all saved data and start fresh
-     * Use when data is corrupted or user wants to reset
+     * Phase 6 Decomposition: Delegates to FileOperationsService
      */
     async clearAllData(): Promise<void> {
-        if (!confirm('This will delete all your tasks and settings. Continue?')) {
-            return;
-        }
-        
-        // Purge SQLite database if persistence service is available
-        if (this.persistenceService) {
-            try {
-                await this.persistenceService.purgeDatabase();
-            } catch (error) {
-                console.error('[SchedulerService] Failed to purge database:', error);
-                this.toastService.error('Failed to clear database - some data may remain');
-            }
-        }
-        
-        // Clear localStorage (backup/fallback)
-        localStorage.removeItem(SchedulerService.STORAGE_KEY);
-        localStorage.removeItem('pro_scheduler_column_widths');
-        localStorage.removeItem('pro_scheduler_column_preferences');
-        
-        // Reset in-memory state
-        this.projectController.syncTasks([]);
-        this._createSampleData();
-        
-        // NOTE: ProjectController handles recalc/save via Worker
-        
-        this.toastService.success('All data cleared - starting fresh');
+        await this.fileOperationsService!.clearAllData();
     }
 
     // =========================================================================
@@ -3472,15 +3030,17 @@ export class SchedulerService {
     /**
      * Set view mode
      * @param mode - View mode: 'Day', 'Week', or 'Month'
+     * 
+     * Phase 3 Decomposition: Delegates to ViewStateService
      */
     setViewMode(mode: ViewMode): void {
-        if (['Day', 'Week', 'Month'].includes(mode)) {
-            this.viewMode = mode;
-            if (this.gantt) {
-                this.gantt.setViewMode(this.viewMode);
-            }
-            this.render();
+        if (!this.viewStateService) {
+            console.warn('[SchedulerService] ViewStateService not initialized');
+            return;
         }
+        this.viewStateService.setViewMode(mode);
+        // Keep local copy in sync
+        this.viewMode = this.viewStateService.viewMode;
     }
 
     /**
@@ -3585,15 +3145,25 @@ export class SchedulerService {
 
     /**
      * Get all trade partners
+     * 
+     * Phase 8 Decomposition: Delegates to TradePartnerService
      */
     getTradePartners(): TradePartner[] {
+        if (this.tradePartnerService) {
+            return this.tradePartnerService.getAll();
+        }
         return this.tradePartnerStore.getAll();
     }
 
     /**
      * Get a trade partner by ID
+     * 
+     * Phase 8 Decomposition: Delegates to TradePartnerService
      */
     getTradePartner(id: string): TradePartner | undefined {
+        if (this.tradePartnerService) {
+            return this.tradePartnerService.get(id);
+        }
         return this.tradePartnerStore.get(id);
     }
 
@@ -3642,148 +3212,50 @@ export class SchedulerService {
 
     /**
      * Create a new trade partner
+     * Phase 8 Decomposition: Delegates to TradePartnerService
      */
     createTradePartner(data: Omit<TradePartner, 'id'>): TradePartner {
-        const partner = this.tradePartnerStore.add(data);
-        
-        // Queue persistence event
-        if (this.persistenceService) {
-            this.persistenceService.queueEvent('TRADE_PARTNER_CREATED', partner.id, {
-                id: partner.id,
-                name: partner.name,
-                contact: partner.contact,
-                phone: partner.phone,
-                email: partner.email,
-                color: partner.color,
-                notes: partner.notes,
-            });
-        }
-        
-        this.toastService.success(`Created trade partner: ${partner.name}`);
-        
-        // Notify data change listeners (for unified panel sync)
-        this._notifyDataChange();
-        
-        return partner;
+        return this.tradePartnerService!.create(data);
     }
 
     /**
      * Update a trade partner
+     * Phase 8 Decomposition: Delegates to TradePartnerService
      */
     updateTradePartner(id: string, field: keyof TradePartner, value: unknown): void {
-        const existing = this.tradePartnerStore.get(id);
-        if (!existing) return;
-        
-        const oldValue = existing[field];
-        this.tradePartnerStore.update(id, { [field]: value });
-        
-        // Queue persistence event
-        if (this.persistenceService) {
-            this.persistenceService.queueEvent('TRADE_PARTNER_UPDATED', id, {
-                field,
-                old_value: oldValue,
-                new_value: value,
-            });
-        }
-        
-        // Re-render if color changed (affects task display)
-        if (field === 'color' || field === 'name') {
-            this.render();
-        }
-        
-        // Notify data change listeners (for unified panel sync)
-        this._notifyDataChange();
+        this.tradePartnerService!.update(id, field, value);
     }
 
     /**
      * Delete a trade partner
+     * Phase 8 Decomposition: Delegates to TradePartnerService
      */
     deleteTradePartner(id: string): void {
-        const partner = this.tradePartnerStore.get(id);
-        if (!partner) return;
-        
-        // Remove from all tasks first
-        const affectedTasks = this.projectController.getTasks().filter(
-            t => t.tradePartnerIds?.includes(id)
-        );
-        
-        for (const task of affectedTasks) {
-            this.unassignTradePartner(task.id, id, false); // Don't show toast for each
-        }
-        
-        // Delete the partner
-        this.tradePartnerStore.delete(id);
-        
-        // Queue persistence event
-        if (this.persistenceService) {
-            this.persistenceService.queueEvent('TRADE_PARTNER_DELETED', id, {
-                name: partner.name,
-            });
-        }
-        
-        this.toastService.info(`Deleted trade partner: ${partner.name}`);
-        this.render();
+        this.tradePartnerService!.delete(id);
     }
 
     /**
      * Assign a trade partner to a task
+     * Phase 8 Decomposition: Delegates to TradePartnerService
      */
     assignTradePartner(taskId: string, tradePartnerId: string): void {
-        const task = this.projectController.getTaskById(taskId);
-        const partner = this.tradePartnerStore.get(tradePartnerId);
-        if (!task || !partner) return;
-        
-        // Check if already assigned
-        if (task.tradePartnerIds?.includes(tradePartnerId)) return;
-        
-        // Update task
-        const newIds = [...(task.tradePartnerIds || []), tradePartnerId];
-        this.projectController.updateTask(taskId, { tradePartnerIds: newIds });
-        
-        // Queue persistence event
-        if (this.persistenceService) {
-            this.persistenceService.queueEvent('TASK_TRADE_PARTNER_ASSIGNED', taskId, {
-                trade_partner_id: tradePartnerId,
-                trade_partner_name: partner.name,
-            });
-        }
-        
-        this.render();
+        this.tradePartnerService!.assignToTask(taskId, tradePartnerId);
     }
 
     /**
      * Unassign a trade partner from a task
+     * Phase 8 Decomposition: Delegates to TradePartnerService
      */
     unassignTradePartner(taskId: string, tradePartnerId: string, showToast = true): void {
-        const task = this.projectController.getTaskById(taskId);
-        if (!task || !task.tradePartnerIds) return;
-        
-        // Check if assigned
-        if (!task.tradePartnerIds.includes(tradePartnerId)) return;
-        
-        // Update task
-        const newIds = task.tradePartnerIds.filter(id => id !== tradePartnerId);
-        this.projectController.updateTask(taskId, { tradePartnerIds: newIds });
-        
-        // Queue persistence event
-        if (this.persistenceService) {
-            this.persistenceService.queueEvent('TASK_TRADE_PARTNER_UNASSIGNED', taskId, {
-                trade_partner_id: tradePartnerId,
-            });
-        }
-        
-        if (showToast) {
-            this.render();
-        }
+        this.tradePartnerService!.unassignFromTask(taskId, tradePartnerId, showToast);
     }
 
     /**
      * Get trade partners for a task
+     * Phase 8 Decomposition: Delegates to TradePartnerService
      */
     getTaskTradePartners(taskId: string): TradePartner[] {
-        const task = this.projectController.getTaskById(taskId);
-        if (!task?.tradePartnerIds) return [];
-        return this.tradePartnerStore.getMany(task.tradePartnerIds);
+        return this.tradePartnerService!.getForTask(taskId);
     }
 
     /**

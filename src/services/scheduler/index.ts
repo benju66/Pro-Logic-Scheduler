@@ -23,18 +23,30 @@ export * from './types';
 export { TaskOperationsService } from './TaskOperationsService';
 export type { TaskOperationsServiceDeps } from './TaskOperationsService';
 
-// TODO: Uncomment as services are extracted
-// Phase 3: ViewStateService
-// export { ViewStateService } from './ViewStateService';
-// Phase 4: ContextMenuService
-// export { ContextMenuService } from './ContextMenuService';
-// Phase 5: ModalCoordinator
-// export { ModalCoordinator } from './ModalCoordinator';
-// Phase 6: FileOperationsService
-// export { FileOperationsService } from './FileOperationsService';
-// Phase 7: BaselineService
-// export { BaselineService } from './BaselineService';
-// Phase 8: TradePartnerService
-// export { TradePartnerService } from './TradePartnerService';
-// Phase 9: ColumnPreferencesService
-// export { ColumnPreferencesService } from './ColumnPreferencesService';
+// Phase 3: ViewStateService - View state, navigation, edit mode
+export { ViewStateService } from './ViewStateService';
+export type { ViewStateServiceDeps, DisplaySettings } from './ViewStateService';
+
+// Phase 4: ContextMenuService - Right-click context menus
+export { ContextMenuService } from './ContextMenuService';
+export type { ContextMenuServiceDeps } from './ContextMenuService';
+
+// Phase 5: ModalCoordinator - Modal dialogs and panels
+export { ModalCoordinator } from './ModalCoordinator';
+export type { ModalCoordinatorDeps } from './ModalCoordinator';
+
+// Phase 6: FileOperationsService - File open, save, import, export
+export { FileOperationsService } from './FileOperationsService';
+export type { FileOperationsServiceDeps } from './FileOperationsService';
+
+// Phase 7: BaselineService - Baseline set, clear, variance
+export { BaselineService } from './BaselineService';
+export type { BaselineServiceDeps } from './BaselineService';
+
+// Phase 8: TradePartnerService - Trade partner CRUD and task assignment
+export { TradePartnerService } from './TradePartnerService';
+export type { TradePartnerServiceDeps } from './TradePartnerService';
+
+// Phase 9: ColumnPreferencesService - Column management, header rendering (Encapsulated Legacy)
+export { ColumnPreferencesService } from './ColumnPreferencesService';
+export type { ColumnPreferencesServiceDeps } from './ColumnPreferencesService';
