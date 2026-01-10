@@ -20,9 +20,7 @@
  */
 
 import { DateUtils } from '../core/DateUtils';
-import { OperationQueue } from '../core/OperationQueue';
 import { ColumnRegistry } from '../core/columns';
-import { calculateVariance as calculateVarianceFn } from '../core/calculations';
 // NOTE: TaskStore and CalendarStore removed - all data flows through ProjectController
 import { TradePartnerStore, getTradePartnerStore } from '../data/TradePartnerStore';
 // NOTE: HistoryManager moved to AppInitializer (application level) - access via ProjectController.getHistoryManager()
@@ -37,7 +35,7 @@ import { ProjectController } from './ProjectController';
 import { SelectionModel } from './SelectionModel';
 import { AppInitializer } from './AppInitializer';
 import { EditingStateManager, getEditingStateManager, type EditingStateChangeEvent } from './EditingStateManager';
-import { ZoomController, type IZoomableGantt, ZOOM_CONFIG } from './ZoomController';
+import { ZoomController, type IZoomableGantt } from './ZoomController';
 import { SchedulingLogicService } from './migration/SchedulingLogicService';
 import { ViewCoordinator } from './migration/ViewCoordinator';
 import { TaskOperationsService } from './scheduler/TaskOperationsService';
@@ -62,10 +60,7 @@ import type {
     VirtualScrollGridFacade,
     CanvasGanttFacade
 } from '../ui/components/scheduler/types';
-import { DependenciesModal } from '../ui/components/DependenciesModal';
-import { CalendarModal } from '../ui/components/CalendarModal';
-import { ColumnSettingsModal } from '../ui/components/ColumnSettingsModal';
-import { ContextMenu, type ContextMenuItem } from '../ui/components/ContextMenu';
+// Note: DependenciesModal, CalendarModal, ColumnSettingsModal now managed by ModalCoordinator
 import type { 
     Task, 
     Calendar, 
@@ -74,23 +69,9 @@ import type {
     SchedulerServiceOptions,
     ViewMode,
     LinkType,
-    ConstraintType,
     ColumnPreferences,
     Dependency
 } from '../types';
-
-/**
- * Feature flag for legacy recalculation behavior.
- * 
- * When TRUE (legacy): Manual recalculateAll() and render() calls are executed.
- * When FALSE (new):   Reactive architecture - Worker calculates, tasks$ emits, UI auto-renders.
- * 
- * Set to false to use new reactive architecture.
- * Set to true to revert to legacy double-calculation if issues arise.
- * 
- * @see docs/PHASE1_ARCHITECTURAL_OPTIMIZATION.md
- */
-const ENABLE_LEGACY_RECALC = false;  // Phase 4: Testing new reactive architecture
 
 /**
  * Main scheduler service - orchestrates the entire application
@@ -122,9 +103,6 @@ export class SchedulerService {
     
     /** CommandService - command registry */
     private commandService: CommandService;
-    
-    /** RendererFactory - creates GridRenderer/GanttRenderer with captured deps */
-    private rendererFactory: RendererFactory | null = null;
     
     /** SchedulingLogicService - scheduling business logic */
     private schedulingLogicService: SchedulingLogicService;
@@ -195,9 +173,7 @@ export class SchedulerService {
     public grid: VirtualScrollGridFacade | null = null;  // Public for access from AppInitializer and UIEventManager
     public gantt: CanvasGanttFacade | null = null;  // Public for access from AppInitializer and UIEventManager
     private drawer: SideDrawer | null = null;
-    private dependenciesModal: DependenciesModal | null = null;
-    private calendarModal: CalendarModal | null = null;
-    private columnSettingsModal: ColumnSettingsModal | null = null;
+    // Note: Modals (dependenciesModal, calendarModal, columnSettingsModal) now managed by ModalCoordinator
 
     // Selection state now fully managed by SelectionModel
     // Legacy public accessor for backward compatibility (reads from SelectionModel)
@@ -226,18 +202,10 @@ export class SchedulerService {
         highlightDependenciesOnHover: true,
         drivingPathMode: false
     };
-    
-    // Clipboard state
-    private clipboard: Task[] | null = null;              // Array of cloned tasks
-    private clipboardIsCut: boolean = false;              // True if cut operation
-    private clipboardOriginalIds: string[] = [];          // Original IDs for deletion after cut-paste
 
     // Performance tracking
     private _lastCalcTime: number = 0;
     private _renderScheduled: boolean = false;
-
-    // Operation queue for serializing task operations
-    private operationQueue: OperationQueue = new OperationQueue();
 
     // Initialization flag
     public isInitialized: boolean = false;  // Public for access from UIEventManager
@@ -279,7 +247,6 @@ export class SchedulerService {
         this.projectController = options.projectController || ProjectController.getInstance();
         this.selectionModel = options.selectionModel || SelectionModel.getInstance();
         this.commandService = options.commandService || CommandService.getInstance();
-        this.rendererFactory = options.rendererFactory || null;
         this.schedulingLogicService = options.schedulingLogicService || SchedulingLogicService.getInstance();
         this.columnRegistry = options.columnRegistry || ColumnRegistry.getInstance();
         this.editingStateManager = options.editingStateManager || getEditingStateManager();
@@ -676,38 +643,8 @@ export class SchedulerService {
         // Legacy drawer - now managed by RightSidebarManager
         // ─────────────────────────────────────────────────────────────────────────────
         // REMOVED: Drawer is now managed by RightSidebarManager
-        // if (drawerContainer) {
-        //     this.drawer = new SideDrawer({
-        //         container: drawerContainer,
-        //         onUpdate: (taskId, field, value) => this._handleDrawerUpdate(taskId, field, value),
-        //         onDelete: (taskId) => this.deleteTask(taskId),
-        //         onOpenLinks: (taskId) => this.openDependencies(taskId),
-        //         getScheduler: () => this,
-        //     });
-        // }
-
-        // Legacy modal creation - now handled by ModalCoordinator (Phase 5)
-        // Keeping as fallback for backward compatibility
-        const legacyModalsContainer = modalContainer || document.body;
-
-        this.dependenciesModal = new DependenciesModal({
-            container: legacyModalsContainer,
-            getTasks: () => this.projectController.getTasks(),
-            isParent: (id) => this.projectController.isParent(id),
-            onSave: (taskId, deps) => this._handleDependenciesSave(taskId, deps),
-        });
-
-        this.calendarModal = new CalendarModal({
-            container: legacyModalsContainer,
-            onSave: (calendar) => this._handleCalendarSave(calendar),
-        });
-
-        this.columnSettingsModal = new ColumnSettingsModal({
-            container: modalsContainer,
-            onSave: (preferences) => this.updateColumnPreferences(preferences),
-            getColumns: () => this.columnRegistry.getGridColumns(),
-            getPreferences: () => this._getColumnPreferences(),
-        });
+        // Note: Modal creation now handled by ModalCoordinator (Phase 5)
+        // SideDrawer is managed by RightSidebarManager
 
         // Note: Keyboard shortcuts are initialized after init() completes
         // See main.ts - they're attached after scheduler initialization
@@ -1027,24 +964,6 @@ export class SchedulerService {
     }
 
     /**
-     * Get default column preferences
-     * Phase 9 Decomposition: Delegates to ColumnPreferencesService
-     * @private
-     */
-    private _getDefaultColumnPreferences(): ColumnPreferences {
-        return this.columnPreferencesService!.getDefaultPreferences();
-    }
-
-    /**
-     * Save column preferences to localStorage
-     * Phase 9 Decomposition: Delegates to ColumnPreferencesService
-     * @private
-     */
-    private _saveColumnPreferences(prefs: ColumnPreferences): void {
-        this.columnPreferencesService!.savePreferences(prefs);
-    }
-
-    /**
      * Update column preferences and rebuild grid
      * Phase 9 Decomposition: Delegates to ColumnPreferencesService
      * @param preferences - New column preferences
@@ -1063,24 +982,6 @@ export class SchedulerService {
     }
 
     /**
-     * Calculate left offset for sticky column
-     * Phase 9 Decomposition: Delegates to ColumnPreferencesService
-     * @private
-     */
-    private _calculateStickyLeft(pinnedIndex: number, columns: GridColumn[]): string {
-        return this.columnPreferencesService!.calculateStickyLeft(pinnedIndex, columns);
-    }
-
-    /**
-     * Initialize header scroll sync (header → grid)
-     * Phase 9 Decomposition: Delegates to ColumnPreferencesService
-     * @private
-     */
-    private _initHeaderScrollSync(): void {
-        this.columnPreferencesService!.initHeaderScrollSync();
-    }
-
-    /**
      * Initialize CSS variables for column widths from column definitions
      * Phase 9 Decomposition: Delegates to ColumnPreferencesService
      * @private
@@ -1094,21 +995,13 @@ export class SchedulerService {
     // =========================================================================
 
     /**
-     * Track whether baseline has been set
-     * @private
-     */
-    private _hasBaseline: boolean = false;
-
-    /**
      * Check if baseline has been set for any task
      * @returns True if baseline exists
      * 
      * Phase 7 Decomposition: Delegates to BaselineService
      */
     hasBaseline(): boolean {
-        const result = this.baselineService!.hasBaseline();
-        this._hasBaseline = this.baselineService!.hasBaselineState;
-        return result;
+        return this.baselineService!.hasBaseline();
     }
 
     /**
@@ -1119,7 +1012,6 @@ export class SchedulerService {
      */
     setBaseline(): void {
         this.baselineService!.setBaseline();
-        this._hasBaseline = this.baselineService!.hasBaselineState;
     }
 
     /**
@@ -1129,16 +1021,6 @@ export class SchedulerService {
      */
     clearBaseline(): void {
         this.baselineService!.clearBaseline();
-        this._hasBaseline = this.baselineService!.hasBaselineState;
-    }
-
-    /**
-     * Update baseline button text and menu item state based on baseline existence
-     * Phase 7 Decomposition: Delegates to BaselineService
-     * @private
-     */
-    private _updateBaselineButtonVisibility(): void {
-        this.baselineService!.updateBaselineButtonVisibility();
     }
 
     /**
@@ -1897,25 +1779,6 @@ export class SchedulerService {
     }
 
     /**
-     * Context menu instance (singleton)
-     * @private
-     * @deprecated Phase 4: Now managed by ContextMenuService
-     */
-    private _contextMenu: ContextMenu | null = null;
-
-    /**
-     * Get or create context menu
-     * @private
-     * @deprecated Phase 4: Now managed by ContextMenuService
-     */
-    private _getContextMenu(): ContextMenu {
-        if (!this._contextMenu) {
-            this._contextMenu = new ContextMenu();
-        }
-        return this._contextMenu;
-    }
-
-    /**
      * Show context menu for a row
      * Phase 4 Decomposition: Delegates to ContextMenuService
      * @private
@@ -1993,46 +1856,6 @@ export class SchedulerService {
             return;
         }
         return this.taskOperations.deleteSelected();
-    }
-
-    /**
-     * Simple confirmation dialog
-     * @private
-     */
-    private _confirmAction(message: string, _actionLabel: string): Promise<boolean> {
-        return new Promise(resolve => {
-            // For now, use browser confirm - can be replaced with custom modal
-            const result = confirm(message);
-            resolve(result);
-        });
-    }
-
-    /**
-     * Get flat list of visible tasks
-     * @private
-     */
-    private _getFlatList(): Task[] {
-        return this.projectController.getVisibleTasks((id) => {
-            const t = this.projectController.getTaskById(id);
-            return t?._collapsed || false;
-        });
-    }
-
-    /**
-     * Get all descendants of a task
-     * @private
-     */
-    private _getAllDescendants(taskId: string): Set<string> {
-        const descendants = new Set<string>();
-        const collect = (id: string) => {
-            const children = this.projectController.getChildren(id);
-            for (const child of children) {
-                descendants.add(child.id);
-                collect(child.id);
-            }
-        };
-        collect(taskId);
-        return descendants;
     }
 
     /**
@@ -2355,15 +2178,6 @@ export class SchedulerService {
     }
 
     /**
-     * Handle select all checkbox click
-     * Phase 9 Decomposition: Delegates to ColumnPreferencesService
-     * @private
-     */
-    private _handleSelectAllClick(checkbox: HTMLInputElement): void {
-        this.columnPreferencesService!.handleSelectAllClick(checkbox);
-    }
-
-    /**
      * Copy selected tasks
      */
     copySelected(): void {
@@ -2540,38 +2354,6 @@ export class SchedulerService {
         
         // Start traversal from root level (parentId = null)
         traverse(null);
-    }
-
-    /**
-     * Update GridRenderer.data synchronously before render()
-     * This ensures that when _bindCell() is called during the render cycle,
-     * it has the correct task structure. Values are queried from TaskStore directly.
-     * @private
-     */
-    private _updateGridDataSync(): void {
-        if (this.grid) {
-            const tasks = this.projectController.getVisibleTasks((id) => {
-                const task = this.projectController.getTaskById(id);
-                return task?._collapsed || false;
-            });
-            this.grid.setData(tasks);
-        }
-    }
-
-    /**
-     * Update GanttRenderer.data synchronously before render()
-     * This ensures the Gantt chart has fresh data before rendering, eliminating flash.
-     * Values are queried from TaskStore directly.
-     * @private
-     */
-    private _updateGanttDataSync(): void {
-        if (this.gantt) {
-            const tasks = this.projectController.getVisibleTasks((id) => {
-                const task = this.projectController.getTaskById(id);
-                return task?._collapsed || false;
-            });
-            this.gantt.setData(tasks);
-        }
     }
 
     /**
@@ -3273,7 +3055,7 @@ export class SchedulerService {
         if (this.grid) this.grid.destroy();
         if (this.gantt) this.gantt.destroy();
         if (this.drawer) this.drawer.destroy();
-        if (this.dependenciesModal) this.dependenciesModal.destroy();
-        if (this.calendarModal) this.calendarModal.destroy();
+        // Note: Modals are now managed by ModalCoordinator
+        if (this.modalCoordinator) this.modalCoordinator.dispose();
     }
 }
