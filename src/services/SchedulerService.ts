@@ -46,6 +46,7 @@ import { FileOperationsService } from './scheduler/FileOperationsService';
 import { BaselineService } from './scheduler/BaselineService';
 import { TradePartnerService } from './scheduler/TradePartnerService';
 import { ColumnPreferencesService } from './scheduler/ColumnPreferencesService';
+import { GridNavigationController } from './scheduler/GridNavigationController';
 import { CommandService } from '../commands';
 import { getTaskFieldValue } from '../types';
 import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport';
@@ -168,6 +169,9 @@ export class SchedulerService {
     // ⚠️ ENCAPSULATED LEGACY: Contains direct DOM manipulation
     // @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
     private columnPreferencesService: ColumnPreferencesService | null = null;
+    
+    // GridNavigationController for Excel-style cell navigation (P1 enhancement)
+    private gridNavigationController: GridNavigationController | null = null;
 
     // UI components (initialized in init())
     public grid: VirtualScrollGridFacade | null = null;  // Public for access from AppInitializer and UIEventManager
@@ -205,7 +209,6 @@ export class SchedulerService {
 
     // Performance tracking
     private _lastCalcTime: number = 0;
-    private _renderScheduled: boolean = false;
 
     // Initialization flag
     public isInitialized: boolean = false;  // Public for access from UIEventManager
@@ -399,6 +402,25 @@ export class SchedulerService {
             updateSelection: () => this._updateSelection(),
         });
         console.log('[SchedulerService] ✅ ColumnPreferencesService initialized (early - for header build)');
+
+        // ─────────────────────────────────────────────────────────────────────────────
+        // P1 Enhancement: GridNavigationController for Excel-style cell navigation
+        // ─────────────────────────────────────────────────────────────────────────────
+        this.gridNavigationController = new GridNavigationController({
+            getVisibleTaskIds: () => {
+                return this.projectController.getVisibleTasks((id) => {
+                    const task = this.projectController.getTaskById(id);
+                    return task?._collapsed || false;
+                }).map(t => t.id);
+            },
+            getNavigableColumns: () => {
+                return this._getColumnDefinitions()
+                    .filter(col => col.type === 'text' || col.type === 'number' || col.type === 'date' || col.type === 'select' || col.type === 'name' || col.type === 'schedulingMode')
+                    .map(col => col.field);
+            },
+            isEditing: () => this.editingStateManager.isEditing()
+        });
+        console.log('[SchedulerService] ✅ GridNavigationController initialized');
 
         // Initialize CSS variables for column widths (must be before header build)
         this._initializeColumnCSSVariables();
@@ -605,7 +627,7 @@ export class SchedulerService {
             persistenceService: this.persistenceService,
             saveCheckpoint: () => this.saveCheckpoint(),
             saveData: () => this.saveData(),
-            createSampleData: () => this._createSampleData(),
+            recalculateAll: () => this.recalculateAll(),
             storageKey: SchedulerService.STORAGE_KEY,
         });
         console.log('[SchedulerService] ✅ FileOperationsService initialized');
@@ -1430,90 +1452,57 @@ export class SchedulerService {
      * @param direction - 'up' | 'down' | 'left' | 'right'
      * @param shiftKey - Shift key pressed (for range selection)
      */
+    /**
+     * Handle cell navigation using GridNavigationController
+     * 
+     * P1 Enhancement: Replaced 85-line method with clean delegation to
+     * GridNavigationController. The controller handles pure navigation logic,
+     * this method handles selection and UI updates.
+     * 
+     * @param direction - Navigation direction
+     * @param shiftKey - Whether shift is held (for range selection)
+     */
     private _handleCellNavigation(direction: 'up' | 'down' | 'left' | 'right', shiftKey: boolean): void {
-        const editingManager = this.editingStateManager;
+        if (!this.gridNavigationController) return;
         
-        // If currently editing, don't navigate
-        if (editingManager.isEditing()) {
-            return;
+        // Sync controller position with current selection
+        const focusedId = this.selectionModel.getFocusedId();
+        const focusedField = this.selectionModel.getFocusedField();
+        if (focusedId && focusedField) {
+            this.gridNavigationController.setPosition(focusedId, focusedField);
         }
         
-        const editableColumns = this.getColumnDefinitions()
-            .filter(col => col.type === 'text' || col.type === 'number' || col.type === 'date' || col.type === 'select' || col.type === 'name' || col.type === 'schedulingMode')
-            .map(col => col.field);
-        
-        if (editableColumns.length === 0) return;
-        
-        const visibleTasks = this.projectController.getVisibleTasks((id) => {
-            const task = this.projectController.getTaskById(id);
-            return task?._collapsed || false;
-        });
-        
-        if (visibleTasks.length === 0) return;
-        
-        // Initialize focused column if not set
-        const currentFocusedColumn = this.selectionModel.getFocusedField();
-        if (!currentFocusedColumn) {
-            this.selectionModel.setFocusedField(editableColumns[0]); // Default to first editable column (name)
-        }
-        
-        const focused = this.selectionModel.getFocusedId();
-        let currentRowIndex = focused 
-            ? visibleTasks.findIndex(t => t.id === focused)
-            : 0;
-        const focusedCol = this.selectionModel.getFocusedField();
-        let currentColIndex = focusedCol ? editableColumns.indexOf(focusedCol as typeof editableColumns[number]) : -1;
-        if (currentColIndex === -1) currentColIndex = 0;
-        
-        let newRowIndex = currentRowIndex;
-        let newColIndex = currentColIndex;
-        
-        switch (direction) {
-            case 'up':
-                newRowIndex = Math.max(0, currentRowIndex - 1);
-                break;
-            case 'down':
-                newRowIndex = Math.min(visibleTasks.length - 1, currentRowIndex + 1);
-                break;
-            case 'left':
-                if (currentColIndex > 0) {
-                    newColIndex = currentColIndex - 1;
-                }
-                // Don't wrap to previous row for left/right - keep it simple
-                break;
-            case 'right':
-                if (currentColIndex < editableColumns.length - 1) {
-                    newColIndex = currentColIndex + 1;
-                }
-                break;
-        }
-        
-        const newTaskId = visibleTasks[newRowIndex].id;
-        const newColumn = editableColumns[newColIndex];
-        
-        // Update row selection (for up/down movement)
-        if (direction === 'up' || direction === 'down') {
-            if (shiftKey && this.selectionModel.getAnchorId()) {
-                // Extend selection range
-                const anchorIndex = visibleTasks.findIndex(t => t.id === this.selectionModel.getAnchorId());
-                const start = Math.min(anchorIndex, newRowIndex);
-                const end = Math.max(anchorIndex, newRowIndex);
-                
-                const rangeIds = visibleTasks.slice(start, end + 1).map(t => t.id);
-                this.selectionModel.setSelection(new Set(rangeIds), newTaskId, rangeIds);
-            } else if (!shiftKey) {
-                // Single selection
-                this.selectionModel.setSelection(new Set([newTaskId]), newTaskId, [newTaskId]);
+        // Navigate using controller
+        if (shiftKey && (direction === 'up' || direction === 'down')) {
+            // Range selection with Shift+Arrow
+            const rangeResult = this.gridNavigationController.navigateWithRange(
+                direction, 
+                this.selectionModel.getAnchorId()
+            );
+            if (!rangeResult) return;
+            
+            const { result, rangeTaskIds } = rangeResult;
+            this.selectionModel.setSelection(new Set(rangeTaskIds), result.taskId, rangeTaskIds);
+            this.selectionModel.setFocus(result.taskId, result.field);
+        } else {
+            // Single navigation
+            const result = this.gridNavigationController.navigate(direction);
+            if (!result) return;
+            
+            // For up/down, update selection; for left/right, just move focus
+            if (direction === 'up' || direction === 'down') {
+                this.selectionModel.setSelection(new Set([result.taskId]), result.taskId, [result.taskId]);
             }
+            this.selectionModel.setFocus(result.taskId, result.field);
         }
         
-        this.selectionModel.setFocus(newTaskId, newColumn);
+        // Update UI
         this._updateSelection();
         
-        // Update cell highlight (visual only, no input focus)
-        if (this.grid) {
-            this.grid.scrollToTask(newTaskId);
-            this.grid.highlightCell(newTaskId, newColumn);
+        const currentCell = this.gridNavigationController.getCurrentCell();
+        if (currentCell && this.grid) {
+            this.grid.scrollToTask(currentCell.taskId);
+            this.grid.highlightCell(currentCell.taskId, currentCell.field);
         }
     }
 
@@ -2319,93 +2308,31 @@ export class SchedulerService {
      * row numbers remain stable when collapsing/expanding (standard scheduling
      * software behavior - row numbers don't change based on visibility).
      * 
-     * Called before each render to ensure row numbers are always current.
+     * Now handled by ViewCoordinator.assignVisualRowNumbers() - see Phase 1 decomposition.
      * 
-     * @private
+     * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md - Phase 1
      */
-    private _assignVisualRowNumbers(): void {
-        let counter = 1;
-        
-        /**
-         * Recursive traversal following visual tree order
-         * @param parentId - Parent task ID (null for root level)
-         */
-        const traverse = (parentId: string | null): void => {
-            // getChildren returns tasks SORTED by sortKey - this is critical
-            const children = this.projectController.getChildren(parentId);
-            
-            for (const task of children) {
-                // 1. Assign number based on row type
-                if (task.rowType === 'blank' || task.rowType === 'phantom') {
-                    // Blank and phantom rows don't get a visual number
-                    task._visualRowNumber = null;
-                } else {
-                    // Regular tasks get sequential numbers
-                    task._visualRowNumber = counter++;
-                }
-                
-                // 2. Recurse into children (regardless of collapsed state)
-                // This ensures number continuity even for hidden tasks
-                if (this.projectController.isParent(task.id)) {
-                    traverse(task.id);
-                }
-            }
-        };
-        
-        // Start traversal from root level (parentId = null)
-        traverse(null);
-    }
+    // Note: _assignVisualRowNumbers moved to ViewCoordinator (Phase 1 decomposition)
 
     /**
      * Render all views
      * 
-     * Phase 1 Decomposition: Now delegates to ViewCoordinator for reactive rendering.
-     * ViewCoordinator handles visual row numbering, data updates, and render scheduling.
+     * Phase 1 Decomposition: Delegates to ViewCoordinator for reactive rendering.
+     * ViewCoordinator handles:
+     * - Visual row number assignment (assignVisualRowNumbers)
+     * - Grid data updates
+     * - Gantt data updates  
+     * - Batched rendering via requestAnimationFrame
      * 
      * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md - Phase 1
      */
     render(): void {
-        // Phase 1: Delegate to ViewCoordinator for reactive rendering
-        // ViewCoordinator handles:
-        // - Visual row number assignment (assignVisualRowNumbers)
-        // - Grid data updates (_updateGridData)
-        // - Gantt data updates (_updateGanttData)
-        // - Batched rendering via requestAnimationFrame
         if (this.viewCoordinator) {
             this.viewCoordinator.forceUpdate();
-            return;
+        } else {
+            // Safety check - should never happen after init() completes
+            console.error('[SchedulerService] CRITICAL: ViewCoordinator is null during render()');
         }
-        
-        // Legacy fallback (only if ViewCoordinator not initialized)
-        // This should rarely execute after init() completes
-        if (this._renderScheduled) return;
-        
-        this._renderScheduled = true;
-        requestAnimationFrame(() => {
-            this._renderScheduled = false;
-            
-            // Pre-calculate visual row numbers (skips blank/phantom rows)
-            this._assignVisualRowNumbers();
-            
-            // Get visible tasks for hierarchy-aware display
-            const tasks = this.projectController.getVisibleTasks((id) => {
-                const task = this.projectController.getTaskById(id);
-                return task?._collapsed || false;
-            });
-
-            if (this.grid) {
-                // Pass visible tasks to grid (it handles virtual scrolling)
-                this.grid.setData(tasks);
-                this.grid.setSelection(new Set(this.selectionModel.getSelectedIds()), this.selectionModel.getFocusedId());
-            }
-
-            if (this.gantt) {
-                this.gantt.setData(tasks);
-                this.gantt.setSelection(this.selectedIds);
-                // Note: Don't call setViewMode here - it resets custom zoom levels
-                // setViewMode should only be called when user explicitly changes view mode
-            }
-        });
     }
 
     // =========================================================================
@@ -2439,7 +2366,8 @@ export class SchedulerService {
             console.log('[SchedulerService] ✅ Loaded trade partners:', tradePartners.length);
             
             if (tasks.length > 0 || Object.keys(calendar.exceptions).length > 0) {
-                const tasksWithSortKeys = this._assignSortKeysToImportedTasks(tasks);
+                // Use FileOperationsService for sort key migration (single source of truth)
+                const tasksWithSortKeys = this.fileOperationsService!.assignSortKeysToImportedTasks(tasks);
                 
                 // NOTE: disableNotifications removed - ProjectController handles via reactive streams
                 this.projectController.syncTasks(tasksWithSortKeys);
@@ -2451,7 +2379,8 @@ export class SchedulerService {
                 console.log('[SchedulerService] ✅ Loaded from SQLite:', tasks.length, 'tasks');
             } else {
                 console.log('[SchedulerService] No saved data found - creating sample data');
-                this._createSampleData();
+                // P2a: Use FileOperationsService for sample data creation
+                this.fileOperationsService!.createSampleData();
             }
         } catch (err) {
             console.error('[SchedulerService] FATAL: Load data failed:', err);
@@ -2508,206 +2437,11 @@ export class SchedulerService {
      * Create sample data for first-time users
      * @private
      */
-    private _createSampleData(): void {
-        const today = DateUtils.today();
-        const calendar = this.projectController.getCalendar(); // Get calendar from store
-        
-        const tasks: Task[] = [
-            {
-                id: 'sample_1',
-                name: 'Project Setup',
-                start: today,
-                end: DateUtils.addWorkDays(today, 2, calendar),
-                duration: 3,
-                parentId: null,
-                dependencies: [],
-                progress: 0,
-                constraintType: 'asap',
-                constraintDate: null,
-                notes: 'Initial project setup and planning',
-                level: 0,
-                sortKey: OrderingService.generateAppendKey(null),
-                _collapsed: false,
-            },
-            {
-                id: 'sample_2',
-                name: 'Design Phase',
-                start: DateUtils.addWorkDays(today, 3, calendar),
-                end: DateUtils.addWorkDays(today, 7, calendar),
-                duration: 5,
-                parentId: null,
-                dependencies: [{ id: 'sample_1', type: 'FS', lag: 0 }],
-                progress: 0,
-                constraintType: 'asap',
-                constraintDate: null,
-                notes: '',
-                level: 0,
-                sortKey: OrderingService.generateAppendKey(OrderingService.generateAppendKey(null)),
-                _collapsed: false,
-            },
-        ];
-        
-        // NOTE: disableNotifications removed - ProjectController handles via reactive streams
-        this.projectController.syncTasks(tasks);
-        
-        // Recalculate after a brief delay to ensure everything is set up
-        setTimeout(() => {
-            try {
-                this.recalculateAll();
-            } catch (error) {
-                console.error('[SchedulerService] Error recalculating sample data:', error);
-            }
-        }, 100);
-    }
-
-    /**
-     * Assign sortKeys to tasks that don't have them, preserving original order.
-     * 
-     * This is the CRITICAL migration function that converts:
-     * - Legacy tasks with displayOrder → tasks with sortKey
-     * - Imported tasks without sortKey → tasks with sortKey
-     * - Tasks from localStorage → properly ordered tasks
-     * 
-     * The key insight: sortKey must be assigned based on INTENDED display order,
-     * which is determined by:
-     * 1. Existing sortKey (if present) - highest priority
-     * 2. displayOrder field (legacy) - second priority  
-     * 3. Original array position - fallback
-     * 
-     * @param tasks - Tasks to migrate
-     * @returns Tasks with sortKey assigned, preserving intended order
-     */
-    private _assignSortKeysToImportedTasks(tasks: Task[]): Task[] {
-        // Guard: empty or null input
-        if (!tasks || tasks.length === 0) {
-            return tasks;
-        }
-        
-        // Check if migration is needed
-        const needsMigration = tasks.some(t => !t.sortKey);
-        if (!needsMigration) {
-            console.log('[SchedulerService] All tasks have sortKey, no migration needed');
-            return tasks;
-        }
-        
-        console.log('[SchedulerService] Migrating tasks to sortKey...', {
-            total: tasks.length,
-            withSortKey: tasks.filter(t => t.sortKey).length,
-            withDisplayOrder: tasks.filter(t => (t as any).displayOrder !== undefined).length
-        });
-        
-        // Step 1: Create a tracking structure that preserves all ordering info
-        interface TaskWithMeta {
-            task: Task;
-            originalIndex: number;
-            displayOrder: number;
-            hasSortKey: boolean;
-        }
-        
-        const tasksWithMeta: TaskWithMeta[] = tasks.map((task, index) => ({
-            task,
-            originalIndex: index,
-            displayOrder: (task as any).displayOrder ?? Number.MAX_SAFE_INTEGER,
-            hasSortKey: !!task.sortKey
-        }));
-        
-        // Step 2: Group by parentId
-        const tasksByParent = new Map<string | null, TaskWithMeta[]>();
-        
-        tasksWithMeta.forEach(item => {
-            const parentId = item.task.parentId ?? null;
-            if (!tasksByParent.has(parentId)) {
-                tasksByParent.set(parentId, []);
-            }
-            tasksByParent.get(parentId)!.push(item);
-        });
-        
-        // Step 3: Sort each group by intended display order
-        // Priority: existing sortKey > displayOrder > original array index
-        tasksByParent.forEach((group) => {
-            group.sort((a, b) => {
-                // If both have sortKey, use string comparison
-                if (a.hasSortKey && b.hasSortKey) {
-                    const keyA = a.task.sortKey || '';
-                    const keyB = b.task.sortKey || '';
-                    if (keyA < keyB) return -1;
-                    if (keyA > keyB) return 1;
-                    return 0;
-                }
-                
-                // If only one has sortKey, it comes first (preserve existing order)
-                if (a.hasSortKey && !b.hasSortKey) return -1;
-                if (!a.hasSortKey && b.hasSortKey) return 1;
-                
-                // Neither has sortKey - use displayOrder if available
-                if (a.displayOrder !== b.displayOrder) {
-                    return a.displayOrder - b.displayOrder;
-                }
-                
-                // Fallback: original array position
-                return a.originalIndex - b.originalIndex;
-            });
-        });
-        
-        // Step 4: Assign sortKeys to each group
-        // Tasks that already have sortKey keep them (unless they conflict)
-        tasksByParent.forEach((group, parentId) => {
-            // Check if we need to regenerate all sortKeys for this group
-            // (necessary if some have sortKey and some don't, to ensure consistency)
-            const hasMissingSortKeys = group.some(item => !item.hasSortKey);
-            
-            if (hasMissingSortKeys) {
-                // Generate fresh sortKeys for entire group to ensure consistency
-                const sortKeys = OrderingService.generateBulkKeys(null, null, group.length);
-                
-                group.forEach((item, index) => {
-                    item.task = {
-                        ...item.task,
-                        sortKey: sortKeys[index]
-                    };
-                    item.hasSortKey = true;
-                });
-                
-                console.log(`[SchedulerService] Assigned sortKeys to ${group.length} tasks with parentId: ${parentId}`);
-            }
-            // If all have sortKey, keep them as-is (they're already sorted correctly)
-        });
-        
-        // Step 5: Reconstruct result array maintaining original positions
-        // This ensures the array structure matches what was saved
-        const result: Task[] = new Array(tasks.length);
-        
-        tasksByParent.forEach((group) => {
-            group.forEach((item) => {
-                result[item.originalIndex] = item.task;
-            });
-        });
-        
-        // Verify no undefined slots (defensive)
-        const undefinedCount = result.filter(t => t === undefined).length;
-        if (undefinedCount > 0) {
-            console.error('[SchedulerService] Migration error: undefined slots in result', {
-                undefinedCount,
-                totalTasks: tasks.length
-            });
-            // Fallback: return original with simple sequential sortKeys
-            return tasks.map((task, index) => ({
-                ...task,
-                sortKey: task.sortKey || OrderingService.generateBulkKeys(null, null, tasks.length)[index]
-            }));
-        }
-        
-        console.log('[SchedulerService] ✅ Migration complete', {
-            totalMigrated: result.length,
-            sampleSortKeys: result.slice(0, 5).map(t => ({ id: t.id, sortKey: t.sortKey }))
-        });
-        
-        return result;
-    }
-
     // =========================================================================
     // HISTORY (UNDO/REDO)
     // =========================================================================
+    // Note: _createSampleData moved to FileOperationsService (P2a)
+    // Note: _assignSortKeysToImportedTasks moved to FileOperationsService (P0 dedup)
 
     /**
      * Save checkpoint for undo/redo (deprecated - now handled by Event Sourcing)

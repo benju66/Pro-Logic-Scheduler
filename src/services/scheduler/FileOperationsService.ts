@@ -9,12 +9,13 @@
  * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
  */
 
-import type { Task, Calendar } from '../../types';
+import type { Task } from '../../types';
 import type { ProjectController } from '../ProjectController';
 import type { FileService } from '../../ui/services/FileService';
 import type { ToastService } from '../../ui/services/ToastService';
 import type { PersistenceService } from '../../data/PersistenceService';
 import { OrderingService } from '../OrderingService';
+import { DateUtils } from '../../core/DateUtils';
 
 // =========================================================================
 // TYPES
@@ -36,8 +37,8 @@ export interface FileOperationsServiceDeps {
     saveCheckpoint: () => void;
     /** Save data to storage */
     saveData: () => void;
-    /** Create sample data after clear */
-    createSampleData: () => void;
+    /** Recalculate all tasks (after sample data creation) */
+    recalculateAll: () => void;
     /** Storage key for localStorage */
     storageKey: string;
 }
@@ -66,7 +67,7 @@ export interface FileOperationsServiceDeps {
  *     persistenceService,
  *     saveCheckpoint: () => scheduler.saveCheckpoint(),
  *     saveData: () => scheduler.saveData(),
- *     createSampleData: () => scheduler._createSampleData(),
+ *     recalculateAll: () => scheduler.recalculateAll(),
  *     storageKey: 'pro_scheduler_v10'
  * });
  * 
@@ -255,7 +256,7 @@ export class FileOperationsService {
         
         // Reset in-memory state
         this.deps.projectController.syncTasks([]);
-        this.deps.createSampleData();
+        this.createSampleData();
         
         // NOTE: ProjectController handles recalc/save via Worker
         
@@ -403,5 +404,67 @@ export class FileOperationsService {
         });
         
         return result;
+    }
+
+    // =========================================================================
+    // SAMPLE DATA
+    // =========================================================================
+
+    /**
+     * Create sample data for new/empty projects
+     * 
+     * P2a Enhancement: Moved from SchedulerService._createSampleData()
+     * to consolidate all data creation logic in FileOperationsService.
+     */
+    createSampleData(): void {
+        const today = DateUtils.today();
+        const calendar = this.deps.projectController.getCalendar();
+        
+        const tasks: Task[] = [
+            {
+                id: 'sample_1',
+                name: 'Project Setup',
+                start: today,
+                end: DateUtils.addWorkDays(today, 2, calendar),
+                duration: 3,
+                parentId: null,
+                dependencies: [],
+                progress: 0,
+                constraintType: 'asap',
+                constraintDate: null,
+                notes: 'Initial project setup and planning',
+                level: 0,
+                sortKey: OrderingService.generateAppendKey(null),
+                _collapsed: false,
+            },
+            {
+                id: 'sample_2',
+                name: 'Design Phase',
+                start: DateUtils.addWorkDays(today, 3, calendar),
+                end: DateUtils.addWorkDays(today, 7, calendar),
+                duration: 5,
+                parentId: null,
+                dependencies: [{ id: 'sample_1', type: 'FS', lag: 0 }],
+                progress: 0,
+                constraintType: 'asap',
+                constraintDate: null,
+                notes: '',
+                level: 0,
+                sortKey: OrderingService.generateAppendKey(OrderingService.generateAppendKey(null)),
+                _collapsed: false,
+            },
+        ];
+        
+        // NOTE: disableNotifications removed - ProjectController handles via reactive streams
+        this.deps.projectController.syncTasks(tasks);
+        
+        // Recalculate after a brief delay to ensure everything is set up
+        setTimeout(() => {
+            try {
+                this.deps.recalculateAll();
+            } catch (error) {
+                console.error('[FileOperationsService] Error recalculating sample data:', error);
+            }
+        }, 100);
     }
 }

@@ -170,7 +170,7 @@ export interface Task {
    * - Sequential number (1, 2, 3...) for schedulable tasks
    * - null for blank rows and phantom rows (not displayed)
    * This enables "logical numbering" where blank rows don't consume numbers.
-   * Recalculated on each render cycle by SchedulerService._assignVisualRowNumbers()
+   * Recalculated on each render cycle by ViewCoordinator.assignVisualRowNumbers()
    */
   _visualRowNumber?: number | null;
   

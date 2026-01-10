@@ -50,3 +50,12 @@ export type { TradePartnerServiceDeps } from './TradePartnerService';
 // Phase 9: ColumnPreferencesService - Column management, header rendering (Encapsulated Legacy)
 export { ColumnPreferencesService } from './ColumnPreferencesService';
 export type { ColumnPreferencesServiceDeps } from './ColumnPreferencesService';
+
+// P1 Enhancement: GridNavigationController - Excel-style cell navigation
+export { GridNavigationController } from './GridNavigationController';
+export type { 
+    GridNavigationControllerDeps, 
+    CellPosition, 
+    NavigationResult, 
+    NavigationDirection 
+} from './GridNavigationController';
