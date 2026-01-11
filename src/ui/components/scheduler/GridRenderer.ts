@@ -1062,7 +1062,7 @@ export class GridRenderer {
 
                 this.options.onRowClick(nextTaskId, syntheticEvent);
             }
-            // NOTE: Do NOT call onSelectionChange here - onRowClick will trigger it via _updateSelection()
+            // NOTE: Do NOT call onSelectionChange here - onRowClick will trigger it via viewStateService.updateSelection()
         }
     }
 

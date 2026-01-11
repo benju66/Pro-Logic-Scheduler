@@ -80,7 +80,7 @@ const STORAGE_KEY_WIDTHS = 'pro_scheduler_column_widths';
  *     toastService,
  *     getGrid: () => scheduler.grid,
  *     render: () => scheduler.render(),
- *     updateSelection: () => scheduler._updateSelection()
+ *     updateSelection: () => scheduler.viewStateService.updateSelection()
  * });
  * 
  * // Build header

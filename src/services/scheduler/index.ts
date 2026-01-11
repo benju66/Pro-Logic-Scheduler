@@ -63,3 +63,11 @@ export type {
 // Phase 3.1: DependencyValidationService - Dependency validation and cycle detection
 export { DependencyValidationService } from './DependencyValidationService';
 export type { DependencyValidationServiceDeps, ValidationResult } from './DependencyValidationService';
+
+// Phase 4.1: ViewportFactoryService - Viewport facade creation
+export { ViewportFactoryService } from './ViewportFactoryService';
+export type { ViewportFactoryServiceDeps } from './ViewportFactoryService';
+
+// Phase 4.2: KeyboardBindingService - Keyboard binding configuration
+export { KeyboardBindingService } from './KeyboardBindingService';
+export type { KeyboardBindingServiceDeps, KeyboardActions } from './KeyboardBindingService';

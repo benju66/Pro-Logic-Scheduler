@@ -47,10 +47,10 @@ import { TradePartnerService } from './scheduler/TradePartnerService';
 import { ColumnPreferencesService } from './scheduler/ColumnPreferencesService';
 import { GridNavigationController } from './scheduler/GridNavigationController';
 import { DependencyValidationService } from './scheduler/DependencyValidationService';
+import { ViewportFactoryService } from './scheduler/ViewportFactoryService';
+import { KeyboardBindingService } from './scheduler/KeyboardBindingService';
 import { CommandService } from '../commands';
 import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport';
-import { GridRenderer } from '../ui/components/scheduler/GridRenderer';
-import { GanttRenderer } from '../ui/components/scheduler/GanttRenderer';
 import { SideDrawer } from '../ui/components/SideDrawer';
 import type { RendererFactory } from '../ui/factories';
 import type { 
@@ -146,6 +146,8 @@ export class SchedulerService {
     private columnPreferencesService!: ColumnPreferencesService;
     private gridNavigationController!: GridNavigationController;
     private dependencyValidationService!: DependencyValidationService;
+    private viewportFactoryService!: ViewportFactoryService;
+    private keyboardBindingService!: KeyboardBindingService;
     private testDataGenerator!: TestDataGenerator;
 
     // UI components (initialized in init())
@@ -323,7 +325,7 @@ export class SchedulerService {
             toastService: this.toastService,
             getGrid: () => this.grid,
             render: () => this.render(),
-            updateSelection: () => this._updateSelection(),
+            updateSelection: () => this.viewStateService.updateSelection(),
         });
         console.log('[SchedulerService] ✅ ColumnPreferencesService initialized (early - for header build)');
 
@@ -429,8 +431,8 @@ export class SchedulerService {
         (this as any).viewport = viewport;
         
         // Create facade wrappers for backward compatibility
-        this.grid = this._createGridFacade(viewport);
-        this.gantt = this._createGanttFacade(viewport);
+        this.grid = this.viewportFactoryService.createGridFacade(viewport);
+        this.gantt = this.viewportFactoryService.createGanttFacade(viewport);
         
         // Pure DI: Use injected ZoomController or fall back to singleton
         if (!this.zoomController) {
@@ -472,7 +474,7 @@ export class SchedulerService {
             saveCheckpoint: () => this.saveCheckpoint(),
             enterEditMode: () => this.enterEditMode(),
             isInitialized: () => this.isInitialized,
-            updateHeaderCheckboxState: () => this._updateHeaderCheckboxState(),
+            updateHeaderCheckboxState: () => this.viewStateService.updateHeaderCheckboxState(),
         });
         console.log('[SchedulerService] ✅ TaskOperationsService initialized');
         
@@ -488,6 +490,8 @@ export class SchedulerService {
             getColumnDefinitions: () => this._getColumnDefinitions(),
             closeDrawer: () => this.drawer?.close(),
             isDrawerOpen: () => this.drawer?.isDrawerOpen() ?? false,
+            onSelectionChange: (selectedIds) => this._handleSelectionChange(selectedIds),
+            updateHeaderCheckboxState: (checkbox) => this.columnPreferencesService.updateHeaderCheckboxState(checkbox),
         });
         // Sync initial state from SchedulerService to ViewStateService
         this.viewStateService.viewMode = this.viewMode;
@@ -515,7 +519,7 @@ export class SchedulerService {
             onCalendarSave: (calendar) => this._handleCalendarSave(calendar),
             onColumnPreferencesSave: (prefs) => this.updateColumnPreferences(prefs),
             getColumnPreferences: () => this._getColumnPreferences(),
-            updateSelection: () => this._updateSelection(),
+            updateSelection: () => this.viewStateService.updateSelection(),
         });
         // Initialize modals with container
         const modalsContainer = modalContainer || document.body;
@@ -564,6 +568,49 @@ export class SchedulerService {
         });
         console.log('[SchedulerService] ✅ DependencyValidationService initialized');
         
+        // Initialize ViewportFactoryService
+        this.viewportFactoryService = new ViewportFactoryService({});
+        console.log('[SchedulerService] ✅ ViewportFactoryService initialized');
+        
+        // Initialize KeyboardBindingService
+        this.keyboardBindingService = new KeyboardBindingService({
+            actions: {
+                isAppReady: () => this.isInitialized,
+                onUndo: () => this.undo(),
+                onRedo: () => this.redo(),
+                onDelete: () => this._deleteSelected(),
+                onCopy: () => this.copySelected(),
+                onCut: () => this.cutSelected(),
+                onPaste: () => this.paste(),
+                onInsert: () => this.insertTaskBelow(),
+                onShiftInsert: () => this.insertTaskAbove(),
+                onCtrlEnter: () => this.addChildTask(),
+                onArrowUp: (shiftKey, _ctrlKey) => this._handleCellNavigation('up', shiftKey),
+                onArrowDown: (shiftKey, _ctrlKey) => this._handleCellNavigation('down', shiftKey),
+                onArrowLeft: (shiftKey, _ctrlKey) => this._handleCellNavigation('left', shiftKey),
+                onArrowRight: (shiftKey, _ctrlKey) => this._handleCellNavigation('right', shiftKey),
+                onCtrlArrowLeft: () => this._handleArrowCollapse('ArrowLeft'),
+                onCtrlArrowRight: () => this._handleArrowCollapse('ArrowRight'),
+                onTab: () => this._handleTabIndent(),
+                onShiftTab: () => this._handleTabOutdent(),
+                onCtrlArrowUp: () => this.moveSelectedTasks(-1),
+                onCtrlArrowDown: () => this.moveSelectedTasks(1),
+                onF2: () => this.enterEditMode(),
+                onEscape: () => {
+                    // Exit driving path mode on Escape
+                    if (this.displaySettings.drivingPathMode) {
+                        this.toggleDrivingPathMode();
+                    } else {
+                        this._handleEscape();
+                    }
+                },
+                onLinkSelected: () => this.linkSelectedInOrder(),
+                onDrivingPath: () => this.toggleDrivingPathMode(),
+            },
+            KeyboardServiceClass: KeyboardService,
+        });
+        console.log('[SchedulerService] ✅ KeyboardBindingService initialized');
+        
         // Initialize TestDataGenerator
         this.testDataGenerator = new TestDataGenerator({
             projectController: this.projectController,
@@ -605,92 +652,6 @@ export class SchedulerService {
         console.log('[SchedulerService] ✅ Initialization complete - isInitialized set to true');
     }
 
-    /**
-     * Create facade wrapper for VirtualScrollGrid API compatibility
-     */
-    private _createGridFacade(viewport: SchedulerViewport): VirtualScrollGridFacade {
-        // Return a facade object that implements VirtualScrollGrid interface
-        return {
-            setData: (tasks: Task[]) => viewport.setData(tasks),
-            setVisibleData: (tasks: Task[]) => viewport.setVisibleData(tasks),
-            setSelection: (selectedIds: Set<string>, focusedId?: string | null, options?: { focusCell?: boolean; focusField?: string }) => {
-                viewport.setSelection([...selectedIds], focusedId ?? null, options);
-            },
-            scrollToTask: (taskId: string) => viewport.scrollToTask(taskId),
-            focusCell: (taskId: string, field: string) => {
-                // Delegate to grid renderer if available
-                const gridRenderer = (viewport as any).gridRenderer as GridRenderer | null;
-                if (gridRenderer) {
-                    gridRenderer.focusCell(taskId, field);
-                }
-            },
-            highlightCell: (taskId: string, field: string) => {
-                // Delegate to grid renderer if available
-                const gridRenderer = (viewport as any).gridRenderer as GridRenderer | null;
-                if (gridRenderer) {
-                    gridRenderer.highlightCell(taskId, field);
-                }
-            },
-            focus: () => {
-                // Delegate to grid renderer if available
-                const gridRenderer = (viewport as any).gridRenderer as GridRenderer | null;
-                if (gridRenderer) {
-                    gridRenderer.focus();
-                }
-            },
-            refresh: () => viewport.refresh(),
-            updateColumns: (columns: GridColumn[]) => viewport.updateGridColumns(columns),
-            updateRow: (taskId: string) => viewport.updateRow(taskId),
-            setScrollTop: (scrollTop: number) => viewport.setScrollTop(scrollTop),
-            getScrollTop: () => viewport.getScrollTop(),
-            setCalendar: (calendar: Calendar) => {
-                // Delegate to grid renderer if available
-                const gridRenderer = (viewport as any).gridRenderer as GridRenderer | null;
-                if (gridRenderer) {
-                    gridRenderer.setCalendar(calendar);
-                }
-            },
-            getStats: () => ({
-                totalTasks: viewport.getData().length,
-                visibleRange: '0-0',
-                renderedRows: 0,
-                poolSize: 0,
-                renderCount: 0,
-            }),
-            destroy: () => viewport.destroy(),
-        };
-    }
-
-    /**
-     * Create facade wrapper for CanvasGantt API compatibility
-     */
-    private _createGanttFacade(viewport: SchedulerViewport): CanvasGanttFacade {
-        // Return a facade object that implements CanvasGantt interface
-        return {
-            setData: (tasks: Task[]) => viewport.setData(tasks),
-            setSelection: (selectedIds: Set<string>) => {
-                viewport.setSelection([...selectedIds]);
-            },
-            setViewMode: (mode: string) => {
-                const ganttRenderer = (viewport as any).ganttRenderer as GanttRenderer | null;
-                if (ganttRenderer) {
-                    ganttRenderer.setViewMode(mode);
-                }
-            },
-            setScrollTop: (scrollTop: number) => viewport.setScrollTop(scrollTop),
-            getScrollTop: () => viewport.getScrollTop(),
-            scrollToTask: (taskId: string) => viewport.scrollToTask(taskId),
-            refresh: () => viewport.refresh(),
-            getStats: () => ({
-                totalTasks: viewport.getData().length,
-                visibleRange: '0-0',
-                renderedRows: 0,
-                poolSize: 0,
-                renderCount: 0,
-            }),
-            destroy: () => viewport.destroy(),
-        };
-    }
 
     /**
      * Handle selection change
@@ -707,7 +668,7 @@ export class SchedulerService {
         // === Notify registered callbacks ===
         // IMPORTANT: This is the ONLY place callbacks are triggered.
         // Do NOT add callbacks to _handleRowClick - it would cause double-firing
-        // since row clicks internally trigger _handleSelectionChange via _updateSelection().
+        // since row clicks internally trigger _handleSelectionChange via viewStateService.updateSelection().
         const primaryTask = primaryId ? this.projectController.getTaskById(primaryId) || null : null;
         
         // Pass the clicked field (if any) to callbacks
@@ -749,39 +710,7 @@ export class SchedulerService {
         
         console.log('[SchedulerService] 🔧 Initializing keyboard shortcuts...');
         
-        this.keyboardService = new KeyboardService({
-            isAppReady: () => this.isInitialized, // Guard to prevent handlers during initialization
-            onUndo: () => this.undo(),
-            onRedo: () => this.redo(),
-            onDelete: () => this._deleteSelected(),
-            onCopy: () => this.copySelected(),
-            onCut: () => this.cutSelected(),
-            onPaste: () => this.paste(),
-            onInsert: () => this.insertTaskBelow(),
-            onShiftInsert: () => this.insertTaskAbove(),
-            onCtrlEnter: () => this.addChildTask(),
-            onArrowUp: (shiftKey, _ctrlKey) => this._handleCellNavigation('up', shiftKey),
-            onArrowDown: (shiftKey, _ctrlKey) => this._handleCellNavigation('down', shiftKey),
-            onArrowLeft: (shiftKey, _ctrlKey) => this._handleCellNavigation('left', shiftKey),
-            onArrowRight: (shiftKey, _ctrlKey) => this._handleCellNavigation('right', shiftKey),
-            onCtrlArrowLeft: () => this._handleArrowCollapse('ArrowLeft'),
-            onCtrlArrowRight: () => this._handleArrowCollapse('ArrowRight'),
-            onTab: () => this._handleTabIndent(),
-            onShiftTab: () => this._handleTabOutdent(),
-            onCtrlArrowUp: () => this.moveSelectedTasks(-1),
-            onCtrlArrowDown: () => this.moveSelectedTasks(1),
-            onF2: () => this.enterEditMode(),
-            onEscape: () => {
-                // Exit driving path mode on Escape
-                if (this.displaySettings.drivingPathMode) {
-                    this.toggleDrivingPathMode();
-                } else {
-                    this._handleEscape();
-                }
-            },
-            onLinkSelected: () => this.linkSelectedInOrder(),
-            onDrivingPath: () => this.toggleDrivingPathMode(),
-        });
+        this.keyboardService = this.keyboardBindingService.initialize();
         
         console.log('[SchedulerService] ✅ Keyboard shortcuts initialized');
     }
@@ -982,8 +911,7 @@ export class SchedulerService {
         }
 
         this.selectionModel.setFocus(taskId, this._lastClickedField);
-        this._updateSelection();
-        this._updateHeaderCheckboxState();
+        this.viewStateService.updateSelection();
     }
 
     /**
@@ -1229,7 +1157,7 @@ export class SchedulerService {
         }
         
         // Update UI
-        this._updateSelection();
+        this.viewStateService.updateSelection();
         
         const currentCell = this.gridNavigationController.getCurrentCell();
         if (currentCell && this.grid) {
@@ -1272,7 +1200,7 @@ export class SchedulerService {
     /** Handle Escape key */
     private _handleEscape(): void {
         this.viewStateService.handleEscape();
-        this._updateSelection();
+        this.viewStateService.updateSelection();
     }
 
     // =========================================================================
@@ -1563,7 +1491,7 @@ export class SchedulerService {
             if (prevTaskId && newTaskId !== prevTaskId) {
                 this.selectionModel.setSelection(new Set([newTaskId]), newTaskId, [newTaskId]);
                 this.selectionModel.setFocus(newTaskId, newState.context.field);
-                this._updateSelection();
+                this.viewStateService.updateSelection();
             }
         }
     }
@@ -1590,33 +1518,6 @@ export class SchedulerService {
         return this.selectionModel.getSelectionInOrder();
     }
 
-    /**
-     * Update selection in UI components
-     * @private
-     */
-    private _updateSelection(): void {
-        if (this.grid) {
-            this.grid.setSelection(new Set(this.selectionModel.getSelectedIds()), this.selectionModel.getFocusedId());
-        }
-        if (this.gantt) {
-            this.gantt.setSelection(new Set(this.selectionModel.getSelectedIds()));
-        }
-        // Update header checkbox state
-        this._updateHeaderCheckboxState();
-        
-        // Update driving path if mode is active
-        this.viewStateService.updateDrivingPathIfActive();
-        
-        // Trigger selection change callbacks (for RightSidebarManager and other listeners)
-        // Convert Set to array for _handleSelectionChange
-        const selectedArray = Array.from(this.selectedIds);
-        this._handleSelectionChange(selectedArray);
-    }
-
-    /** Update header checkbox state (checked/unchecked/indeterminate) */
-    private _updateHeaderCheckboxState(checkbox?: HTMLInputElement): void {
-        this.columnPreferencesService.updateHeaderCheckboxState(checkbox);
-    }
 
     /**
      * Copy selected tasks

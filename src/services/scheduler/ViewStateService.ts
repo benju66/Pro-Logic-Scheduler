@@ -56,6 +56,10 @@ export interface ViewStateServiceDeps {
     closeDrawer: () => void;
     /** Check if drawer is open */
     isDrawerOpen: () => boolean;
+    /** Callback for selection change events */
+    onSelectionChange: (selectedIds: string[]) => void;
+    /** Callback to update header checkbox state */
+    updateHeaderCheckboxState: (checkbox?: HTMLInputElement) => void;
 }
 
 // =========================================================================
@@ -298,5 +302,48 @@ export class ViewStateService {
         if (this.displaySettings.drivingPathMode) {
             this._updateGanttDrivingPathMode();
         }
+    }
+
+    // =========================================================================
+    // SELECTION UI UPDATES (Phase 4.3: Merged from SchedulerService)
+    // =========================================================================
+
+    /**
+     * Update selection in UI components (grid, gantt, header checkbox)
+     * Called when selection state changes
+     */
+    updateSelection(): void {
+        const grid = this.deps.getGrid();
+        const gantt = this.deps.getGantt();
+        
+        if (grid) {
+            grid.setSelection(
+                new Set(this.deps.selectionModel.getSelectedIds()),
+                this.deps.selectionModel.getFocusedId()
+            );
+        }
+        if (gantt) {
+            gantt.setSelection(new Set(this.deps.selectionModel.getSelectedIds()));
+        }
+        
+        // Update header checkbox state
+        this.updateHeaderCheckboxState();
+        
+        // Update driving path if mode is active
+        this.updateDrivingPathIfActive();
+        
+        // Trigger selection change callbacks (for RightSidebarManager and other listeners)
+        const selectedArray = Array.from(this.deps.selectionModel.getSelectedIds());
+        this.deps.onSelectionChange(selectedArray);
+    }
+
+    /**
+     * Update header checkbox state (checked/unchecked/indeterminate)
+     * Delegates to ColumnPreferencesService via callback
+     * 
+     * @param checkbox - Optional checkbox element (if not provided, finds it)
+     */
+    updateHeaderCheckboxState(checkbox?: HTMLInputElement): void {
+        this.deps.updateHeaderCheckboxState(checkbox);
     }
 }
