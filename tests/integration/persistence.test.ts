@@ -7,24 +7,26 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
-// Mock Tauri SQL plugin at module level
-const mockDb = {
-  execute: vi.fn(),
-  select: vi.fn(),
-  close: vi.fn(),
-};
-
-const mockDatabaseLoad = vi.fn().mockResolvedValue(mockDb);
-
-// Mock the SQL plugin import (Tauri v2) - must be at top level
-// The plugin exports a default object with a load method
+// Mock the SQL plugin import (Tauri v2) - must be hoisted before other code
+// Using inline mock to avoid hoisting issues with mockDatabaseLoad
 vi.mock('@tauri-apps/plugin-sql', () => {
+  const mockDb = {
+    execute: vi.fn().mockResolvedValue({ lastInsertId: 1, rowsAffected: 1 }),
+    select: vi.fn().mockResolvedValue([]),
+    close: vi.fn(),
+  };
   return {
     default: {
-      load: mockDatabaseLoad,
+      load: vi.fn().mockResolvedValue(mockDb),
     },
+    __mockDb: mockDb, // Export for test access
   };
 });
+
+// Import the mock for test access
+import Database from '@tauri-apps/plugin-sql';
+const mockDb = (Database as any).__mockDb;
+const mockDatabaseLoad = (Database as any).load;
 
 import { PersistenceService } from '../../src/data/PersistenceService';
 

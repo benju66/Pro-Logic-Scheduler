@@ -9,10 +9,10 @@ export default defineConfig({
     // Override environment for specific test files that need DOM
     // Using happy-dom instead of jsdom for better ESM compatibility and performance
     environmentMatchGlobs: [
-      ['**/*.integration.test.ts', 'happy-dom'],
+      ['tests/integration/**/*.test.ts', 'happy-dom'],
     ],
-    // Setup files
-    setupFiles: [],
+    // Setup files - provide polyfills for test environment
+    setupFiles: ['./tests/setup.ts'],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

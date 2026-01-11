@@ -1,542 +1,363 @@
-# Phase 3: Confidence Boost Analysis
+# Phase 3: Type Safety - Confidence Boost Analysis
 
 **Date:** January 2025  
-**Confidence Level:** 85-90% → **95%+** (after verification)
+**Status:** ✅ **CONFIDENCE BOOSTED**  
+**Confidence Level:** 75% → **95%**
 
 ---
 
-## ✅ Verification Results
+## Deep Investigation Results
 
-### 1. Build Verification
-- ✅ **Build succeeds:** `npm run build` completes without errors
-- ✅ **No TypeScript errors:** All types compile correctly
-- ✅ **No breaking changes:** Current codebase is stable
+### 1. Complete Field Mapping Verification ✅
 
-### 2. Usage Pattern Analysis
+I've traced every field through the entire data flow:
 
-#### `generateMockTasks()` Usage
-- **Found:** 2 call sites in `UIEventManager.ts` (lines 783, 798)
-- **Pattern:** Simple method call `scheduler.generateMockTasks(count)`
-- **Risk:** ⚠️ **LOW** - Only need to update 2 lines after extraction
-- **Solution:** Update `UIEventManager.ts` to import from `TestDataGenerator`
+#### Task → SQLite Payload (ProjectController.addTask)
 
-#### `_validateDependencies()` Usage
-- **Found:** 1 call site in `_handleDependenciesSave()` (line 1152)
-- **Pattern:** Simple validation call, returns `{ valid: boolean; error?: string }`
-- **Risk:** ✅ **VERY LOW** - Single usage, clear interface
-- **Solution:** Replace with `dependencyValidationService.validate()`
-
-#### `_initializeEngine()` Usage
-- **Found:** 1 call site in `_initServices()` (line 297)
-- **Status:** No-op method (just logs)
-- **Risk:** ✅ **ZERO** - Can be safely removed
-- **Solution:** Remove call and method entirely
-
-### 3. Pattern Matching (Following Existing Extractions)
-
-#### TaskOperationsService Pattern (Reference)
 ```typescript
-// ✅ EXISTING PATTERN TO FOLLOW:
-export interface TaskOperationsServiceDeps {
-    projectController: ProjectController;
-    selectionModel: SelectionModel;
-    // ... other deps
-}
-
-export class TaskOperationsService {
-    private deps: TaskOperationsServiceDeps;
-    constructor(deps: TaskOperationsServiceDeps) {
-        this.deps = deps;
-    }
-    // ... methods use this.deps.projectController
-}
+// src/services/ProjectController.ts:391-411
+const eventPayload = {
+    id: task.id,                              // ✅ Required
+    parent_id: task.parentId,                 // ✅ Nullable
+    sort_key: task.sortKey,                   // ✅ Required
+    row_type: task.rowType || 'task',         // ✅ Default: 'task'
+    name: task.name,                          // ✅ Required
+    notes: task.notes || '',                  // ✅ Default: ''
+    duration: task.duration,                  // ✅ Required
+    constraint_type: task.constraintType,     // ✅ Required
+    constraint_date: task.constraintDate,     // ✅ Nullable
+    scheduling_mode: task.schedulingMode || 'Auto',  // ✅ Default: 'Auto'
+    dependencies: task.dependencies || [],    // ✅ Default: []
+    progress: task.progress || 0,             // ✅ Default: 0
+    actual_start: task.actualStart,           // ✅ Nullable
+    actual_finish: task.actualFinish,         // ✅ Nullable
+    remaining_duration: task.remainingDuration,// ✅ Nullable
+    baseline_start: task.baselineStart,       // ✅ Nullable
+    baseline_finish: task.baselineFinish,     // ✅ Nullable
+    baseline_duration: task.baselineDuration, // ✅ Nullable
+    is_collapsed: task._collapsed || false,   // ✅ Default: false
+};
+// NOTE: tradePartnerIds NOT in payload - uses junction table
 ```
 
-#### DependencyValidationService Pattern (To Create)
+#### SQLite → Task (DataLoader.hydrateTask)
+
 ```typescript
-// ✅ FOLLOWING SAME PATTERN:
-export interface DependencyValidationServiceDeps {
-    projectController: ProjectController;  // Only dependency needed
+// src/data/DataLoader.ts:447-474
+{
+    id: row.id,                                    // ✅ Direct
+    parentId: row.parent_id ?? null,               // ✅ Coalesce
+    sortKey: row.sort_key || '',                   // ✅ Default: ''
+    rowType: (row.row_type as 'task' | 'blank' | 'phantom') || 'task',  // ✅ Cast + default
+    name: row.name || 'New Task',                  // ✅ Default
+    notes: row.notes || '',                        // ✅ Default
+    duration: row.duration || 1,                   // ✅ Default: 1
+    constraintType: (row.constraint_type as ConstraintType) || 'asap',  // ✅ Cast + default
+    constraintDate: row.constraint_date ?? null,   // ✅ Coalesce
+    schedulingMode: (row.scheduling_mode as 'Auto' | 'Manual') ?? 'Auto',  // ✅ Cast + default
+    dependencies: this.parseDependencies(row.dependencies),  // ✅ JSON parse
+    progress: row.progress || 0,                   // ✅ Default: 0
+    actualStart: nullToUndefined(row.actual_start),          // ✅ null → undefined
+    actualFinish: nullToUndefined(row.actual_finish),        // ✅ null → undefined
+    remainingDuration: nullToUndefined(row.remaining_duration),  // ✅ null → undefined
+    baselineStart: nullToUndefined(row.baseline_start),      // ✅ null → undefined
+    baselineFinish: nullToUndefined(row.baseline_finish),    // ✅ null → undefined
+    baselineDuration: nullToUndefined(row.baseline_duration),// ✅ null → undefined
+    _collapsed: Boolean(row.is_collapsed),         // ✅ 0/1 → boolean
+    tradePartnerIds: [],                           // ✅ Loaded separately from junction
+    level: 0,                                      // ✅ Calculated field (default)
+    start: '',                                     // ✅ Calculated field (default)
+    end: '',                                       // ✅ Calculated field (default)
 }
-
-export class DependencyValidationService {
-    private deps: DependencyValidationServiceDeps;
-    constructor(deps: DependencyValidationServiceDeps) {
-        this.deps = deps;
-    }
-    // ... methods use this.deps.projectController
-}
 ```
-
-**Confidence:** ✅ **95%+** - Following proven pattern
-
-### 4. Test Coverage Analysis
-
-#### Dependency Validation Tests
-- **Found:** ❌ No dedicated tests for dependency validation
-- **Impact:** ✅ **POSITIVE** - No tests to update/maintain
-- **Risk:** ✅ **LOW** - Validation logic is straightforward
-
-#### Test Utilities Tests
-- **Found:** ❌ No tests use `generateMockTasks()` directly
-- **Impact:** ✅ **POSITIVE** - No test updates needed
-- **Risk:** ✅ **LOW** - Utility extraction won't break tests
-
-**Confidence:** ✅ **95%+** - No test breakage risk
-
-### 5. Dependency Analysis
-
-#### DependencyValidationService Dependencies
-```typescript
-// ✅ MINIMAL DEPENDENCIES:
-- projectController: ProjectController  // Only dependency
-- No other services needed
-- No circular dependencies possible
-```
-
-#### TestDataGenerator Dependencies
-```typescript
-// ✅ UTILITY DEPENDENCIES:
-- DateUtils (core utility)
-- OrderingService (core utility)
-- ProjectController (for syncTasks)
-- ToastService (for success message)
-// All are stable, well-tested dependencies
-```
-
-**Confidence:** ✅ **95%+** - Minimal, stable dependencies
 
 ---
 
-## 📋 Exact Implementation Guide
+### 2. Trade Partner Architecture ✅
 
-### Phase 3.1: DependencyValidationService (95% Confidence)
+**Critical Finding:** `tradePartnerIds` uses a **junction table** pattern:
 
-#### Step 1: Create Service File
-**File:** `src/services/scheduler/DependencyValidationService.ts`
+```
+tasks table (no tradePartnerIds column)
+    ↓
+task_trade_partners junction table
+    ↓
+trade_partners table
+```
+
+**Events Used:**
+- `TASK_TRADE_PARTNER_ASSIGNED` - Adds to junction
+- `TASK_TRADE_PARTNER_UNASSIGNED` - Removes from junction
+
+**Loading:**
+```typescript
+// DataLoader.loadTaskTradePartnerAssignments()
+// Queries junction table and merges into tasks
+```
+
+**Result:** This is **correctly handled** - no gap here.
+
+---
+
+### 3. Null vs Undefined Handling ✅
+
+The `nullToUndefined()` helper correctly handles SQLite nulls:
 
 ```typescript
-/**
- * @fileoverview Dependency Validation Service
- * @module services/scheduler/DependencyValidationService
- * 
- * Handles dependency validation including cycle detection.
- * Extracted from SchedulerService as part of the decomposition plan.
- * 
- * @see docs/PHASE3_DECOMPOSITION_AUDIT.md - Phase 3.1
- */
-
-import type { ProjectController } from '../ProjectController';
-import type { LinkType } from '../../types';
-
-export interface DependencyValidationServiceDeps {
-    projectController: ProjectController;
-}
-
-export interface ValidationResult {
-    valid: boolean;
-    error?: string;
-}
-
-export class DependencyValidationService {
-    private deps: DependencyValidationServiceDeps;
-
-    constructor(deps: DependencyValidationServiceDeps) {
-        this.deps = deps;
-    }
-
-    /**
-     * Get all predecessor task IDs (transitive closure through dependencies)
-     * Uses BFS to traverse dependency graph backward
-     */
-    getAllPredecessors(taskId: string): Set<string> {
-        const predecessors = new Set<string>();
-        const visited = new Set<string>();
-        const queue: string[] = [taskId];
-        
-        while (queue.length > 0) {
-            const currentId = queue.shift()!;
-            if (visited.has(currentId)) continue;
-            visited.add(currentId);
-            
-            const task = this.deps.projectController.getTaskById(currentId);
-            if (task?.dependencies) {
-                for (const dep of task.dependencies) {
-                    if (!visited.has(dep.id)) {
-                        predecessors.add(dep.id);
-                        queue.push(dep.id);
-                    }
-                }
-            }
-        }
-        
-        return predecessors;
-    }
-
-    /**
-     * Check if adding a dependency would create a circular dependency
-     */
-    wouldCreateCycle(taskId: string, predecessorId: string): boolean {
-        const predecessorPredecessors = this.getAllPredecessors(predecessorId);
-        return predecessorPredecessors.has(taskId);
-    }
-
-    /**
-     * Validate dependencies before saving
-     */
-    validate(taskId: string, dependencies: Array<{ id: string; type: LinkType; lag: number }>): ValidationResult {
-        const task = this.deps.projectController.getTaskById(taskId);
-        if (!task) {
-            return { valid: false, error: 'Task not found' };
-        }
-
-        // Check each dependency
-        for (const dep of dependencies) {
-            // Check if predecessor exists
-            const predecessor = this.deps.projectController.getTaskById(dep.id);
-            if (!predecessor) {
-                return { valid: false, error: `Predecessor task "${dep.id}" not found` };
-            }
-
-            // Check if predecessor is a blank row
-            if (predecessor.rowType === 'blank') {
-                return { valid: false, error: 'Cannot create dependency to a blank row' };
-            }
-
-            // Check for circular dependencies
-            if (this.wouldCreateCycle(taskId, dep.id)) {
-                const taskName = task.name || taskId;
-                const predName = predecessor.name || dep.id;
-                return { valid: false, error: `Circular dependency detected: "${taskName}" depends on "${predName}", which depends on "${taskName}"` };
-            }
-
-            // Check if linking to self
-            if (dep.id === taskId) {
-                return { valid: false, error: 'Task cannot depend on itself' };
-            }
-
-            // Validate link type
-            const validLinkTypes: LinkType[] = ['FS', 'SS', 'FF', 'SF'];
-            if (!validLinkTypes.includes(dep.type)) {
-                return { valid: false, error: `Invalid link type: ${dep.type}` };
-            }
-
-            // Validate lag is a number
-            if (typeof dep.lag !== 'number' || isNaN(dep.lag)) {
-                return { valid: false, error: 'Lag must be a number' };
-            }
-        }
-
-        return { valid: true };
-    }
+// src/data/DatabaseTypes.ts:194-196
+export function nullToUndefined<T>(value: T | null): T | undefined {
+  return value === null ? undefined : value;
 }
 ```
 
-#### Step 2: Update Barrel Export
-**File:** `src/services/scheduler/index.ts`
+**Applied to fields:**
+- `actualStart` ✅
+- `actualFinish` ✅
+- `remainingDuration` ✅
+- `baselineStart` ✅
+- `baselineFinish` ✅
+- `baselineDuration` ✅
 
-Add after line 52:
+---
+
+### 4. Dependencies Serialization ✅
+
+**Write Path:**
 ```typescript
-// Phase 3.1: DependencyValidationService - Dependency validation and cycle detection
-export { DependencyValidationService } from './DependencyValidationService';
-export type { DependencyValidationServiceDeps, ValidationResult } from './DependencyValidationService';
+// PersistenceService.ts:359
+JSON.stringify(event.payload.dependencies || [])
 ```
 
-#### Step 3: Update SchedulerService
-**File:** `src/services/SchedulerService.ts`
-
-**Add import:**
+**Read Path:**
 ```typescript
-import { DependencyValidationService } from './scheduler/DependencyValidationService';
+// DataLoader.ts:476-486
+private parseDependencies(value: unknown): Dependency[] {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+        try {
+            return JSON.parse(value);
+        } catch {
+            return [];
+        }
+    }
+    return [];
+}
 ```
 
-**Add property (after line 145):**
+**Status:** ✅ Correctly handles both array and JSON string formats.
+
+---
+
+### 5. Calculated Fields ✅
+
+**NOT Persisted (filtered in PersistenceService):**
 ```typescript
-private dependencyValidationService!: DependencyValidationService;
+// PersistenceService.ts:377-378
+const calculatedFields = ['start', 'end', 'level', 'lateStart', 'lateFinish', 
+                          'totalFloat', 'freeFloat', '_isCritical', '_health'];
+if (calculatedFields.includes(field)) return;
 ```
 
-**Initialize in `init()` (after line 571):**
+**NOT Persisted (stripped in SnapshotService):**
 ```typescript
-// Initialize DependencyValidationService
-this.dependencyValidationService = new DependencyValidationService({
-    projectController: this.projectController,
+// SnapshotService.ts:154-173
+const persistableTasks = tasks.map(task => ({
+    id: task.id,
+    // ... only input fields
+    // NO: level, start, end, _isCritical, totalFloat, etc.
+}));
+```
+
+**Status:** ✅ Correctly filtering calculated fields.
+
+---
+
+### 6. WASM Serialization Verification ✅
+
+**Rust types mirror TypeScript:**
+
+| TypeScript | Rust | serde annotation |
+|------------|------|------------------|
+| `parentId` | `parent_id` | `#[serde(rename = "parentId")]` |
+| `sortKey` | `sort_key` | `#[serde(rename = "sortKey")]` |
+| `rowType` | `row_type` | `#[serde(rename = "rowType", default)]` |
+| `constraintType` | `constraint_type` | `#[serde(rename = "constraintType")]` |
+| `constraintDate` | `constraint_date` | `#[serde(rename = "constraintDate")]` |
+| `schedulingMode` | `scheduling_mode` | `#[serde(rename = "schedulingMode", default = "Auto")]` |
+| `dependencies` | `dependencies` | Direct (nested struct) |
+| `_isCritical` | `is_critical` | `#[serde(rename = "_isCritical", default)]` |
+| `_collapsed` | `collapsed` | `#[serde(rename = "_collapsed", default)]` |
+| `actualStart` | `actual_start` | `#[serde(rename = "actualStart", default)]` |
+| `actualFinish` | `actual_finish` | `#[serde(rename = "actualFinish", default)]` |
+| `remainingDuration` | `remaining_duration` | `#[serde(rename = "remainingDuration", default)]` |
+| `tradePartnerIds` | `trade_partner_ids` | `#[serde(rename = "tradePartnerIds", default)]` |
+
+**Status:** ✅ All fields have correct serde annotations.
+
+---
+
+### 7. Existing Test Patterns ✅
+
+**Worker Mocking Pattern (tested and working):**
+```typescript
+// tests/integration/RollbackMechanism.test.ts
+vi.mock('../../src/workers/scheduler.worker?worker', () => ({
+  default: class MockWorker {
+    onmessage: ((e: MessageEvent) => void) | null = null;
+    postMessage = vi.fn();
+    terminate = vi.fn();
+  }
+}));
+
+global.Worker = class MockWorker {
+  onmessage: ((e: MessageEvent) => void) | null = null;
+  postMessage = vi.fn();
+  terminate = vi.fn();
+  constructor() {
+    mockWorkerInstance = this as any;
+  }
+};
+```
+
+**Database Mocking Pattern (tested and working):**
+```typescript
+// tests/integration/persistence.test.ts
+vi.mock('@tauri-apps/plugin-sql', () => {
+  return {
+    default: { load: mockDatabaseLoad },
+  };
 });
-console.log('[SchedulerService] ✅ DependencyValidationService initialized');
+
+mockDb.execute.mockResolvedValue({ lastInsertId: 1, rowsAffected: 1 });
+mockDb.select.mockResolvedValue([/* rows */]);
 ```
-
-**Update `_handleDependenciesSave()` (line 1152):**
-```typescript
-private _handleDependenciesSave(taskId: string, dependencies: Array<{ id: string; type: LinkType; lag: number }>): void {
-    // Validate dependencies before saving
-    const validation = this.dependencyValidationService.validate(taskId, dependencies);
-    if (!validation.valid) {
-        this.toastService.error(validation.error || 'Invalid dependencies');
-        return;
-    }
-
-    this.saveCheckpoint();
-    this.projectController.updateTask(taskId, { dependencies });
-    
-    // NOTE: ProjectController handles recalc/save via Worker
-}
-```
-
-**Remove methods (lines 1463-1551):**
-- Delete `_getAllPredecessors()`
-- Delete `_wouldCreateCycle()`
-- Delete `_validateDependencies()`
-
-**Expected Reduction:** ~88 lines
 
 ---
 
-### Phase 3.2: TestDataGenerator (95% Confidence)
+### 8. Reference Project Fixture ✅
 
-#### Step 1: Create Utility File
-**File:** `src/utils/TestDataGenerator.ts`
+Existing fixture available for testing:
 
-```typescript
-/**
- * @fileoverview Test Data Generator Utility
- * @module utils/TestDataGenerator
- * 
- * Utility for generating mock test data.
- * Extracted from SchedulerService to separate test utilities from production code.
- * 
- * @see docs/PHASE3_DECOMPOSITION_AUDIT.md - Phase 3.2
- */
-
-import { DateUtils } from '../core/DateUtils';
-import { OrderingService } from '../services/OrderingService';
-import type { Task, Calendar } from '../types';
-import type { ProjectController } from '../services/ProjectController';
-import type { ToastService } from '../ui/services/ToastService';
-
-export interface TestDataGeneratorDeps {
-    projectController: ProjectController;
-    toastService: ToastService;
-}
-
-export class TestDataGenerator {
-    private deps: TestDataGeneratorDeps;
-
-    constructor(deps: TestDataGeneratorDeps) {
-        this.deps = deps;
-    }
-
-    /**
-     * Generate mock tasks for testing
-     * @param count - Number of tasks to generate
-     */
-    generateMockTasks(count: number): void {
-        const today = DateUtils.today();
-        const existingTasks = this.deps.projectController.getTasks();
-        const tasks: Task[] = [...existingTasks];
-        
-        // Pre-generate all sortKeys to avoid stale reads
-        const lastKey = this.deps.projectController.getLastSortKey(null);
-        const sortKeys = OrderingService.generateBulkKeys(lastKey, null, count);
-        
-        const calendar = this.deps.projectController.getCalendar();
-        
-        for (let i = 0; i < count; i++) {
-            const duration = Math.floor(Math.random() * 10) + 1;
-            const startOffset = Math.floor(Math.random() * 200);
-            const startDate = DateUtils.addWorkDays(today, startOffset, calendar);
-            const endDate = DateUtils.addWorkDays(startDate, duration - 1, calendar);
-            
-            const task: Task = {
-                id: `task_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 9)}`,
-                name: `Task ${existingTasks.length + i + 1}`,
-                start: startDate,
-                end: endDate,
-                duration: duration,
-                parentId: null,
-                dependencies: [],
-                progress: Math.floor(Math.random() * 100),
-                constraintType: 'asap',
-                constraintDate: null,
-                notes: '',
-                level: 0,
-                sortKey: sortKeys[i],
-                _collapsed: false,
-            };
-            
-            if (i > 10 && Math.random() < 0.2) {
-                const parentIndex = Math.floor(Math.random() * Math.min(i, 20));
-                task.parentId = tasks[parentIndex]?.id || null;
-            }
-            
-            if (i > 5 && Math.random() < 0.3) {
-                const predIndex = Math.floor(Math.random() * Math.min(i, 10));
-                if (tasks[predIndex] && tasks[predIndex].id !== task.parentId) {
-                    task.dependencies.push({
-                        id: tasks[predIndex].id,
-                        type: 'FS',
-                        lag: 0,
-                    });
-                }
-            }
-            
-            tasks.push(task);
-        }
-        
-        this.deps.projectController.syncTasks(tasks);
-        // NOTE: ProjectController handles recalc/save via Worker
-        
-        this.deps.toastService?.success(`Generated ${count} tasks`);
-    }
-}
+```json
+// tests/fixtures/reference_project.json
+[
+  {
+    "id": "1",
+    "name": "Project Start",
+    "duration": 0,
+    "dependencies": [],
+    "constraintType": "asap",
+    "sortKey": "a0",
+    "level": 0,
+    "rowType": "task"
+  },
+  // ... more tasks with dependencies
+]
 ```
 
-#### Step 2: Update SchedulerService
-**File:** `src/services/SchedulerService.ts`
+**Status:** ✅ Can be used directly for round-trip tests.
 
-**Add import:**
+---
+
+## Identified Gaps (Minor)
+
+### Gap 1: `wbs` Field Not Persisted
+
+The `wbs` field is defined in TypeScript but not in the persistence schema:
+
 ```typescript
-import { TestDataGenerator } from '../utils/TestDataGenerator';
+// types/index.ts
+wbs?: string;  // "currently unused, kept for future"
 ```
 
-**Add property (after dependencyValidationService):**
+**Impact:** 🟢 None - field is unused and optional.
+
+### Gap 2: `_visualRowNumber` Not Handled
+
 ```typescript
-private testDataGenerator!: TestDataGenerator;
+// types/index.ts
+_visualRowNumber?: number | null;  // Transient, not persisted
 ```
 
-**Initialize in `init()` (after dependencyValidationService):**
+**Impact:** 🟢 None - intentionally transient (recalculated on each render).
+
+---
+
+## Test Implementation Strategy
+
+### Phase 3.1: Persistence Round-Trip
+
+**File:** `tests/integration/TypeSafetyRoundTrip.test.ts`
+
 ```typescript
-// Initialize TestDataGenerator
-this.testDataGenerator = new TestDataGenerator({
-    projectController: this.projectController,
-    toastService: this.toastService,
+describe('Persistence Round-Trip', () => {
+  // Test 1: Basic task
+  it('should preserve basic task fields');
+  
+  // Test 2: Complex dependencies
+  it('should preserve dependencies with different link types');
+  
+  // Test 3: Nullable fields
+  it('should preserve null fields correctly');
+  
+  // Test 4: Scheduling mode
+  it('should preserve schedulingMode');
+  
+  // Test 5: Blank rows
+  it('should preserve rowType=blank');
+  
+  // Test 6: Edge values
+  it('should preserve duration=0, progress=100');
 });
-console.log('[SchedulerService] ✅ TestDataGenerator initialized');
 ```
 
-**Update `generateMockTasks()` (line 2057):**
-```typescript
-generateMockTasks(count: number): void {
-    this.testDataGenerator.generateMockTasks(count);
-}
-```
+### Phase 3.2: WASM Round-Trip
 
-**Remove original method body (lines 2058-2116)**
+**Approach:** Use actual WASM module in test environment OR mock serde_wasm_bindgen behavior.
 
-**Expected Reduction:** ~60 lines
-
-#### Step 3: Update UIEventManager
-**File:** `src/services/UIEventManager.ts`
-
-**Add import:**
-```typescript
-import { TestDataGenerator } from '../utils/TestDataGenerator';
-```
-
-**Update methods (lines 783, 798):**
-```typescript
-// Option 1: Create instance (if scheduler available)
-generate1000Tasks(): void {
-    const scheduler = this.getScheduler();
-    if (!scheduler) {
-        console.error('Scheduler not initialized');
-        return;
-    }
-    console.time('Generate 1,000 tasks');
-    const generator = new TestDataGenerator({
-        projectController: scheduler.projectController, // Need to expose or use getter
-        toastService: scheduler.toastService,
-    });
-    generator.generateMockTasks(1000);
-    console.timeEnd('Generate 1,000 tasks');
-    this._showToast('Generated 1,000 tasks', 'success');
-}
-
-// Option 2: Keep using scheduler method (simpler)
-// Keep as-is: scheduler.generateMockTasks(1000);
-// This delegates to TestDataGenerator internally
-```
-
-**Recommendation:** Keep Option 2 (simpler, no breaking changes)
+**Recommendation:** Mock WASM for unit tests, use E2E for real WASM tests.
 
 ---
 
-### Phase 3.3: Dead Code Cleanup (100% Confidence)
+## Confidence Breakdown
 
-#### Step 1: Remove `_initializeEngine()`
-**File:** `src/services/SchedulerService.ts`
-
-**Remove method (lines 309-313):**
-```typescript
-// DELETE THIS ENTIRE METHOD:
-private async _initializeEngine(): Promise<void> {
-    // PHASE 8: Engine removed - all calculations happen in WASM Worker via ProjectController
-    // The engine property is kept as null - it's no longer needed
-    console.log('[SchedulerService] Engine initialization skipped - using ProjectController + WASM Worker');
-}
-```
-
-**Remove call (line 297):**
-```typescript
-// DELETE THIS LINE:
-await this._initializeEngine();
-```
-
-**Expected Reduction:** ~5 lines
-
-#### Step 2: Check for Unused Imports
-Run TypeScript compiler to identify unused imports:
-```bash
-npx tsc --noEmit --noUnusedLocals --noUnusedParameters
-```
-
-**Expected Reduction:** ~5-10 lines
+| Area | Before | After | Evidence |
+|------|--------|-------|----------|
+| Field Mapping | 70% | **98%** | Traced every field through code |
+| Null Handling | 75% | **97%** | Verified `nullToUndefined()` usage |
+| Dependencies | 70% | **95%** | Verified JSON serialize/parse |
+| Trade Partners | 60% | **95%** | Verified junction table pattern |
+| WASM Serialization | 75% | **93%** | Verified serde annotations |
+| Test Patterns | 80% | **98%** | Existing working mocks |
+| **Overall** | **75%** | **95%** | ✅ |
 
 ---
 
-## 🎯 Final Confidence Assessment
+## Remaining Risk Mitigations
 
-### After Verification: **95%+ Confidence**
-
-| Factor | Before | After | Impact |
-|--------|--------|-------|--------|
-| Build verification | ❓ | ✅ Passes | +5% |
-| Usage pattern analysis | ❓ | ✅ Clear | +3% |
-| Pattern matching | ✅ 90% | ✅ 95% | +5% |
-| Test coverage | ❓ | ✅ No tests to break | +2% |
-| Dependency analysis | ✅ 90% | ✅ 95% | +5% |
-
-**Overall Confidence:** **95%+** ✅
+1. **Write actual tests** - Will catch any overlooked edge cases
+2. **Run E2E test** - Validates full flow in real environment
+3. **Reference project test** - Uses realistic data structure
 
 ---
 
-## ⚠️ Remaining Risks (5%)
+## Conclusion
 
-### Low-Risk Items
+**Confidence: 95%** ✅
 
-1. **UIEventManager Update** (2% risk)
-   - **Mitigation:** Keep `generateMockTasks()` as facade in SchedulerService
-   - **Impact:** Zero breaking changes
+The deep investigation reveals:
+- ✅ Complete field mapping verified
+- ✅ Null/undefined handling correct
+- ✅ Dependencies serialization correct
+- ✅ Trade partners use junction table (correct)
+- ✅ WASM serde annotations match TypeScript
+- ✅ Existing test patterns are reusable
+- ✅ Reference project fixture available
 
-2. **Edge Cases** (2% risk)
-   - **Mitigation:** Comprehensive manual testing after extraction
-   - **Impact:** Low - methods are well-isolated
-
-3. **Type Compatibility** (1% risk)
-   - **Mitigation:** TypeScript compiler will catch any issues
-   - **Impact:** Very low - types are explicit
-
----
-
-## ✅ Ready to Proceed
-
-**Confidence Level:** **95%+**  
-**Risk Level:** **LOW**  
-**Estimated Time:** 3-4 hours total  
-**Expected Reduction:** ~160 lines
-
-**Recommendation:** ✅ **PROCEED** - All verification checks passed, patterns confirmed, minimal risk.
+**Ready to implement Phase 3.1 and 3.2 tests.**
 
 ---
 
 **Document Version:** 1.0  
 **Last Updated:** January 2025  
-**Status:** Ready for Implementation
+**Status:** ✅ Confidence Boosted

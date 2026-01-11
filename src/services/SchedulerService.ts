@@ -22,9 +22,7 @@
 import { DateUtils } from '../core/DateUtils';
 import { ColumnRegistry } from '../core/columns';
 import { TestDataGenerator } from '../utils/TestDataGenerator';
-// NOTE: TaskStore and CalendarStore removed - all data flows through ProjectController
 import { TradePartnerStore, getTradePartnerStore } from '../data/TradePartnerStore';
-// NOTE: HistoryManager moved to AppInitializer (application level) - access via ProjectController.getHistoryManager()
 import { PersistenceService } from '../data/PersistenceService';
 import { DataLoader } from '../data/DataLoader';
 import { SnapshotService } from '../data/SnapshotService';
@@ -114,9 +112,7 @@ export class SchedulerService {
     private editingStateManager: EditingStateManager;
 
     // Data stores
-    // NOTE: taskStore and calendarStore removed - data flows through ProjectController
     private tradePartnerStore!: TradePartnerStore;
-    // NOTE: historyManager moved to AppInitializer - access via ProjectController.getHistoryManager()
 
     // UI services
     public toastService!: ToastService;  // Public for access from main.ts
@@ -183,9 +179,6 @@ export class SchedulerService {
         highlightDependenciesOnHover: true,
         drivingPathMode: false
     };
-
-    // Performance tracking
-    private _lastCalcTime: number = 0;
 
     // Initialization flag
     public isInitialized: boolean = false;  // Public for access from UIEventManager
@@ -297,9 +290,6 @@ export class SchedulerService {
             isTauri: this.isTauri,
             onToast: (msg, type) => this.toastService.show(msg, type)
         });
-
-        // NOTE: Engine initialization removed - all calculations happen in WASM Worker via ProjectController
-        // The engine property is kept as null - it's no longer needed
     }
 
     /**
@@ -407,8 +397,6 @@ export class SchedulerService {
         };
         viewport.initGrid(gridOptions);
 
-        // NOTE: TaskStore wiring removed - BindingSystem now uses ProjectController directly
-
         // Initialize Gantt renderer
         // Note: viewport will create its own gantt pane, but we need to pass a container
         // The viewport's initGantt will use its internal gantt pane
@@ -429,6 +417,9 @@ export class SchedulerService {
 
         // Store viewport reference (for backward compatibility, also store as grid/gantt)
         (this as any).viewport = viewport;
+        
+        // Initialize ViewportFactoryService (needed for facade creation)
+        this.viewportFactoryService = new ViewportFactoryService({});
         
         // Create facade wrappers for backward compatibility
         this.grid = this.viewportFactoryService.createGridFacade(viewport);
@@ -568,9 +559,7 @@ export class SchedulerService {
         });
         console.log('[SchedulerService] ✅ DependencyValidationService initialized');
         
-        // Initialize ViewportFactoryService
-        this.viewportFactoryService = new ViewportFactoryService({});
-        console.log('[SchedulerService] ✅ ViewportFactoryService initialized');
+        // Note: ViewportFactoryService initialized earlier (before facade creation)
         
         // Initialize KeyboardBindingService
         this.keyboardBindingService = new KeyboardBindingService({
@@ -923,10 +912,6 @@ export class SchedulerService {
     private _handleRowDoubleClick(taskId: string, _e: MouseEvent): void {
         this.openDrawer(taskId);
     }
-
-    // NOTE: _applyDateChangeImmediate and _applyTaskEdit have been removed.
-    // All scheduling logic is now handled by SchedulingLogicService.applyEdit()
-    // @see src/services/migration/SchedulingLogicService.ts
 
     /**
      * Handle cell change with proper scheduling triangle logic
@@ -1675,8 +1660,6 @@ export class SchedulerService {
             if (tasks.length > 0 || Object.keys(calendar.exceptions).length > 0) {
                 // Use FileOperationsService for sort key migration (single source of truth)
                 const tasksWithSortKeys = this.fileOperationsService.assignSortKeysToImportedTasks(tasks);
-                
-                // NOTE: disableNotifications removed - ProjectController handles via reactive streams
                 this.projectController.syncTasks(tasksWithSortKeys);
                 
                 this.projectController.updateCalendar(calendar);
@@ -1852,7 +1835,7 @@ export class SchedulerService {
                 const task = this.projectController.getTaskById(id);
                 return task?._collapsed || false;
             }).length,
-            lastCalcTime: `${this._lastCalcTime.toFixed(2)}ms`,
+            lastCalcTime: `${(this.projectController.getStats()?.calcTime ?? 0).toFixed(2)}ms`,
             gridStats: this.grid?.getStats(),
             ganttStats: this.gantt?.getStats(),
         };

@@ -284,7 +284,13 @@ CREATE TABLE IF NOT EXISTS snapshots (
           await this.applyEventToMaterializedView(event);
         }
 
-        await this.db.execute('COMMIT');
+        // Only commit if we actually started a transaction and have events
+        if (transactionStarted && batch.length > 0) {
+          await this.db.execute('COMMIT');
+        } else if (transactionStarted) {
+          // Rollback empty transaction to clean up
+          await this.db.execute('ROLLBACK');
+        }
         
         // Remove processed events from queue ONLY after commit
         this.writeQueue.splice(0, batch.length);
