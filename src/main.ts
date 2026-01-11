@@ -113,6 +113,7 @@ async function initApp(): Promise<void> {
         ServiceContainer.setInstance(serviceContainer);
         
         // Level 1: Core data (worker initialization happens in constructor)
+        // Note: ToastService will be injected later after SchedulerService creates it
         const projectController = new ProjectController();
         ProjectController.setInstance(projectController);
         

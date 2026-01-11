@@ -18,6 +18,7 @@ import type { Task, Calendar, CPMResult, ConstraintType, SchedulingMode } from '
 import type { WorkerCommand, WorkerResponse } from '../workers/types';
 import type { PersistenceService } from '../data/PersistenceService';
 import type { HistoryManager, QueuedEvent } from '../data/HistoryManager';
+import type { ToastService } from '../ui/services/ToastService';
 
 /**
  * ProjectController
@@ -74,6 +75,17 @@ export class ProjectController {
     
     /** HistoryManager for undo/redo functionality */
     private historyManager: HistoryManager | null = null;
+    
+    /** ToastService for error notifications (optional - injected) */
+    private toastService: ToastService | null = null;
+    
+    /** Pending operation tracking for rollback on worker errors */
+    private pendingOperation: {
+        type: 'ADD' | 'UPDATE' | 'DELETE';
+        taskId: string;
+        snapshot: Task[];
+        wasComposite: boolean;
+    } | null = null;
 
     // ========================================================================
     // Constructor & Singleton
@@ -82,8 +94,11 @@ export class ProjectController {
     /**
      * Constructor is public for Pure DI compatibility.
      * Creates and initializes the WASM worker.
+     * 
+     * @param options - Optional dependencies (ToastService for error notifications)
      */
-    public constructor() {
+    public constructor(options?: { toastService?: ToastService }) {
+        this.toastService = options?.toastService || null;
         this.initializeWorker();
     }
 
@@ -160,6 +175,15 @@ export class ProjectController {
     public setHistoryManager(manager: HistoryManager): void {
         this.historyManager = manager;
         console.log('[ProjectController] HistoryManager attached');
+    }
+    
+    /**
+     * Set the toast service for error notifications
+     * Called during app initialization (optional)
+     */
+    public setToastService(service: ToastService): void {
+        this.toastService = service;
+        console.log('[ProjectController] ToastService attached');
     }
 
     /**
@@ -260,6 +284,9 @@ export class ProjectController {
                 this.stats$.next(response.payload.stats);
                 this.isCalculating$.next(false);
                 
+                // Clear pending operation on success
+                this.pendingOperation = null;
+                
                 console.log(
                     `[ProjectController] CPM complete: ${response.payload.stats.taskCount} tasks, ` +
                     `${response.payload.stats.criticalCount} critical, ` +
@@ -269,12 +296,17 @@ export class ProjectController {
 
             case 'TASKS_SYNCED':
                 console.log('[ProjectController] Tasks synced');
+                // Clear pending operation on sync success
+                this.pendingOperation = null;
                 break;
 
             case 'ERROR':
                 console.error('[ProjectController] Worker error:', response.message);
                 this.errors$.next(response.message);
                 this.isCalculating$.next(false);
+                
+                // Rollback optimistic update on error
+                this._rollbackPendingOperation(response.message);
                 break;
         }
     }
@@ -338,6 +370,15 @@ export class ProjectController {
      * Uses optimistic update: local state updated immediately, then worker calculates
      */
     public addTask(task: Task): void {
+        // Store snapshot before optimistic update (for rollback on error)
+        const wasComposite = this.historyManager?.isInComposite() || false;
+        this.pendingOperation = {
+            type: 'ADD',
+            taskId: task.id,
+            snapshot: [...this.tasks$.value],
+            wasComposite
+        };
+        
         // OPTIMISTIC UPDATE: Add to local state immediately for instant UI response
         const currentTasks = [...this.tasks$.value, task];
         this.tasks$.next(currentTasks);
@@ -402,6 +443,15 @@ export class ProjectController {
         const currentTasks = this.tasks$.value;
         const taskIndex = currentTasks.findIndex(t => t.id === id);
         const oldTask = taskIndex >= 0 ? currentTasks[taskIndex] : null;
+        
+        // Store snapshot before optimistic update (for rollback on error)
+        const wasComposite = this.historyManager?.isInComposite() || false;
+        this.pendingOperation = {
+            type: 'UPDATE',
+            taskId: id,
+            snapshot: [...currentTasks],
+            wasComposite
+        };
         
         // OPTIMISTIC UPDATE: Apply updates to local state immediately
         if (taskIndex >= 0) {
@@ -494,6 +544,15 @@ export class ProjectController {
         // Capture task snapshot BEFORE deletion for undo
         const taskToDelete = this.getTaskById(id);
         const descendants = this.getDescendants(id);
+        
+        // Store snapshot before optimistic update (for rollback on error)
+        const wasComposite = this.historyManager?.isInComposite() || false;
+        this.pendingOperation = {
+            type: 'DELETE',
+            taskId: id,
+            snapshot: [...this.tasks$.value],
+            wasComposite
+        };
         
         // OPTIMISTIC UPDATE: Remove from local state immediately
         // Also remove all descendants to maintain hierarchy integrity
@@ -1185,6 +1244,89 @@ export class ProjectController {
 
         // Clear persistence reference
         this.persistenceService = null;
+        this.toastService = null;
+        this.pendingOperation = null;
+    }
+    
+    // ========================================================================
+    // Rollback Mechanism (Phase 2)
+    // ========================================================================
+    
+    /**
+     * Rollback pending optimistic update on worker error
+     * Reverts state, cancels history, and shows error notification
+     * 
+     * @private
+     */
+    private _rollbackPendingOperation(errorMessage: string): void {
+        if (!this.pendingOperation) {
+            return; // No pending operation to rollback
+        }
+        
+        const { type, taskId, snapshot, wasComposite } = this.pendingOperation;
+        
+        console.log(`[ProjectController] Rolling back ${type} operation for task ${taskId}`);
+        
+        // 1. Revert state to snapshot
+        this.tasks$.next(snapshot);
+        
+        // 2. Cancel history (if composite active, cancel it; otherwise undo last action)
+        if (this.historyManager) {
+            if (wasComposite && this.historyManager.isInComposite()) {
+                this.historyManager.cancelComposite();
+                console.log('[ProjectController] Cancelled composite action');
+            } else if (!wasComposite && this.historyManager.canUndo()) {
+                // Undo the last action (which was the failed operation)
+                const backwardEvents = this.historyManager.undo();
+                if (backwardEvents && backwardEvents.length > 0) {
+                    // Apply backward events to sync worker state (skip persistence since we're rolling back)
+                    // Note: applyEvents already skips persistence for undo/redo events
+                    this.applyEvents(backwardEvents);
+                    console.log('[ProjectController] Undone failed operation');
+                }
+            }
+        }
+        
+        // 3. Note: Persistence events are queued but not flushed immediately
+        // If they haven't been flushed yet, they'll be inconsistent but harmless
+        // If they have been flushed, we'd need compensation events (future enhancement)
+        
+        // 4. Show error notification
+        const userMessage = this._formatErrorMessage(type, errorMessage);
+        if (this.toastService) {
+            this.toastService.error(userMessage);
+        } else {
+            // Fallback to console if toast service not available
+            console.error(`[ProjectController] ${userMessage}`);
+        }
+        
+        // 5. Clear pending operation
+        this.pendingOperation = null;
+    }
+    
+    /**
+     * Format error message for user display
+     * 
+     * @private
+     */
+    private _formatErrorMessage(operationType: 'ADD' | 'UPDATE' | 'DELETE', errorMessage: string): string {
+        const operationLabels: Record<'ADD' | 'UPDATE' | 'DELETE', string> = {
+            ADD: 'Adding task',
+            UPDATE: 'Updating task',
+            DELETE: 'Deleting task'
+        };
+        
+        // Extract meaningful error message (remove technical details if present)
+        let message = errorMessage;
+        if (message.includes('WASM')) {
+            message = 'Calculation engine error';
+        } else if (message.includes('not found')) {
+            message = 'Task not found';
+        } else if (message.includes('circular') || message.includes('dependency')) {
+            message = 'Invalid dependency detected';
+        }
+        
+        return `${operationLabels[operationType]} failed: ${message}`;
 
         // Clear singleton for potential re-initialization
         ProjectController.instance = null as any;

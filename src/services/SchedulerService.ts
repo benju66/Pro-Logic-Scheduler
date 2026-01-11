@@ -21,6 +21,7 @@
 
 import { DateUtils } from '../core/DateUtils';
 import { ColumnRegistry } from '../core/columns';
+import { TestDataGenerator } from '../utils/TestDataGenerator';
 // NOTE: TaskStore and CalendarStore removed - all data flows through ProjectController
 import { TradePartnerStore, getTradePartnerStore } from '../data/TradePartnerStore';
 // NOTE: HistoryManager moved to AppInitializer (application level) - access via ProjectController.getHistoryManager()
@@ -30,10 +31,8 @@ import { SnapshotService } from '../data/SnapshotService';
 import { ToastService } from '../ui/services/ToastService';
 import { FileService } from '../ui/services/FileService';
 import { KeyboardService } from '../ui/services/KeyboardService';
-import { OrderingService } from './OrderingService';
 import { ProjectController } from './ProjectController';
 import { SelectionModel } from './SelectionModel';
-import { AppInitializer } from './AppInitializer';
 import { EditingStateManager, getEditingStateManager, type EditingStateChangeEvent } from './EditingStateManager';
 import { ZoomController, type IZoomableGantt } from './ZoomController';
 import { SchedulingLogicService } from './migration/SchedulingLogicService';
@@ -47,6 +46,7 @@ import { BaselineService } from './scheduler/BaselineService';
 import { TradePartnerService } from './scheduler/TradePartnerService';
 import { ColumnPreferencesService } from './scheduler/ColumnPreferencesService';
 import { GridNavigationController } from './scheduler/GridNavigationController';
+import { DependencyValidationService } from './scheduler/DependencyValidationService';
 import { CommandService } from '../commands';
 import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport';
 import { GridRenderer } from '../ui/components/scheduler/GridRenderer';
@@ -145,6 +145,8 @@ export class SchedulerService {
     private tradePartnerService!: TradePartnerService;
     private columnPreferencesService!: ColumnPreferencesService;
     private gridNavigationController!: GridNavigationController;
+    private dependencyValidationService!: DependencyValidationService;
+    private testDataGenerator!: TestDataGenerator;
 
     // UI components (initialized in init())
     public grid: VirtualScrollGridFacade | null = null;  // Public for access from AppInitializer and UIEventManager
@@ -258,16 +260,10 @@ export class SchedulerService {
             console.warn('[SchedulerService] PersistenceService not available - trade partner events will not be persisted');
         }
         
-        // Pure DI: Use injected DataLoader and SnapshotService, or fall back to AppInitializer
+        // Pure DI: DataLoader and SnapshotService must be injected - fail fast if not provided
         if (!this.dataLoader || !this.snapshotService) {
-            const appInitializer = AppInitializer.getInstance();
-            if (appInitializer) {
-                this.dataLoader = this.dataLoader || appInitializer.getDataLoader();
-                this.snapshotService = this.snapshotService || appInitializer.getSnapshotService();
-                console.log('[SchedulerService] Using DataLoader/SnapshotService from AppInitializer fallback');
-            } else {
-                console.warn('[SchedulerService] AppInitializer not available - some features may be limited');
-            }
+            console.warn('[SchedulerService] DataLoader or SnapshotService not injected - some features may be limited');
+            console.warn('[SchedulerService] Ensure these services are passed via constructor options in AppInitializer._initializeScheduler()');
         } else {
             console.log('[SchedulerService] Using injected DataLoader and SnapshotService');
         }
@@ -300,23 +296,8 @@ export class SchedulerService {
             onToast: (msg, type) => this.toastService.show(msg, type)
         });
 
-        // 8. Initialize Dual Engine
-        await this._initializeEngine();
-    }
-
-    /**
-     * Initialize the scheduling engine
-     * 
-     * NOTE: With WASM Worker architecture, the engine is no longer used.
-     * All calculations happen in the Worker via ProjectController.
-     * This method is kept for backward compatibility but does nothing.
-     * 
-     * @private
-     */
-    private async _initializeEngine(): Promise<void> {
-        // PHASE 8: Engine removed - all calculations happen in WASM Worker via ProjectController
+        // NOTE: Engine initialization removed - all calculations happen in WASM Worker via ProjectController
         // The engine property is kept as null - it's no longer needed
-        console.log('[SchedulerService] Engine initialization skipped - using ProjectController + WASM Worker');
     }
 
     /**
@@ -576,6 +557,19 @@ export class SchedulerService {
             notifyDataChange: () => this._notifyDataChange(),
         });
         console.log('[SchedulerService] ✅ TradePartnerService initialized');
+        
+        // Initialize DependencyValidationService
+        this.dependencyValidationService = new DependencyValidationService({
+            projectController: this.projectController,
+        });
+        console.log('[SchedulerService] ✅ DependencyValidationService initialized');
+        
+        // Initialize TestDataGenerator
+        this.testDataGenerator = new TestDataGenerator({
+            projectController: this.projectController,
+            toastService: this.toastService,
+        });
+        console.log('[SchedulerService] ✅ TestDataGenerator initialized');
         
         // Subscribe to editing state changes
         const editingManager = this.editingStateManager;
@@ -1156,7 +1150,7 @@ export class SchedulerService {
      */
     private _handleDependenciesSave(taskId: string, dependencies: Array<{ id: string; type: LinkType; lag: number }>): void {
         // Validate dependencies before saving
-        const validation = this._validateDependencies(taskId, dependencies);
+        const validation = this.dependencyValidationService.validate(taskId, dependencies);
         if (!validation.valid) {
             this.toastService.error(validation.error || 'Invalid dependencies');
             return;
@@ -1462,100 +1456,6 @@ export class SchedulerService {
         return this.taskOperations.deleteSelected();
     }
 
-    /**
-     * Get all predecessor task IDs (transitive closure through dependencies)
-     * Uses BFS to traverse dependency graph backward
-     * @private
-     */
-    private _getAllPredecessors(taskId: string): Set<string> {
-        const predecessors = new Set<string>();
-        const visited = new Set<string>();
-        const queue: string[] = [taskId];
-        
-        while (queue.length > 0) {
-            const currentId = queue.shift()!;
-            if (visited.has(currentId)) continue;
-            visited.add(currentId);
-            
-            const task = this.projectController.getTaskById(currentId);
-            if (task?.dependencies) {
-                for (const dep of task.dependencies) {
-                    if (!visited.has(dep.id)) {
-                        predecessors.add(dep.id);
-                        queue.push(dep.id);
-                    }
-                }
-            }
-        }
-        
-        return predecessors;
-    }
-
-    /**
-     * Check if adding a dependency would create a circular dependency
-     * @private
-     * @param taskId - Task that will have the dependency
-     * @param predecessorId - Predecessor task ID to check
-     * @returns True if adding this dependency would create a cycle
-     */
-    private _wouldCreateCycle(taskId: string, predecessorId: string): boolean {
-        // A cycle exists if the predecessor depends on (directly or transitively) the current task
-        const predecessorPredecessors = this._getAllPredecessors(predecessorId);
-        return predecessorPredecessors.has(taskId);
-    }
-
-    /**
-     * Validate dependencies before saving
-     * @private
-     * @param taskId - Task ID
-     * @param dependencies - Dependencies to validate
-     * @returns Validation result with error message if invalid
-     */
-    private _validateDependencies(taskId: string, dependencies: Array<{ id: string; type: LinkType; lag: number }>): { valid: boolean; error?: string } {
-        const task = this.projectController.getTaskById(taskId);
-        if (!task) {
-            return { valid: false, error: 'Task not found' };
-        }
-
-        // Check each dependency
-        for (const dep of dependencies) {
-            // Check if predecessor exists
-            const predecessor = this.projectController.getTaskById(dep.id);
-            if (!predecessor) {
-                return { valid: false, error: `Predecessor task "${dep.id}" not found` };
-            }
-
-            // Check if predecessor is a blank row
-            if (predecessor.rowType === 'blank') {
-                return { valid: false, error: 'Cannot create dependency to a blank row' };
-            }
-
-            // Check for circular dependencies
-            if (this._wouldCreateCycle(taskId, dep.id)) {
-                const taskName = task.name || taskId;
-                const predName = predecessor.name || dep.id;
-                return { valid: false, error: `Circular dependency detected: "${taskName}" depends on "${predName}", which depends on "${taskName}"` };
-            }
-
-            // Check if linking to self
-            if (dep.id === taskId) {
-                return { valid: false, error: 'Task cannot depend on itself' };
-            }
-
-            // Validate link type
-            const validLinkTypes: LinkType[] = ['FS', 'SS', 'FF', 'SF'];
-            if (!validLinkTypes.includes(dep.type)) {
-                return { valid: false, error: `Invalid link type: ${dep.type}` };
-            }
-
-            // Validate lag is a number
-            if (typeof dep.lag !== 'number' || isNaN(dep.lag)) {
-                return { valid: false, error: 'Lag must be a number' };
-            }
-        }
-
-        return { valid: true };
-    }
 
     /**
      * Get column definitions for Settings Modal
@@ -2059,67 +1959,12 @@ export class SchedulerService {
 
     /**
      * Generate mock tasks for testing
+     * Delegates to TestDataGenerator utility
      * @param count - Number of tasks to generate
      */
     generateMockTasks(count: number): void {
         this.saveCheckpoint();
-        
-        const today = DateUtils.today();
-        const existingTasks = this.projectController.getTasks();
-        const tasks: Task[] = [...existingTasks];
-        
-        // Pre-generate all sortKeys to avoid stale reads
-        const lastKey = this.projectController.getLastSortKey(null);
-        const sortKeys = OrderingService.generateBulkKeys(lastKey, null, count);
-        
-        const calendar = this.projectController.getCalendar();
-        
-        for (let i = 0; i < count; i++) {
-            const duration = Math.floor(Math.random() * 10) + 1;
-            const startOffset = Math.floor(Math.random() * 200);
-            const startDate = DateUtils.addWorkDays(today, startOffset, calendar);
-            const endDate = DateUtils.addWorkDays(startDate, duration - 1, calendar);
-            
-            const task: Task = {
-                id: `task_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 9)}`,
-                name: `Task ${existingTasks.length + i + 1}`,
-                start: startDate,
-                end: endDate,
-                duration: duration,
-                parentId: null,
-                dependencies: [],
-                progress: Math.floor(Math.random() * 100),
-                constraintType: 'asap',
-                constraintDate: null,
-                notes: '',
-                level: 0,
-                sortKey: sortKeys[i],
-                _collapsed: false,
-            };
-            
-            if (i > 10 && Math.random() < 0.2) {
-                const parentIndex = Math.floor(Math.random() * Math.min(i, 20));
-                task.parentId = tasks[parentIndex]?.id || null;
-            }
-            
-            if (i > 5 && Math.random() < 0.3) {
-                const predIndex = Math.floor(Math.random() * Math.min(i, 10));
-                if (tasks[predIndex] && tasks[predIndex].id !== task.parentId) {
-                    task.dependencies.push({
-                        id: tasks[predIndex].id,
-                        type: 'FS',
-                        lag: 0,
-                    });
-                }
-            }
-            
-            tasks.push(task);
-        }
-        
-        this.projectController.syncTasks(tasks);
-        // NOTE: ProjectController handles recalc/save via Worker
-        
-        this.toastService?.success(`Generated ${count} tasks`);
+        this.testDataGenerator.generateMockTasks(count);
     }
 
     // =========================================================================

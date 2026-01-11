@@ -81,9 +81,6 @@ export interface AppInitializerOptions {
  * @see docs/DEPENDENCY_INJECTION_MIGRATION_PLAN.md
  */
 export class AppInitializer {
-  // Singleton instance
-  private static instance: AppInitializer | null = null;
-  
   private isTauri: boolean;
   private rendererFactory: import('../ui/factories').RendererFactory | null = null;
   private scheduler: SchedulerService | null = null;
@@ -109,36 +106,12 @@ export class AppInitializer {
   private isInitializing: boolean = false;
   public isInitialized: boolean = false;  // Public for access from main.ts
   
+  // Browser beforeunload handler (safety net for non-Tauri environments)
+  private beforeUnloadHandler: ((e: BeforeUnloadEvent) => void) | null = null;
+  
   // Store loaded data for SnapshotService accessors
   private loadedCalendar: Calendar = { workingDays: [1, 2, 3, 4, 5], exceptions: {} };
   private loadedTradePartners: TradePartner[] = [];
-
-  /**
-   * @deprecated Use constructor injection instead.
-   * @see docs/adr/001-dependency-injection.md
-   * @internal
-   */
-  public static getInstance(): AppInitializer | null {
-    return AppInitializer.instance;
-  }
-  
-  /**
-   * @deprecated Use constructor injection with mocks instead.
-   * @see docs/adr/001-dependency-injection.md
-   * @internal
-   */
-  public static setInstance(instance: AppInitializer): void {
-    AppInitializer.instance = instance;
-  }
-  
-  /**
-   * @deprecated Create fresh instances in tests instead.
-   * @see docs/adr/001-dependency-injection.md
-   * @internal
-   */
-  public static resetInstance(): void {
-    AppInitializer.instance = null;
-  }
 
   /**
    * Create a new AppInitializer instance
@@ -166,8 +139,6 @@ export class AppInitializer {
     this.commandService = options.commandService || null;
     this.viewCoordinator = options.viewCoordinator || null;
     
-    // Store singleton reference
-    AppInitializer.instance = this;
     this.isInitializing = false;
     this.isInitialized = false;
   }
@@ -267,9 +238,9 @@ export class AppInitializer {
   private async _initializePersistenceLayer(): Promise<void> {
     console.log('[AppInitializer] 🗄️ Initializing persistence layer...');
     
-    // Pure DI: Use injected ProjectController or fallback to singleton
+    // Pure DI: ProjectController must be injected - fail fast if not provided
     if (!this.projectController) {
-        this.projectController = ProjectController.getInstance();
+        throw new Error('[AppInitializer] ProjectController must be injected via constructor. Check main.ts Composition Root.');
     }
     
     // Skip database operations if not in Tauri
@@ -362,6 +333,10 @@ export class AppInitializer {
       // Solves the "Await Trap" - no need to await recalculateAll() before saving
       this._setupReactiveSaveData();
       
+      // 11. Setup browser beforeunload handler as safety net (non-Tauri only)
+      // Attempts to flush pending persistence writes before page unload
+      this._setupBeforeUnloadHandler();
+      
     } catch (error) {
       console.error('[AppInitializer] ❌ Failed to initialize persistence layer:', error);
       // Continue without persistence - app can still work but won't save
@@ -412,7 +387,7 @@ export class AppInitializer {
     this.saveDataSubscription = this.projectController.tasks$
       .pipe(
         skip(1),           // Skip initial value (empty array or loaded data)
-        debounceTime(500)  // Wait 500ms after last change (prevents saving on every keystroke)
+        debounceTime(50)  // Wait 50ms after last change (fast saves for local SQLite, prevents excessive writes)
       )
       .subscribe(async (tasks) => {
         if (tasks.length === 0) {
@@ -444,6 +419,53 @@ export class AppInitializer {
       this.saveDataSubscription.unsubscribe();
       this.saveDataSubscription = null;
       console.log('[AppInitializer] Reactive saveData subscription disposed');
+    }
+  }
+
+  /**
+   * Setup browser beforeunload handler as safety net
+   * Only used in non-Tauri environments (Tauri has its own shutdown handler)
+   * Attempts to flush pending persistence writes before page unload
+   * 
+   * @private
+   */
+  private _setupBeforeUnloadHandler(): void {
+    // Only add handler in browser mode (not Tauri)
+    if (this.isTauri) {
+      return;
+    }
+
+    // Only add if persistence service is available
+    if (!this.persistenceService) {
+      return;
+    }
+
+    this.beforeUnloadHandler = () => {
+      // Attempt synchronous flush (may not complete, but tries)
+      // Note: Modern browsers limit what can be done in beforeunload
+      if (this.persistenceService) {
+        // Fire-and-forget flush attempt
+        this.persistenceService.flushNow().catch(() => {
+          // Silently fail - we're shutting down anyway
+        });
+      }
+    };
+
+    window.addEventListener('beforeunload', this.beforeUnloadHandler);
+    console.log('[AppInitializer] ✅ Browser beforeunload handler registered');
+  }
+
+  /**
+   * Remove beforeunload handler
+   * Called during cleanup
+   * 
+   * @private
+   */
+  private _disposeBeforeUnloadHandler(): void {
+    if (this.beforeUnloadHandler) {
+      window.removeEventListener('beforeunload', this.beforeUnloadHandler);
+      this.beforeUnloadHandler = null;
+      console.log('[AppInitializer] Browser beforeunload handler removed');
     }
   }
 
@@ -528,6 +550,12 @@ export class AppInitializer {
     // Wait for scheduler to fully initialize (init() is now async)
     console.log('⏳ Waiting for scheduler to fully initialize...');
     await this.scheduler.init();
+    
+    // Phase 2: Inject ToastService into ProjectController for error notifications
+    if (this.scheduler.toastService && this.projectController) {
+      this.projectController.setToastService(this.scheduler.toastService);
+      console.log('[AppInitializer] ✅ ToastService injected into ProjectController');
+    }
     
     console.log('✅ SchedulerService initialized');
     console.log('  - grid:', !!this.scheduler.grid);
@@ -824,6 +852,16 @@ export class AppInitializer {
    * Clean up resources
    */
   destroy(): void {
+    // Flush persistence before cleanup (fire-and-forget to prevent data loss)
+    if (this.persistenceService && this.isTauri) {
+      this.persistenceService.flushNow().catch(err => 
+        console.error('[AppInitializer] Flush failed during destroy:', err)
+      );
+    }
+    
+    // Remove beforeunload handler
+    this._disposeBeforeUnloadHandler();
+    
     // Stop reactive saveData subscription
     this._disposeReactiveSaveData();
     

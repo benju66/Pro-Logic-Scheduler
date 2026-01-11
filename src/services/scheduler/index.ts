@@ -59,3 +59,7 @@ export type {
     NavigationResult, 
     NavigationDirection 
 } from './GridNavigationController';
+
+// Phase 3.1: DependencyValidationService - Dependency validation and cycle detection
+export { DependencyValidationService } from './DependencyValidationService';
+export type { DependencyValidationServiceDeps, ValidationResult } from './DependencyValidationService';
