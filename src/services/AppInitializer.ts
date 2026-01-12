@@ -33,6 +33,10 @@ import { ZoomController } from './ZoomController';
 import type { CommandContext } from '../commands';
 import { getClipboardManager } from './ClipboardManager';
 
+// Phase 6 Pure DI: Import UI services
+import type { ToastService } from '../ui/services/ToastService';
+import type { FileService } from '../ui/services/FileService';
+
 /**
  * App initializer options
  * 
@@ -67,6 +71,10 @@ export interface AppInitializerOptions {
   commandService?: import('../commands').CommandService;
   /** Injected ViewCoordinator for reactive rendering (Phase 1 decomposition) */
   viewCoordinator?: import('./migration/ViewCoordinator').ViewCoordinator;
+  /** Injected ToastService for user notifications (Phase 6 Pure DI) */
+  toastService?: ToastService;
+  /** Injected FileService for file operations (Phase 6 Pure DI) */
+  fileService?: FileService;
 }
 
 /**
@@ -97,6 +105,9 @@ export class AppInitializer {
   private selectionModel: SelectionModel | null = null;
   private commandService: import('../commands').CommandService | null = null;
   private viewCoordinator: import('./migration/ViewCoordinator').ViewCoordinator | null = null;
+  // Phase 6 Pure DI: UI services - passed to SchedulerService in _initializeScheduler
+  private toastService: ToastService | null = null;
+  private fileService: FileService | null = null;
   
   // Reactive saveData subscription - saves after calculations complete
   private saveDataSubscription: Subscription | null = null;
@@ -137,6 +148,10 @@ export class AppInitializer {
     this.selectionModel = options.selectionModel || null;
     this.commandService = options.commandService || null;
     this.viewCoordinator = options.viewCoordinator || null;
+    
+    // Phase 6 Pure DI: Store UI services
+    this.toastService = options.toastService || null;
+    this.fileService = options.fileService || null;
     
     this.isInitializing = false;
     this.isInitialized = false;
@@ -541,6 +556,9 @@ export class AppInitializer {
       snapshotService: this.snapshotService || undefined,
       // Phase 1 decomposition: ViewCoordinator for reactive rendering
       viewCoordinator: this.viewCoordinator || undefined,
+      // Phase 6 Pure DI: UI services lifted from SchedulerService
+      toastService: this.toastService || undefined,
+      fileService: this.fileService || undefined,
     };
     
     this.scheduler = new SchedulerService(options);

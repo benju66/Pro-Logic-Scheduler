@@ -205,6 +205,9 @@ export class SchedulerService {
         snapshotService?: SnapshotService;
         editingStateManager?: EditingStateManager;
         viewCoordinator?: ViewCoordinator;
+        // Phase 6 Pure DI: UI services (optional - fallback to internal creation)
+        toastService?: ToastService;
+        fileService?: FileService;
     } = {} as SchedulerServiceOptions) {
         this.options = options;
         this.isTauri = options.isTauri !== undefined ? options.isTauri : true;
@@ -224,6 +227,9 @@ export class SchedulerService {
         if (options.tradePartnerStore) this.tradePartnerStore = options.tradePartnerStore;
         if (options.keyboardService) this.keyboardService = options.keyboardService;
         if (options.viewCoordinator) this.viewCoordinator = options.viewCoordinator;
+        // Phase 6 Pure DI: Store injected UI services (used in _initServices if provided)
+        if (options.toastService) this.toastService = options.toastService;
+        if (options.fileService) this.fileService = options.fileService;
 
         // Initialize services (async - will be awaited in init())
         // Store the promise to avoid race conditions
@@ -281,15 +287,25 @@ export class SchedulerService {
         // NOTE: HistoryManager is now initialized in AppInitializer (application level)
         // Access via this.projectController.getHistoryManager()
 
-        // UI services
-        this.toastService = new ToastService({
-            container: document.body
-        });
+        // UI services - use injected if available, otherwise create new (backward compat)
+        if (!this.toastService) {
+            this.toastService = new ToastService({
+                container: document.body
+            });
+            console.log('[SchedulerService] Created ToastService (fallback)');
+        } else {
+            console.log('[SchedulerService] Using injected ToastService');
+        }
 
-        this.fileService = new FileService({
-            isTauri: this.isTauri,
-            onToast: (msg, type) => this.toastService.show(msg, type)
-        });
+        if (!this.fileService) {
+            this.fileService = new FileService({
+                isTauri: this.isTauri,
+                onToast: (msg, type) => this.toastService.show(msg, type)
+            });
+            console.log('[SchedulerService] Created FileService (fallback)');
+        } else {
+            console.log('[SchedulerService] Using injected FileService');
+        }
     }
 
     /**

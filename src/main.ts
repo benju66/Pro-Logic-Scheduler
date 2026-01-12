@@ -32,6 +32,10 @@ import { DataLoader } from './data/DataLoader';
 import { HistoryManager } from './data/HistoryManager';
 import { TradePartnerStore, setTradePartnerStore } from './data/TradePartnerStore';
 
+// Phase 6 Pure DI: Import UI services (lifted from SchedulerService)
+import { ToastService } from './ui/services/ToastService';
+import { FileService } from './ui/services/FileService';
+
 // Import Unified Scheduler V2 styles
 import './ui/components/scheduler/styles/scheduler.css';
 import './styles/trade-partners.css';
@@ -162,6 +166,18 @@ async function initApp(): Promise<void> {
         const dataLoader = new DataLoader();
         const historyManager = new HistoryManager({ maxHistory: 50 });
         
+        // =====================================================================
+        // Level 5: UI Services (Phase 6 Pure DI)
+        // These services are lifted from SchedulerService to Composition Root.
+        // ToastService must exist before FileService (callback dependency).
+        // @see docs/PURE_DI_SUBORDINATE_FACTORY_PLAN.md - Phase 1
+        // =====================================================================
+        const toastService = new ToastService({ container: document.body });
+        const fileService = new FileService({
+            isTauri: tauriAvailable,
+            onToast: (msg, type) => toastService.show(msg, type as any)
+        });
+        
         console.log('[Composition Root] ✅ Services initialized');
         
         // =====================================================================
@@ -188,7 +204,10 @@ async function initApp(): Promise<void> {
             selectionModel,
             commandService,
             // Phase 1 decomposition: ViewCoordinator for reactive rendering
-            viewCoordinator
+            viewCoordinator,
+            // Phase 6 Pure DI: Inject UI services (lifted from SchedulerService)
+            toastService,
+            fileService,
         });
         
         // Expose AppInitializer for E2E testing
