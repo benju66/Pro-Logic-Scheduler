@@ -71,3 +71,10 @@ export type { ViewportFactoryServiceDeps } from './ViewportFactoryService';
 // Phase 4.2: KeyboardBindingService - Keyboard binding configuration
 export { KeyboardBindingService } from './KeyboardBindingService';
 export type { KeyboardBindingServiceDeps, KeyboardActions } from './KeyboardBindingService';
+
+// Phase 6 Pure DI: Subordinate Factory Interface
+export type { 
+    SchedulerSubordinateFactory, 
+    SubordinateFactoryContext, 
+    SubordinateServicesBundle 
+} from './SchedulerSubordinateFactory';
