@@ -78,3 +78,7 @@ export type {
     SubordinateFactoryContext, 
     SubordinateServicesBundle 
 } from './SchedulerSubordinateFactory';
+
+// Phase 6 Pure DI: Subordinate Factory Implementation
+export { createSubordinateFactory } from './createSubordinateFactory';
+export type { FactoryDependencies } from './createSubordinateFactory';
