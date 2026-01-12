@@ -21,7 +21,7 @@ import { DataLoader } from '../data/DataLoader';
 import { ActivityBar } from '../ui/components/ActivityBar';
 import { SettingsModal } from '../ui/components/SettingsModal';
 import { RightSidebarManager } from '../ui/components/RightSidebarManager';
-import type { SchedulerServiceOptions, Calendar, TradePartner, Task } from '../types';
+import type { TradePartner, Task } from '../types';
 import { initializeColumnSystem, configureServices } from '../core/columns';
 import { createVarianceCalculator } from '../core/calculations';
 import { getEditingStateManager } from './EditingStateManager';
@@ -100,7 +100,7 @@ export class AppInitializer {
   
   // Reactive saveData subscription - saves after calculations complete
   private saveDataSubscription: Subscription | null = null;
-  private activityBar: ActivityBar | null = null;
+  // ActivityBar instance created in _initUI, managed by DOM
   private settingsModal: SettingsModal | null = null;
   private rightSidebarManager: RightSidebarManager | null = null;
   private isInitializing: boolean = false;
@@ -110,7 +110,6 @@ export class AppInitializer {
   private beforeUnloadHandler: ((e: BeforeUnloadEvent) => void) | null = null;
   
   // Store loaded data for SnapshotService accessors
-  private loadedCalendar: Calendar = { workingDays: [1, 2, 3, 4, 5], exceptions: {} };
   private loadedTradePartners: TradePartner[] = [];
 
   /**
@@ -288,7 +287,6 @@ export class AppInitializer {
       const { tasks, calendar, tradePartners } = await this.dataLoader.loadData();
       
       // Store for SnapshotService accessors
-      this.loadedCalendar = calendar;
       this.loadedTradePartners = tradePartners;
       
       console.log(`[AppInitializer] ✅ Loaded ${tasks.length} tasks, ${tradePartners.length} trade partners`);
@@ -615,8 +613,8 @@ export class AppInitializer {
             getScheduler: () => this.scheduler || null,
         });
 
-        // Initialize activity bar
-        this.activityBar = new ActivityBar({
+        // Initialize activity bar (instance managed by DOM, no reference needed)
+        new ActivityBar({
             container: activityBarEl,
             onViewChange: (view) => {
                 console.log('[ActivityBar] View changed to:', view);
@@ -734,7 +732,7 @@ export class AppInitializer {
         },
         
         // Date picker (placeholder - will be wired after scheduler init)
-        openDatePicker: (taskId: string, field: string, anchorEl: HTMLElement, currentValue: string) => {
+        openDatePicker: (taskId: string, field: string, _anchorEl: HTMLElement, currentValue: string) => {
           // Delegate to scheduler's date picker
           console.log('[ColumnRegistry] openDatePicker:', taskId, field, currentValue);
         },

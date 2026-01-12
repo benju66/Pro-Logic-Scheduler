@@ -6,7 +6,7 @@
  * Provides common functionality and enforces consistent patterns.
  */
 
-import type { Task } from '../../../types';
+import type { Task, GridColumn } from '../../../types';
 import type { PooledCell } from '../../../ui/components/scheduler/types';
 import type { 
     ColumnType, 
@@ -53,7 +53,7 @@ export abstract class BaseRenderer implements IColumnRenderer {
      * Default implementation reads from task field
      */
     getValue(task: Task, column: ColumnDefinition): string {
-        const value = getTaskFieldValue(task, column.field);
+        const value = getTaskFieldValue(task, column.field as GridColumn['field']);
         return value !== undefined && value !== null ? String(value) : '';
     }
     

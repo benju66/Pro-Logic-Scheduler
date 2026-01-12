@@ -16,7 +16,7 @@
  * @version 1.0.0
  */
 
-import type { Task, ToastType } from '../types';
+import type { Task } from '../types';
 import type { ProjectController } from '../services/ProjectController';
 import type { SelectionModel } from '../services/SelectionModel';
 import type { HistoryManager } from '../data/HistoryManager';

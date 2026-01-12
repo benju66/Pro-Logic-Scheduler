@@ -8,7 +8,7 @@
  * NO SINGLETON PATTERN - constructor-based.
  */
 
-import type { Task, GridColumn, Calendar } from '../../../types';
+import type { Task, GridColumn } from '../../../types';
 import type { ViewportState, SchedulerViewportOptions, GridRendererOptions, GanttRendererOptions, PerformanceMetrics } from './types';
 import { GridRenderer } from './GridRenderer';
 import { GanttRenderer } from './GanttRenderer';
@@ -39,7 +39,6 @@ export class SchedulerViewport {
     // Scroll state (THE source of truth for vertical scroll)
     private scrollTop: number = 0;
     private viewportHeight: number = 0;
-    private viewportWidth: number = 0;
 
     // Data
     private tasks: Task[] = [];
@@ -59,7 +58,6 @@ export class SchedulerViewport {
     // RAF state
     private rafId: number | null = null;
     private dirty: boolean = false;
-    private isRendering: boolean = false;
 
     // Selection state (owned by Viewport)
     private selectedIds: Set<string> = new Set();
@@ -396,14 +394,10 @@ export class SchedulerViewport {
         if (!this.scrollElement) return;
 
         const measuredHeight = this.scrollElement.clientHeight;
-        const measuredWidth = this.scrollElement.clientWidth;
         
         // Only update if we got valid measurements (prevents 0 height issues)
         if (measuredHeight > 0) {
             this.viewportHeight = measuredHeight;
-        }
-        if (measuredWidth > 0) {
-            this.viewportWidth = measuredWidth;
         }
         
         // If viewport height is still 0 or invalid, try alternative measurement

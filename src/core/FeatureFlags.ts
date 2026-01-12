@@ -282,8 +282,8 @@ export function useNewArchitecture(
     newImplementation: (...args: any[]) => any
 ) {
     return function (
-        target: any,
-        propertyKey: string,
+        _target: any,
+        _propertyKey: string,
         descriptor: PropertyDescriptor
     ) {
         const originalMethod = descriptor.value;

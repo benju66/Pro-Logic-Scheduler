@@ -17,8 +17,8 @@ export function isTestMode(): boolean {
         }
     }
     
-    // Check environment variable
-    if (import.meta.env.VITE_TEST_MODE === 'true') {
+    // Check environment variable (Vite-specific)
+    if ((import.meta as any).env?.VITE_TEST_MODE === 'true') {
         return true;
     }
     

@@ -287,7 +287,8 @@ export class ViewStateService {
      * @returns Object with taskId and field, or null if not editing
      */
     getEditingCell(): { taskId: string; field: string } | null {
-        return this.deps.editingStateManager.getEditingCell();
+        const ctx = this.deps.editingStateManager.getContext();
+        return ctx ? { taskId: ctx.taskId, field: ctx.field } : null;
     }
 
     // =========================================================================

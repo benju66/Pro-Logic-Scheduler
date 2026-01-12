@@ -19,7 +19,7 @@
  */
 
 import type { SchedulerService } from '../../services/SchedulerService';
-import type { Task, RightPanelId, RightSidebarState, PanelOpenOptions } from '../../types';
+import type { Task, RightPanelId, RightSidebarState } from '../../types';
 import { SideDrawer } from './SideDrawer';
 import { DependenciesModal } from './DependenciesModal';
 import { TaskTradePartnersPanel } from '../panels/TaskTradePartnersPanel';
@@ -155,7 +155,7 @@ export class RightSidebarManager {
             isEmbedded: true, // NEW: Flag for embedded mode
             onUpdate: (taskId, field, value) => this.scheduler.handleTaskUpdate(taskId, field, value),
             onDelete: (taskId) => this.scheduler.deleteTask(taskId),
-            onOpenLinks: (taskId) => this.openPanel('links'),
+            onOpenLinks: (_taskId) => this.openPanel('links'),
             getScheduler: () => ({
                 hasBaseline: () => this.scheduler.hasBaseline(),
                 calculateVariance: (task: Task) => this.scheduler.calculateVariance(task),

@@ -7,6 +7,7 @@
 
 import type { PooledCell } from '../../../ui/components/scheduler/types';
 import type { ColumnType, ColumnDefinition, ColumnContext } from '../types';
+import type { GridColumn } from '../../../types';
 import { BaseRenderer } from './BaseRenderer';
 import { getTaskFieldValue } from '../../../types';
 
@@ -25,7 +26,7 @@ export class SchedulingModeRenderer extends BaseRenderer {
      */
     render(cell: PooledCell, ctx: ColumnContext, column: ColumnDefinition): void {
         const { isParent } = ctx;
-        const mode = (getTaskFieldValue(ctx.task, column.field) as string) || 'Auto';
+        const mode = (getTaskFieldValue(ctx.task, column.field as GridColumn['field']) as string) || 'Auto';
         
         // Find icon container and select element
         const iconContainer = cell.container.querySelector('.vsg-mode-icon') as HTMLElement | null;

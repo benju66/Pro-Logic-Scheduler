@@ -17,7 +17,7 @@
  *   SelectionModel.state$ ─────┘
  */
 
-import { Subscription, distinctUntilChanged, debounceTime } from 'rxjs';
+import { Subscription, distinctUntilChanged } from 'rxjs';
 import { ProjectController } from '../ProjectController';
 import { SelectionModel } from '../SelectionModel';
 import type { Task, Calendar, CPMResult } from '../../types';
@@ -189,7 +189,7 @@ export class ViewCoordinator {
         // =====================================================================
         const calSub = controller.calendar$.pipe(
             distinctUntilChanged()
-        ).subscribe(calendar => {
+        ).subscribe(_calendar => {
             console.log('[ViewCoordinator] calendar$ changed');
             this._scheduleRender();
         });
@@ -290,7 +290,7 @@ export class ViewCoordinator {
      * Update grid data
      * Transforms tasks into visible flat list respecting collapse state
      */
-    private _updateGridData(tasks: Task[]): void {
+    private _updateGridData(_tasks: Task[]): void {
         if (!this.grid || !this.projectController) return;
         
         const controller = this.projectController;
@@ -304,17 +304,16 @@ export class ViewCoordinator {
             return task?._collapsed || false;
         });
         
-        // Build grid row data
+        // Build grid row data with computed properties
         const gridData = visibleTasks.map(task => ({
-            id: task.id,
+            ...task,
             rowType: task.rowType || 'task',
             level: controller.getDepth(task.id),
             isParent: controller.isParent(task.id),
-            isCollapsed: task._collapsed || false,
-            ...task
+            isCollapsed: task._collapsed || false
         }));
         
-        this.grid.data = gridData;
+        this.grid.setVisibleData(gridData);
     }
     
     // =========================================================================
@@ -380,7 +379,7 @@ export class ViewCoordinator {
     /**
      * Update gantt data
      */
-    private _updateGanttData(tasks: Task[]): void {
+    private _updateGanttData(_tasks: Task[]): void {
         if (!this.gantt || !this.projectController) return;
         
         const controller = this.projectController;
@@ -396,7 +395,7 @@ export class ViewCoordinator {
             isParent: controller.isParent(task.id)
         }));
         
-        this.gantt.data = ganttData;
+        this.gantt.setData(ganttData);
     }
     
     /**
@@ -404,10 +403,10 @@ export class ViewCoordinator {
      */
     private _render(): void {
         if (this.grid) {
-            this.grid.render();
+            this.grid.refresh();
         }
         if (this.gantt) {
-            this.gantt.render();
+            this.gantt.refresh();
         }
     }
     

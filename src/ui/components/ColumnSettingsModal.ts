@@ -304,9 +304,9 @@ export class ColumnSettingsModal {
      * @private
      */
     private _initDragAndDropInContainer(container: HTMLElement): void {
-        const list = container.querySelector('.column-list') || container;
+        const listEl = (container.querySelector('.column-list') || container) as HTMLElement;
         
-        list.querySelectorAll('.column-list-item').forEach(item => {
+        listEl.querySelectorAll('.column-list-item').forEach(item => {
             const itemEl = item as HTMLElement;
             
             itemEl.addEventListener('dragstart', (e: DragEvent) => {
@@ -320,30 +320,30 @@ export class ColumnSettingsModal {
             itemEl.addEventListener('dragend', () => {
                 itemEl.classList.remove('dragging');
                 this.draggingElement = null;
-                list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+                listEl.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
             });
         });
         
-        list.addEventListener('dragover', (e: DragEvent) => {
+        listEl.addEventListener('dragover', (e: DragEvent) => {
             e.preventDefault();
             if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
             if (!this.draggingElement) return;
             
-            const afterElement = this._getDragAfterElement(list as HTMLElement, e.clientY);
-            list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+            const afterElement = this._getDragAfterElement(listEl, e.clientY);
+            listEl.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
             
             if (afterElement && afterElement !== this.draggingElement) {
                 afterElement.classList.add('drag-over');
-                list.insertBefore(this.draggingElement, afterElement);
+                listEl.insertBefore(this.draggingElement, afterElement);
             } else if (!afterElement) {
-                list.appendChild(this.draggingElement);
+                listEl.appendChild(this.draggingElement);
             }
         });
         
-        list.addEventListener('drop', (e: DragEvent) => {
+        listEl.addEventListener('drop', (e: DragEvent) => {
             e.preventDefault();
-            this._updateOrderFromDOMInContainer(list as HTMLElement);
-            list.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
+            this._updateOrderFromDOMInContainer(listEl);
+            listEl.querySelectorAll('.drag-over').forEach(el => el.classList.remove('drag-over'));
         });
     }
 

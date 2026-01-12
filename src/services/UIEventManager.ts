@@ -242,11 +242,11 @@ export class UIEventManager {
       });
       
       // Double-click: auto-fit column width (industry standard feature)
-      resizer.addEventListener('dblclick', (e: MouseEvent) => {
+      resizerEl.addEventListener('dblclick', (e: MouseEvent) => {
         e.preventDefault();
         e.stopPropagation();
         
-        const field = (resizer as HTMLElement).dataset.field;
+        const field = resizerEl.dataset.field;
         if (!field) return;
         
         // Calculate optimal width based on content

@@ -38,7 +38,7 @@ export const LinkSelectedCommand: Command = {
         const { controller, selection, historyManager, toastService } = ctx;
 
         // Get selection in order (using selectionOrder from SelectionModel)
-        const selectedIds = selection.getSelectionOrder?.() ?? selection.getSelectedIds();
+        const selectedIds = selection.getSelectionInOrder?.() ?? selection.getSelectedIds();
 
         if (selectedIds.length < 2) {
             toastService?.warning('Select 2 or more tasks to link');
@@ -46,7 +46,7 @@ export const LinkSelectedCommand: Command = {
         }
 
         // Filter out parent/summary tasks
-        const linkable = selectedIds.filter(id => !controller.isParent(id));
+        const linkable = selectedIds.filter((id: string) => !controller.isParent(id));
 
         if (linkable.length < 2) {
             toastService?.warning('Need 2+ non-summary tasks to link');

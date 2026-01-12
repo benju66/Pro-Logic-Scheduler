@@ -9,7 +9,7 @@
  * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
  */
 
-import type { TradePartner, Task } from '../../types';
+import type { TradePartner } from '../../types';
 import type { ProjectController } from '../ProjectController';
 import type { TradePartnerStore } from '../../data/TradePartnerStore';
 import type { PersistenceService } from '../../data/PersistenceService';

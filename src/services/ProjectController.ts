@@ -492,7 +492,7 @@ export class ProjectController {
         // This prevents recording no-op changes (e.g., blur on unchanged field)
         const changedUpdates = persistableUpdates.filter(([prop, newValue]) => {
             if (!oldTask) return true; // New task - all values are changes
-            const oldValue = (oldTask as Record<string, unknown>)[prop];
+            const oldValue = (oldTask as unknown as Record<string, unknown>)[prop];
             // Use JSON.stringify for deep comparison (handles arrays, objects)
             return JSON.stringify(newValue) !== JSON.stringify(oldValue);
         });
@@ -512,7 +512,7 @@ export class ProjectController {
         // Queue TASK_UPDATED events for persistence (one per field for granular persistence)
         for (const [prop, newValue] of changedUpdates) {
             const field = propToFieldMap[prop] || prop;
-            const oldValue = oldTask ? (oldTask as Record<string, unknown>)[prop] : null;
+            const oldValue = oldTask ? (oldTask as unknown as Record<string, unknown>)[prop] : null;
 
             if (this.persistenceService) {
                 this.persistenceService.queueEvent('TASK_UPDATED', id, {
@@ -1035,6 +1035,7 @@ export class ProjectController {
             level: parentId ? this.getDepth(parentId) + 1 : 0,
             start: '',
             end: '',
+            notes: '',
         };
 
         // Add to local state (optimistic update)

@@ -12,8 +12,7 @@
 import type { Task, GridColumn, Calendar } from '../../../../types';
 import type { PooledRow, PooledCell, BindingContext } from '../types';
 import { getTaskFieldValue } from '../../../../types';
-import { ICONS } from '../icons';
-import { formatDateForDisplay, parseFlexibleDate, formatDateISO } from '../datepicker/DatePickerConfig';
+import { formatDateForDisplay } from '../datepicker/DatePickerConfig';
 import { getEditingStateManager } from '../../../../services/EditingStateManager';
 import { ProjectController } from '../../../../services/ProjectController';
 import { FeatureFlags } from '../../../../core/FeatureFlags';
@@ -24,9 +23,6 @@ import { ColumnRegistry, type ColumnContext, type ColumnType } from '../../../..
  */
 export class BindingSystem {
     private columnMap: Map<string, GridColumn>;
-    private calendar: Calendar | null = null;
-    private onDateChange: ((taskId: string, field: string, value: string) => void) | null = null;
-    private onOpenDatePicker: ((taskId: string, field: string, anchorEl: HTMLElement, currentValue: string) => void) | null = null;
     
     // Pure DI: Cached service references
     private projectController: ProjectController;
@@ -50,30 +46,33 @@ export class BindingSystem {
     
     /**
      * Set the calendar for working day integration
+     * Note: Calendar is passed through to ColumnRegistry services
      */
-    setCalendar(calendar: Calendar): void {
-        this.calendar = calendar;
+    setCalendar(_calendar: Calendar): void {
+        // Calendar integration handled by ColumnRegistry
     }
     
     /**
      * Set the date change callback
+     * Note: Date changes are handled by ColumnRegistry services
      */
-    setOnDateChange(callback: (taskId: string, field: string, value: string) => void): void {
-        this.onDateChange = callback;
+    setOnDateChange(_callback: (taskId: string, field: string, value: string) => void): void {
+        // Date change handling done by ColumnRegistry
     }
 
     /**
      * Set callback for opening the shared date picker popup
+     * Note: Date picker is now handled by ColumnRegistry
      */
-    setOnOpenDatePicker(callback: (taskId: string, field: string, anchorEl: HTMLElement, currentValue: string) => void): void {
-        this.onOpenDatePicker = callback;
+    setOnOpenDatePicker(_callback: (taskId: string, field: string, anchorEl: HTMLElement, currentValue: string) => void): void {
+        // Date picker handling done by ColumnRegistry
     }
 
     /**
      * Bind task data to a pooled row
      */
     bindRow(row: PooledRow, ctx: BindingContext): void {
-        const { task, index, isSelected, isParent, isCollapsed, isCritical, depth } = ctx;
+        const { task, index, isSelected, isParent, isCollapsed, isCritical, depth: _depth } = ctx;
         
         // CRITICAL: Handle blank rows with explicit bidirectional state
         if (task.rowType === 'blank') {
@@ -125,7 +124,7 @@ export class BindingSystem {
         row.element.removeAttribute('data-blank');
         
         // Restore visibility of all cell inputs
-        for (const [field, cell] of row.cells) {
+        for (const [_field, cell] of row.cells) {
             // SHOW inputs (they may have been hidden by blank row)
             if (cell.input) {
                 cell.input.style.display = '';  // Reset to default
@@ -179,7 +178,7 @@ export class BindingSystem {
         row.element.setAttribute('aria-label', `Blank row, row ${index + 1}`);
         
         // HIDE all cell inputs - explicit visibility management
-        for (const [field, cell] of row.cells) {
+        for (const [_field, cell] of row.cells) {
             // Hide inputs
             if (cell.input) {
                 cell.input.style.display = 'none';
@@ -341,177 +340,11 @@ export class BindingSystem {
     }
 
     /**
-     * Bind calendar icon that opens the shared date picker popup
-     */
-    private _bindCalendarIcon(cell: PooledCell, col: GridColumn, ctx: BindingContext, hasConstraintIcon: boolean): void {
-        // Remove existing calendar icon if present
-        const existingIcon = cell.container.querySelector('.vsg-calendar-icon');
-        if (existingIcon) {
-            existingIcon.remove();
-        }
-
-        // Don't add icon for readonly cells
-        const isReadonly = col.editable === false || (col.readonlyForParent && ctx.isParent);
-        if (isReadonly) return;
-
-        // Create calendar icon using pre-rendered SVG
-        const iconEl = document.createElement('span');
-        iconEl.className = 'vsg-calendar-icon';
-        iconEl.innerHTML = ICONS.calendar;
-
-        const iconSize = 12;
-        const iconGap = 4;
-        const iconMargin = 4;
-        const rightPosition = hasConstraintIcon ? `${iconMargin + iconSize + iconGap}px` : `${iconMargin}px`;
-
-        iconEl.style.cssText = `
-            position: absolute;
-            right: ${rightPosition};
-            top: 50%;
-            transform: translateY(-50%);
-            width: ${iconSize}px;
-            height: ${iconSize}px;
-            color: #94a3b8;
-            opacity: 0.6;
-            pointer-events: auto;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 3;
-            flex-shrink: 0;
-            padding: 4px;
-            margin: -4px;
-            box-sizing: content-box;
-        `;
-
-        // Add hover effect
-        iconEl.addEventListener('mouseenter', () => {
-            iconEl.style.opacity = '1';
-            iconEl.style.color = '#6366f1';
-        });
-        iconEl.addEventListener('mouseleave', () => {
-            iconEl.style.opacity = '0.6';
-            iconEl.style.color = '#94a3b8';
-        });
-
-        // Click handler to open shared date picker popup
-        iconEl.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            
-            const input = cell.input as HTMLInputElement;
-            if (!input || input.disabled) return;
-            
-            // Get current task ID from the row (may have changed due to pooling)
-            const row = cell.container.closest('.vsg-row') as HTMLElement;
-            const currentTaskId = row?.dataset.taskId;
-            const field = col.field;
-            
-            // Get the ISO value for the picker
-            const isoValue = input.dataset.isoValue || '';
-            
-            if (currentTaskId && this.onOpenDatePicker) {
-                this.onOpenDatePicker(currentTaskId, field, cell.container, isoValue);
-            }
-        });
-
-        cell.container.appendChild(iconEl);
-    }
-
-    /**
-     * Bind constraint icon to a date cell
-     */
-    private _bindConstraintIcon(cell: PooledCell, col: GridColumn, task: Task, ctx: BindingContext): void {
-        // Remove existing icon if any
-        const existingIcon = cell.container.querySelector('.vsg-constraint-icon');
-        if (existingIcon) {
-            existingIcon.remove();
-        }
-
-        // Don't show icons for parent tasks
-        if (ctx.isParent) return;
-
-        // Query TaskStore for fresh constraint data
-        const freshTask = this.projectController.getTaskById(task.id) ?? task;
-        const constraintType = freshTask.constraintType || 'asap';
-        const constraintDate = freshTask.constraintDate || '';
-
-        // Determine which icon to show
-        let iconName: keyof typeof ICONS | null = null;
-        let color = '';
-        let title = '';
-
-        if (col.field === 'start') {
-            if (constraintType === 'snet') {
-                iconName = 'constraintNoEarlier';
-                color = '#93c5fd';
-                title = `Start No Earlier Than ${constraintDate}`;
-            } else if (constraintType === 'snlt') {
-                iconName = 'constraintNoLater';
-                color = '#fcd34d';
-                title = `Start No Later Than ${constraintDate}`;
-            }
-        } else if (col.field === 'end') {
-            if (constraintType === 'fnet') {
-                iconName = 'constraintNoEarlier';
-                color = '#93c5fd';
-                title = `Finish No Earlier Than ${constraintDate}`;
-            } else if (constraintType === 'fnlt') {
-                iconName = 'constraintNoLater';
-                color = '#fcd34d';
-                title = `Finish No Later Than ${constraintDate}`;
-            } else if (constraintType === 'mfo') {
-                iconName = 'constraintMustOn';
-                color = '#fca5a5';
-                title = `Must Finish On ${constraintDate}`;
-            }
-        }
-
-        if (!iconName) return;
-
-        // Create icon element using pre-rendered SVG
-        const iconEl = document.createElement('span');
-        iconEl.className = 'vsg-constraint-icon';
-        iconEl.title = title;
-        iconEl.innerHTML = ICONS[iconName];
-
-        const iconSize = 12;
-        const iconMargin = 4;
-
-        iconEl.style.cssText = `
-            position: absolute;
-            right: ${iconMargin}px;
-            top: 50%;
-            transform: translateY(-50%);
-            width: ${iconSize}px;
-            height: ${iconSize}px;
-            color: ${color};
-            opacity: 0.8;
-            pointer-events: none;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 2;
-            flex-shrink: 0;
-        `;
-
-        // Update SVG color
-        const svg = iconEl.querySelector('svg');
-        if (svg) {
-            svg.style.color = color;
-            svg.setAttribute('stroke', color);
-        }
-
-        cell.container.appendChild(iconEl);
-    }
-
-    /**
      * Bind action buttons to a cell
      * v3.0: Now renders ONLY a single menu trigger button
      * REMOVED: Old loop that rendered 4 buttons (indent/outdent/links/delete)
      */
-    private _bindActionsCell(cell: PooledCell, col: GridColumn, task: Task, ctx: BindingContext): void {
+    private _bindActionsCell(cell: PooledCell, col: GridColumn, task: Task, _ctx: BindingContext): void {
         const container = cell.container.querySelector('.vsg-actions') as HTMLElement | null;
         if (!container) return;
 

@@ -9,7 +9,7 @@
  * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
  */
 
-import type { Task, Calendar, Dependency, ColumnPreferences, GridColumn } from '../../types';
+import type { Calendar, Dependency, ColumnPreferences } from '../../types';
 import type { ProjectController } from '../ProjectController';
 import type { SelectionModel } from '../SelectionModel';
 import type { ColumnRegistry } from '../../core/columns/ColumnRegistry';

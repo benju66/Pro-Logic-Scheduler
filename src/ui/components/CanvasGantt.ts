@@ -179,8 +179,6 @@ export class CanvasGantt {
     private viewportHeight: number = 0;
     
     // Time range
-    private projectStart: Date | null = null;                // Earliest task start
-    private projectEnd: Date | null = null;                  // Latest task end
     private timelineStart: Date | null = null;               // Visible timeline start
     private timelineEnd: Date | null = null;                 // Visible timeline end
     private pixelsPerDay: number = 20;
@@ -1240,7 +1238,7 @@ export class CanvasGantt {
      * Handle drag operation
      * @private
      */
-    private _handleDrag(x: number, y: number): void {
+    private _handleDrag(x: number, _y: number): void {
         if (!this.dragState) return;
         
         const deltaX = x - this.dragState.startX;
@@ -1381,8 +1379,6 @@ export class CanvasGantt {
      */
     private _calculateTimelineRange(): void {
         if (this.data.length === 0) {
-            this.projectStart = null;
-            this.projectEnd = null;
             this.timelineStart = null;
             this.timelineEnd = null;
             return;
@@ -1401,9 +1397,6 @@ export class CanvasGantt {
                 if (end && (!maxDate || end > maxDate)) maxDate = end;
             }
         });
-        
-        this.projectStart = minDate;
-        this.projectEnd = maxDate;
         
         // Add padding to timeline (2 weeks before and after)
         if (minDate && maxDate) {

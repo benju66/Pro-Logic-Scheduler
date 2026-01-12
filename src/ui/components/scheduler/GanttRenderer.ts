@@ -99,8 +99,6 @@ export class GanttRenderer {
     private totalContentHeight: number = 0;
 
     // Time range
-    private projectStart: Date | null = null;
-    private projectEnd: Date | null = null;
     private timelineStart: Date | null = null;
     private timelineEnd: Date | null = null;
     private pixelsPerDay: number = 20;
@@ -109,7 +107,6 @@ export class GanttRenderer {
     private dom!: CanvasGanttDOM;
 
     // Render state
-    private dirty: boolean = true;
     private resizeObserver: ResizeObserver | null = null;
 
     // Cached calculations
@@ -328,7 +325,7 @@ export class GanttRenderer {
             
             this.scrollX = scrollX;
             this._renderHeader();
-            this.dirty = true;
+            // Render needed
         }, { passive: true });
         
         // Store reference to inner scroll container for vertical scroll sync
@@ -379,7 +376,7 @@ export class GanttRenderer {
         // Resize observer
         this.resizeObserver = new ResizeObserver(() => {
             this._measure();
-            this.dirty = true;
+            // Render needed
             this.options.onNeedsRender();  // Notify viewport to schedule render
         });
         this.resizeObserver.observe(this.container);
@@ -553,7 +550,7 @@ export class GanttRenderer {
     /**
      * Render day-level header
      */
-    private _renderHeaderDays(ctx: CanvasRenderingContext2D, startDate: Date, totalDays: number): void {
+    private _renderHeaderDays(ctx: CanvasRenderingContext2D, startDate: Date, _totalDays: number): void {
         const ppd = this.pixelsPerDay;
         const height = this.headerHeight;
 
@@ -596,7 +593,7 @@ export class GanttRenderer {
     /**
      * Render week-level header
      */
-    private _renderHeaderWeeks(ctx: CanvasRenderingContext2D, startDate: Date, totalDays: number): void {
+    private _renderHeaderWeeks(ctx: CanvasRenderingContext2D, startDate: Date, _totalDays: number): void {
         const ppd = this.pixelsPerDay;
         const height = this.headerHeight;
 
@@ -642,7 +639,7 @@ export class GanttRenderer {
     /**
      * Render month-level header
      */
-    private _renderHeaderMonths(ctx: CanvasRenderingContext2D, startDate: Date, totalDays: number): void {
+    private _renderHeaderMonths(ctx: CanvasRenderingContext2D, startDate: Date, _totalDays: number): void {
         const ppd = this.pixelsPerDay;
         const height = this.headerHeight;
 
@@ -1169,7 +1166,7 @@ export class GanttRenderer {
         if (newHoveredId !== this.hoveredTaskId) {
             this.hoveredTaskId = newHoveredId;
             this._computeHoverHighlights(newHoveredId);
-            this.dirty = true;
+            // Render needed
 
             this.dom.mainCanvas.style.cursor = hitBar ? 'pointer' : 'default';
         }
@@ -1276,12 +1273,12 @@ export class GanttRenderer {
     private _onMouseLeave(): void {
         if (this.hoveredTaskId) {
             this.hoveredTaskId = null;
-            this.dirty = true;
+            // Render needed
         }
 
         if (this.dragState) {
             this.dragState = null;
-            this.dirty = true;
+            // Render needed
         }
     }
 
@@ -1440,7 +1437,7 @@ export class GanttRenderer {
         task.start = this._formatDateISO(newStart);
         task.end = this._formatDateISO(newEnd);
 
-        this.dirty = true;
+        // Render needed
     }
 
     /**
@@ -1471,7 +1468,7 @@ export class GanttRenderer {
         this._measure();
         
         this._renderHeader();
-        this.dirty = true;
+        // Render needed
     }
 
     /**
@@ -1479,8 +1476,6 @@ export class GanttRenderer {
      */
     private _calculateTimelineRange(): void {
         if (this.data.length === 0) {
-            this.projectStart = null;
-            this.projectEnd = null;
             this.timelineStart = null;
             this.timelineEnd = null;
             return;
@@ -1500,9 +1495,6 @@ export class GanttRenderer {
             }
         });
 
-        this.projectStart = minDate;
-        this.projectEnd = maxDate;
-
         if (minDate && maxDate) {
             this.timelineStart = this._addDays(minDate, -14);
             this.timelineEnd = this._addDays(maxDate, 30);
@@ -1514,7 +1506,7 @@ export class GanttRenderer {
      */
     setSelection(selectedIds: Set<string>): void {
         this.selectedIds = selectedIds;
-        this.dirty = true;
+        // Render needed
     }
 
     /**
@@ -1534,7 +1526,7 @@ export class GanttRenderer {
         this._measure();
         this._updateScrollContentSize();
         this._renderHeader();
-        this.dirty = true;
+        // Render needed
         
         // FIX: Notify viewport that we need a render
         this.options.onNeedsRender();
@@ -1570,7 +1562,7 @@ export class GanttRenderer {
         this._measure();
         this._updateScrollContentSize();
         this._renderHeader();
-        this.dirty = true;
+        // Render needed
         
         // FIX: Notify viewport that we need a render
         this.options.onNeedsRender();
@@ -1656,7 +1648,7 @@ export class GanttRenderer {
             this.drivingPathSuccessors.clear();
         }
         
-        this.dirty = true;
+        // Render needed
     }
 
     /**
@@ -1760,18 +1752,6 @@ export class GanttRenderer {
         return Math.round((d2.getTime() - d1.getTime()) / GanttRenderer.MS_PER_DAY);
     }
 
-    /**
-     * Calculate the total timeline width in pixels
-     * This is the single source of truth for timeline width calculations
-     * @returns Width in pixels, or 0 if timeline not set
-     */
-    private _getTimelineWidth(): number {
-        if (!this.timelineStart || !this.timelineEnd) return 0;
-        const totalDays = this._daysBetween(this.timelineStart, this.timelineEnd);
-        // We need (totalDays + 1) columns to show all days including the last one
-        // Each column is pixelsPerDay wide
-        return (totalDays + 1) * this.pixelsPerDay;
-    }
 
     /**
      * Get the number of day columns to render

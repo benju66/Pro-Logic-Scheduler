@@ -9,7 +9,7 @@
 import type { GridColumn } from '../../../../types';
 import type { PooledRow, PooledCell } from '../types';
 import type { PoolSystemOptions } from '../types';
-import { ROW_HEIGHT, MAX_POOL_SIZE } from '../constants';
+import { MAX_POOL_SIZE } from '../constants';
 import { ICONS } from '../icons';
 
 /**

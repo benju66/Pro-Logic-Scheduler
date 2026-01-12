@@ -16,7 +16,7 @@ import { ProjectController } from '../../../services/ProjectController';
 import { SelectionModel } from '../../../services/SelectionModel';
 import flatpickr from 'flatpickr';
 import type { Instance } from 'flatpickr/dist/types/instance';
-import { createSharedPickerOptions, destroyDatePicker, parseFlexibleDate, formatDateISO, formatDateForDisplay } from './datepicker/DatePickerConfig';
+import { createSharedPickerOptions, parseFlexibleDate, formatDateISO, formatDateForDisplay } from './datepicker/DatePickerConfig';
 import { getEditingStateManager, EditingStateManager } from '../../../services/EditingStateManager';
 import { getTaskFieldValue } from '../../../types';
 
@@ -74,13 +74,12 @@ export class GridRenderer {
     private _focusedCell: { taskId: string; field: string } | null = null;
 
     // Services (injected or singleton fallback for migration)
-    private controller: ProjectController;
     private selectionModel: SelectionModel;
     private editingStateManager: EditingStateManager;
 
     constructor(
         options: GridRendererOptions,
-        controller?: ProjectController,
+        _controller?: ProjectController,
         selectionModel?: SelectionModel,
         editingStateManager?: EditingStateManager
     ) {
@@ -88,7 +87,7 @@ export class GridRenderer {
         this.rowHeight = options.rowHeight;
         
         // Inject services or fallback to singletons (migration-friendly)
-        this.controller = controller || ProjectController.getInstance();
+        // Note: controller param accepted for DI compatibility but not stored (accessed via options.getController)
         this.selectionModel = selectionModel || SelectionModel.getInstance();
         this.editingStateManager = editingStateManager || getEditingStateManager();
 
@@ -1324,7 +1323,6 @@ export class GridRenderer {
             if (!row) return;
             
             const taskId = row.dataset.taskId;
-            const field = target.getAttribute('data-field');
             
             // Get original value from EditingStateManager context
             // Note: originalValue is stored when enterEditMode() is called (in click handlers, focusCell, etc.)
@@ -1429,16 +1427,6 @@ export class GridRenderer {
             input.value = previousIso ? formatDateForDisplay(previousIso) : '';
             // Don't fire change - invalid input
         }
-    }
-
-    /**
-     * Get task field value (helper)
-     */
-    private _getTaskFieldValue(task: Task, field: string): unknown {
-        if (field === 'checkbox' || field === 'drag' || field === 'rowNum' || field === 'actions') {
-            return undefined;
-        }
-        return (task as any)[field];
     }
 
     /**
@@ -1753,7 +1741,7 @@ export class GridRenderer {
             calendar: this.calendar || undefined,
             defaultDate: currentValue || undefined,
             positionElement: anchorEl,
-            onChange: (selectedDates, dateStr) => {
+            onChange: (_selectedDates: Date[], dateStr: string) => {
                 if (this.activeDatePickerContext && dateStr) {
                     const { taskId: ctxTaskId, field: ctxField } = this.activeDatePickerContext;
                     
@@ -1791,7 +1779,7 @@ export class GridRenderer {
      * Render the phantom row at the bottom of the list
      * MUST be called after all PoolSystem operations to avoid z-index conflicts
      */
-    private _renderPhantomRow(state: ViewportState): void {
+    private _renderPhantomRow(_state: ViewportState): void {
         // Get or create phantom row element
         let phantomEl = this.rowContainer.querySelector('.phantom-row') as HTMLElement;
         

@@ -8,7 +8,7 @@
  * @see docs/SCHEDULER_SERVICE_FULL_DECOMPOSITION_PLAN.md
  */
 
-import type { Task, Calendar, TradePartner, GridColumn, ColumnPreferences } from '../../types';
+// Types are defined inline below - no imports needed from parent types
 
 // =========================================================================
 // CALLBACK TYPES

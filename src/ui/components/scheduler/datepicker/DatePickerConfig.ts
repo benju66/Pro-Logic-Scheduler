@@ -3,9 +3,12 @@
  * Provides consistent date picker behavior across all date cells
  */
 
-import flatpickr from 'flatpickr';
-import type { Instance, Options } from 'flatpickr/dist/types/instance';
+import type { Instance } from 'flatpickr/dist/types/instance';
+import type { BaseOptions } from 'flatpickr/dist/types/options';
 import type { Calendar } from '../../../../types';
+
+// Flatpickr options type alias
+type Options = Partial<BaseOptions>;
 
 /**
  * Date format used throughout the application
@@ -121,7 +124,7 @@ export function createDatePickerOptions(options: {
         ...(disabled ? { clickOpens: false, allowInput: false } : {}),
         
         // Callbacks
-        onChange: (selectedDates, dateStr) => {
+        onChange: (_selectedDates: Date[], dateStr: string) => {
             if (onChange && dateStr) {
                 onChange(dateStr);
             }
@@ -285,7 +288,7 @@ export function createSharedPickerOptions(options: {
         ariaDateFormat: 'F j, Y',
         
         // Callbacks
-        onChange: (selectedDates, dateStr) => {
+        onChange: (selectedDates: Date[], dateStr: string) => {
             if (onChange) {
                 onChange(selectedDates, dateStr);
             }

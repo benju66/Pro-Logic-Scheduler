@@ -45,7 +45,6 @@ export function diagnoseUIBlocking(): void {
 }
 
 function checkForOverlays(): void {
-    const body = document.body;
     const allElements = document.querySelectorAll('*');
     const blockingElements: HTMLElement[] = [];
 

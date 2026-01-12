@@ -25,7 +25,7 @@ import type {
     ExecuteOptions,
     ICommandService
 } from './types';
-import { BehaviorSubject, Observable, combineLatest, map, distinctUntilChanged, startWith, interval } from 'rxjs';
+import { BehaviorSubject, Observable, map, distinctUntilChanged } from 'rxjs';
 
 /**
  * CommandService - Central registry and executor for all commands
