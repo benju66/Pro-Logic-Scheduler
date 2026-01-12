@@ -286,12 +286,9 @@ export function createSubordinateFactory(deps: FactoryDependencies): SchedulerSu
             });
             console.log('[SubordinateFactory] ✅ KeyboardBindingService');
 
-            // ═══════════════════════════════════════════════════════════════════
-            // PHASE 4: Post-initialization (modals need container)
-            // ═══════════════════════════════════════════════════════════════════
-            
-            modalCoordinator.initialize(ctx.modalContainer);
-            console.log('[SubordinateFactory] ✅ ModalCoordinator initialized with container');
+            // NOTE: modalCoordinator.initialize() is NOT called here.
+            // It must be called AFTER the bundle is assigned to SchedulerService
+            // because getColumnPreferences() needs this.columnPreferencesService.
 
             console.log('[SubordinateFactory] ✅ All subordinate services created');
 

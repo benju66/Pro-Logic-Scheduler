@@ -360,6 +360,10 @@ export class SchedulerService {
             this.keyboardBindingService = bundle.keyboardBindingService;
             this.testDataGenerator = bundle.testDataGenerator;
             
+            // Initialize ModalCoordinator with container (must be after bundle assignment
+            // because initialize() calls getColumnPreferences() which needs this.columnPreferencesService)
+            this.modalCoordinator.initialize(modalContainer || document.body);
+            
             console.log('[SchedulerService] ✅ All subordinate services created via factory');
         } else {
             // Backward compatibility: Direct instantiation (legacy path)
