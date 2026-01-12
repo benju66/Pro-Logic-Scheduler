@@ -49,7 +49,7 @@ import { ViewportFactoryService } from './scheduler/ViewportFactoryService';
 import { KeyboardBindingService } from './scheduler/KeyboardBindingService';
 import { CommandService } from '../commands';
 import { SchedulerViewport } from '../ui/components/scheduler/SchedulerViewport';
-import { SideDrawer } from '../ui/components/SideDrawer';
+// Note: SideDrawer was removed - drawer functionality now managed by ModalCoordinator
 import type { RendererFactory } from '../ui/factories';
 import type { 
     GridRendererOptions, 
@@ -145,11 +145,14 @@ export class SchedulerService {
     private viewportFactoryService!: ViewportFactoryService;
     private keyboardBindingService!: KeyboardBindingService;
     private testDataGenerator!: TestDataGenerator;
+    
+    // Phase 6 Pure DI: Subordinate factory for creating services
+    private subordinateFactory: import('./scheduler/SchedulerSubordinateFactory').SchedulerSubordinateFactory | null = null;
 
     // UI components (initialized in init())
     public grid: VirtualScrollGridFacade | null = null;  // Public for access from AppInitializer and UIEventManager
     public gantt: CanvasGanttFacade | null = null;  // Public for access from AppInitializer and UIEventManager
-    private drawer: SideDrawer | null = null;
+    // Note: drawer was removed - it's now managed by ModalCoordinator
     // Note: Modals (dependenciesModal, calendarModal, columnSettingsModal) now managed by ModalCoordinator
 
     // Selection state now fully managed by SelectionModel
@@ -208,6 +211,8 @@ export class SchedulerService {
         // Phase 6 Pure DI: UI services (optional - fallback to internal creation)
         toastService?: ToastService;
         fileService?: FileService;
+        // Phase 6 Pure DI: Subordinate factory (optional - fallback to direct instantiation)
+        subordinateFactory?: import('./scheduler/SchedulerSubordinateFactory').SchedulerSubordinateFactory;
     } = {} as SchedulerServiceOptions) {
         this.options = options;
         this.isTauri = options.isTauri !== undefined ? options.isTauri : true;
@@ -230,6 +235,8 @@ export class SchedulerService {
         // Phase 6 Pure DI: Store injected UI services (used in _initServices if provided)
         if (options.toastService) this.toastService = options.toastService;
         if (options.fileService) this.fileService = options.fileService;
+        // Phase 6 Pure DI: Store subordinate factory (used in init() if provided)
+        if (options.subordinateFactory) this.subordinateFactory = options.subordinateFactory;
 
         // Initialize services (async - will be awaited in init())
         // Store the promise to avoid race conditions
@@ -323,34 +330,70 @@ export class SchedulerService {
             throw new Error('gridContainer and ganttContainer are required');
         }
 
-        // Initialize ColumnPreferencesService early (before grid exists for header build)
-        this.columnPreferencesService = new ColumnPreferencesService({
-            projectController: this.projectController,
-            selectionModel: this.selectionModel,
-            columnRegistry: this.columnRegistry,
-            toastService: this.toastService,
-            getGrid: () => this.grid,
-            render: () => this.render(),
-            updateSelection: () => this.viewStateService.updateSelection(),
-        });
-        console.log('[SchedulerService] ✅ ColumnPreferencesService initialized (early - for header build)');
+        // ═══════════════════════════════════════════════════════════════════════
+        // PHASE 6 PURE DI: Create subordinate services via factory (CRITICAL)
+        // This MUST happen FIRST to ensure columnPreferencesService is available
+        // before _initializeColumnCSSVariables() and _buildGridHeader() are called.
+        // @see docs/PURE_DI_SUBORDINATE_FACTORY_PLAN.md - Phase 6
+        // ═══════════════════════════════════════════════════════════════════════
+        if (this.subordinateFactory) {
+            console.log('[SchedulerService] 🏭 Using subordinate factory to create services...');
+            
+            // Build context with all runtime callbacks
+            const ctx = this._buildSubordinateFactoryContext(modalContainer || document.body);
+            
+            // Create ALL subordinate services in one atomic operation
+            const bundle = this.subordinateFactory.createAll(ctx);
+            
+            // Assign all services from bundle to instance properties
+            this.columnPreferencesService = bundle.columnPreferencesService;
+            this.gridNavigationController = bundle.gridNavigationController;
+            this.viewportFactoryService = bundle.viewportFactoryService;
+            this.taskOperations = bundle.taskOperationsService;
+            this.viewStateService = bundle.viewStateService;
+            this.contextMenuService = bundle.contextMenuService;
+            this.modalCoordinator = bundle.modalCoordinator;
+            this.fileOperationsService = bundle.fileOperationsService;
+            this.baselineService = bundle.baselineService;
+            this.tradePartnerService = bundle.tradePartnerService;
+            this.dependencyValidationService = bundle.dependencyValidationService;
+            this.keyboardBindingService = bundle.keyboardBindingService;
+            this.testDataGenerator = bundle.testDataGenerator;
+            
+            console.log('[SchedulerService] ✅ All subordinate services created via factory');
+        } else {
+            // Backward compatibility: Direct instantiation (legacy path)
+            console.log('[SchedulerService] ⚠️ No factory provided, using direct instantiation (legacy)');
+            
+            // Initialize ColumnPreferencesService early (before grid exists for header build)
+            this.columnPreferencesService = new ColumnPreferencesService({
+                projectController: this.projectController,
+                selectionModel: this.selectionModel,
+                columnRegistry: this.columnRegistry,
+                toastService: this.toastService,
+                getGrid: () => this.grid,
+                render: () => this.render(),
+                updateSelection: () => this.viewStateService.updateSelection(),
+            });
+            console.log('[SchedulerService] ✅ ColumnPreferencesService initialized (early - for header build)');
 
-        // GridNavigationController for Excel-style cell navigation
-        this.gridNavigationController = new GridNavigationController({
-            getVisibleTaskIds: () => {
-                return this.projectController.getVisibleTasks((id) => {
-                    const task = this.projectController.getTaskById(id);
-                    return task?._collapsed || false;
-                }).map(t => t.id);
-            },
-            getNavigableColumns: () => {
-                return this._getColumnDefinitions()
-                    .filter(col => col.type === 'text' || col.type === 'number' || col.type === 'date' || col.type === 'select' || col.type === 'name' || col.type === 'schedulingMode')
-                    .map(col => col.field);
-            },
-            isEditing: () => this.editingStateManager.isEditing()
-        });
-        console.log('[SchedulerService] ✅ GridNavigationController initialized');
+            // GridNavigationController for Excel-style cell navigation
+            this.gridNavigationController = new GridNavigationController({
+                getVisibleTaskIds: () => {
+                    return this.projectController.getVisibleTasks((id) => {
+                        const task = this.projectController.getTaskById(id);
+                        return task?._collapsed || false;
+                    }).map(t => t.id);
+                },
+                getNavigableColumns: () => {
+                    return this._getColumnDefinitions()
+                        .filter(col => col.type === 'text' || col.type === 'number' || col.type === 'date' || col.type === 'select' || col.type === 'name' || col.type === 'schedulingMode')
+                        .map(col => col.field);
+                },
+                isEditing: () => this.editingStateManager.isEditing()
+            });
+            console.log('[SchedulerService] ✅ GridNavigationController initialized');
+        }
 
         // Initialize CSS variables for column widths (must be before header build)
         this._initializeColumnCSSVariables();
@@ -434,10 +477,11 @@ export class SchedulerService {
         // Store viewport reference (for backward compatibility, also store as grid/gantt)
         (this as any).viewport = viewport;
         
-        // Initialize ViewportFactoryService (needed for facade creation)
-        this.viewportFactoryService = new ViewportFactoryService({});
-        
         // Create facade wrappers for backward compatibility
+        // Note: If using factory, viewportFactoryService is already created
+        if (!this.viewportFactoryService) {
+            this.viewportFactoryService = new ViewportFactoryService({});
+        }
         this.grid = this.viewportFactoryService.createGridFacade(viewport);
         this.gantt = this.viewportFactoryService.createGanttFacade(viewport);
         
@@ -469,159 +513,168 @@ export class SchedulerService {
         this.viewCoordinator.initSubscriptions();
         console.log('[SchedulerService] ✅ ViewCoordinator initialized with reactive subscriptions');
         
-        // Initialize TaskOperationsService
-        this.taskOperations = new TaskOperationsService({
-            projectController: this.projectController,
-            selectionModel: this.selectionModel,
-            editingStateManager: this.editingStateManager,
-            commandService: this.commandService,
-            toastService: this.toastService,
-            getGrid: () => this.grid,
-            getGantt: () => this.gantt,
-            saveCheckpoint: () => this.saveCheckpoint(),
-            enterEditMode: () => this.enterEditMode(),
-            isInitialized: () => this.isInitialized,
-            updateHeaderCheckboxState: () => this.viewStateService.updateHeaderCheckboxState(),
-        });
-        console.log('[SchedulerService] ✅ TaskOperationsService initialized');
+        // ═══════════════════════════════════════════════════════════════════════
+        // SUBORDINATE SERVICES: Skip if already created by factory
+        // ═══════════════════════════════════════════════════════════════════════
+        if (!this.subordinateFactory) {
+            // Legacy path: Create remaining services directly
+            console.log('[SchedulerService] ⚠️ Creating remaining services (legacy path)...');
+            
+            // Initialize TaskOperationsService
+            this.taskOperations = new TaskOperationsService({
+                projectController: this.projectController,
+                selectionModel: this.selectionModel,
+                editingStateManager: this.editingStateManager,
+                commandService: this.commandService,
+                toastService: this.toastService,
+                getGrid: () => this.grid,
+                getGantt: () => this.gantt,
+                saveCheckpoint: () => this.saveCheckpoint(),
+                enterEditMode: () => this.enterEditMode(),
+                isInitialized: () => this.isInitialized,
+                updateHeaderCheckboxState: () => this.viewStateService.updateHeaderCheckboxState(),
+            });
+            console.log('[SchedulerService] ✅ TaskOperationsService initialized');
+            
+            // Initialize ViewStateService
+            this.viewStateService = new ViewStateService({
+                projectController: this.projectController,
+                selectionModel: this.selectionModel,
+                editingStateManager: this.editingStateManager,
+                commandService: this.commandService,
+                viewCoordinator: this.viewCoordinator,
+                getGrid: () => this.grid,
+                getGantt: () => this.gantt,
+                getColumnDefinitions: () => this._getColumnDefinitions(),
+                closeDrawer: () => {},
+                isDrawerOpen: () => false,
+                onSelectionChange: (selectedIds) => this._handleSelectionChange(selectedIds),
+                updateHeaderCheckboxState: (checkbox) => this.columnPreferencesService.updateHeaderCheckboxState(checkbox),
+            });
+            console.log('[SchedulerService] ✅ ViewStateService initialized');
+            
+            // Initialize ContextMenuService
+            this.contextMenuService = new ContextMenuService({
+                insertBlankRowAbove: (taskId) => this.insertBlankRowAbove(taskId),
+                insertBlankRowBelow: (taskId) => this.insertBlankRowBelow(taskId),
+                convertBlankToTask: (taskId) => this.convertBlankToTask(taskId),
+                deleteTask: (taskId) => this.deleteTask(taskId),
+                openProperties: (taskId) => this.openProperties(taskId),
+            });
+            console.log('[SchedulerService] ✅ ContextMenuService initialized');
+            
+            // Initialize ModalCoordinator
+            this.modalCoordinator = new ModalCoordinator({
+                projectController: this.projectController,
+                selectionModel: this.selectionModel,
+                columnRegistry: this.columnRegistry,
+                getOpenPanelCallbacks: () => this._openPanelCallbacks,
+                onDependenciesSave: (taskId, deps) => this._handleDependenciesSave(taskId, deps),
+                onCalendarSave: (calendar) => this._handleCalendarSave(calendar),
+                onColumnPreferencesSave: (prefs) => this.updateColumnPreferences(prefs),
+                getColumnPreferences: () => this._getColumnPreferences(),
+                updateSelection: () => this.viewStateService.updateSelection(),
+            });
+            // Initialize modals with container
+            const modalsContainer = modalContainer || document.body;
+            this.modalCoordinator.initialize(modalsContainer);
+            console.log('[SchedulerService] ✅ ModalCoordinator initialized');
+            
+            // Initialize FileOperationsService
+            this.fileOperationsService = new FileOperationsService({
+                projectController: this.projectController,
+                fileService: this.fileService,
+                toastService: this.toastService,
+                persistenceService: this.persistenceService,
+                saveCheckpoint: () => this.saveCheckpoint(),
+                saveData: () => this.saveData(),
+                recalculateAll: () => this.recalculateAll(),
+                storageKey: SchedulerService.STORAGE_KEY,
+            });
+            console.log('[SchedulerService] ✅ FileOperationsService initialized');
+            
+            // Initialize BaselineService
+            this.baselineService = new BaselineService({
+                projectController: this.projectController,
+                columnRegistry: this.columnRegistry,
+                toastService: this.toastService,
+                saveCheckpoint: () => this.saveCheckpoint(),
+                saveData: () => this.saveData(),
+                rebuildGridColumns: () => this._rebuildGridColumns(),
+                getCalendar: () => this.calendar,
+            });
+            console.log('[SchedulerService] ✅ BaselineService initialized');
+            
+            // Initialize TradePartnerService
+            this.tradePartnerService = new TradePartnerService({
+                projectController: this.projectController,
+                tradePartnerStore: this.tradePartnerStore,
+                persistenceService: this.persistenceService,
+                toastService: this.toastService,
+                viewCoordinator: this.viewCoordinator,
+                notifyDataChange: () => this._notifyDataChange(),
+            });
+            console.log('[SchedulerService] ✅ TradePartnerService initialized');
+            
+            // Initialize DependencyValidationService
+            this.dependencyValidationService = new DependencyValidationService({
+                projectController: this.projectController,
+            });
+            console.log('[SchedulerService] ✅ DependencyValidationService initialized');
+            
+            // Note: ViewportFactoryService initialized earlier (before facade creation)
+            
+            // Initialize KeyboardBindingService
+            this.keyboardBindingService = new KeyboardBindingService({
+                actions: {
+                    isAppReady: () => this.isInitialized,
+                    onUndo: () => this.undo(),
+                    onRedo: () => this.redo(),
+                    onDelete: () => this._deleteSelected(),
+                    onCopy: () => this.copySelected(),
+                    onCut: () => this.cutSelected(),
+                    onPaste: () => this.paste(),
+                    onInsert: () => this.insertTaskBelow(),
+                    onShiftInsert: () => this.insertTaskAbove(),
+                    onCtrlEnter: () => this.addChildTask(),
+                    onArrowUp: (shiftKey, _ctrlKey) => this._handleCellNavigation('up', shiftKey),
+                    onArrowDown: (shiftKey, _ctrlKey) => this._handleCellNavigation('down', shiftKey),
+                    onArrowLeft: (shiftKey, _ctrlKey) => this._handleCellNavigation('left', shiftKey),
+                    onArrowRight: (shiftKey, _ctrlKey) => this._handleCellNavigation('right', shiftKey),
+                    onCtrlArrowLeft: () => this._handleArrowCollapse('ArrowLeft'),
+                    onCtrlArrowRight: () => this._handleArrowCollapse('ArrowRight'),
+                    onTab: () => this._handleTabIndent(),
+                    onShiftTab: () => this._handleTabOutdent(),
+                    onCtrlArrowUp: () => this.moveSelectedTasks(-1),
+                    onCtrlArrowDown: () => this.moveSelectedTasks(1),
+                    onF2: () => this.enterEditMode(),
+                    onEscape: () => {
+                        // Exit driving path mode on Escape
+                        if (this.displaySettings.drivingPathMode) {
+                            this.toggleDrivingPathMode();
+                        } else {
+                            this._handleEscape();
+                        }
+                    },
+                    onLinkSelected: () => this.linkSelectedInOrder(),
+                    onDrivingPath: () => this.toggleDrivingPathMode(),
+                },
+                KeyboardServiceClass: KeyboardService,
+            });
+            console.log('[SchedulerService] ✅ KeyboardBindingService initialized');
+            
+            // Initialize TestDataGenerator
+            this.testDataGenerator = new TestDataGenerator({
+                projectController: this.projectController,
+                toastService: this.toastService,
+            });
+            console.log('[SchedulerService] ✅ TestDataGenerator initialized');
+        }
         
-        // Initialize ViewStateService
-        this.viewStateService = new ViewStateService({
-            projectController: this.projectController,
-            selectionModel: this.selectionModel,
-            editingStateManager: this.editingStateManager,
-            commandService: this.commandService,
-            viewCoordinator: this.viewCoordinator,
-            getGrid: () => this.grid,
-            getGantt: () => this.gantt,
-            getColumnDefinitions: () => this._getColumnDefinitions(),
-            closeDrawer: () => this.drawer?.close(),
-            isDrawerOpen: () => this.drawer?.isDrawerOpen() ?? false,
-            onSelectionChange: (selectedIds) => this._handleSelectionChange(selectedIds),
-            updateHeaderCheckboxState: (checkbox) => this.columnPreferencesService.updateHeaderCheckboxState(checkbox),
-        });
         // Sync initial state from SchedulerService to ViewStateService
         this.viewStateService.viewMode = this.viewMode;
         this.viewStateService.displaySettings.highlightDependenciesOnHover = this.displaySettings.highlightDependenciesOnHover;
         this.viewStateService.displaySettings.drivingPathMode = this.displaySettings.drivingPathMode;
-        console.log('[SchedulerService] ✅ ViewStateService initialized');
-        
-        // Initialize ContextMenuService
-        this.contextMenuService = new ContextMenuService({
-            insertBlankRowAbove: (taskId) => this.insertBlankRowAbove(taskId),
-            insertBlankRowBelow: (taskId) => this.insertBlankRowBelow(taskId),
-            convertBlankToTask: (taskId) => this.convertBlankToTask(taskId),
-            deleteTask: (taskId) => this.deleteTask(taskId),
-            openProperties: (taskId) => this.openProperties(taskId),
-        });
-        console.log('[SchedulerService] ✅ ContextMenuService initialized');
-        
-        // Initialize ModalCoordinator
-        this.modalCoordinator = new ModalCoordinator({
-            projectController: this.projectController,
-            selectionModel: this.selectionModel,
-            columnRegistry: this.columnRegistry,
-            getOpenPanelCallbacks: () => this._openPanelCallbacks,
-            onDependenciesSave: (taskId, deps) => this._handleDependenciesSave(taskId, deps),
-            onCalendarSave: (calendar) => this._handleCalendarSave(calendar),
-            onColumnPreferencesSave: (prefs) => this.updateColumnPreferences(prefs),
-            getColumnPreferences: () => this._getColumnPreferences(),
-            updateSelection: () => this.viewStateService.updateSelection(),
-        });
-        // Initialize modals with container
-        const modalsContainer = modalContainer || document.body;
-        this.modalCoordinator.initialize(modalsContainer);
-        console.log('[SchedulerService] ✅ ModalCoordinator initialized');
-        
-        // Initialize FileOperationsService
-        this.fileOperationsService = new FileOperationsService({
-            projectController: this.projectController,
-            fileService: this.fileService,
-            toastService: this.toastService,
-            persistenceService: this.persistenceService,
-            saveCheckpoint: () => this.saveCheckpoint(),
-            saveData: () => this.saveData(),
-            recalculateAll: () => this.recalculateAll(),
-            storageKey: SchedulerService.STORAGE_KEY,
-        });
-        console.log('[SchedulerService] ✅ FileOperationsService initialized');
-        
-        // Initialize BaselineService
-        this.baselineService = new BaselineService({
-            projectController: this.projectController,
-            columnRegistry: this.columnRegistry,
-            toastService: this.toastService,
-            saveCheckpoint: () => this.saveCheckpoint(),
-            saveData: () => this.saveData(),
-            rebuildGridColumns: () => this._rebuildGridColumns(),
-            getCalendar: () => this.calendar,
-        });
-        console.log('[SchedulerService] ✅ BaselineService initialized');
-        
-        // Initialize TradePartnerService
-        this.tradePartnerService = new TradePartnerService({
-            projectController: this.projectController,
-            tradePartnerStore: this.tradePartnerStore,
-            persistenceService: this.persistenceService,
-            toastService: this.toastService,
-            viewCoordinator: this.viewCoordinator,
-            notifyDataChange: () => this._notifyDataChange(),
-        });
-        console.log('[SchedulerService] ✅ TradePartnerService initialized');
-        
-        // Initialize DependencyValidationService
-        this.dependencyValidationService = new DependencyValidationService({
-            projectController: this.projectController,
-        });
-        console.log('[SchedulerService] ✅ DependencyValidationService initialized');
-        
-        // Note: ViewportFactoryService initialized earlier (before facade creation)
-        
-        // Initialize KeyboardBindingService
-        this.keyboardBindingService = new KeyboardBindingService({
-            actions: {
-                isAppReady: () => this.isInitialized,
-                onUndo: () => this.undo(),
-                onRedo: () => this.redo(),
-                onDelete: () => this._deleteSelected(),
-                onCopy: () => this.copySelected(),
-                onCut: () => this.cutSelected(),
-                onPaste: () => this.paste(),
-                onInsert: () => this.insertTaskBelow(),
-                onShiftInsert: () => this.insertTaskAbove(),
-                onCtrlEnter: () => this.addChildTask(),
-                onArrowUp: (shiftKey, _ctrlKey) => this._handleCellNavigation('up', shiftKey),
-                onArrowDown: (shiftKey, _ctrlKey) => this._handleCellNavigation('down', shiftKey),
-                onArrowLeft: (shiftKey, _ctrlKey) => this._handleCellNavigation('left', shiftKey),
-                onArrowRight: (shiftKey, _ctrlKey) => this._handleCellNavigation('right', shiftKey),
-                onCtrlArrowLeft: () => this._handleArrowCollapse('ArrowLeft'),
-                onCtrlArrowRight: () => this._handleArrowCollapse('ArrowRight'),
-                onTab: () => this._handleTabIndent(),
-                onShiftTab: () => this._handleTabOutdent(),
-                onCtrlArrowUp: () => this.moveSelectedTasks(-1),
-                onCtrlArrowDown: () => this.moveSelectedTasks(1),
-                onF2: () => this.enterEditMode(),
-                onEscape: () => {
-                    // Exit driving path mode on Escape
-                    if (this.displaySettings.drivingPathMode) {
-                        this.toggleDrivingPathMode();
-                    } else {
-                        this._handleEscape();
-                    }
-                },
-                onLinkSelected: () => this.linkSelectedInOrder(),
-                onDrivingPath: () => this.toggleDrivingPathMode(),
-            },
-            KeyboardServiceClass: KeyboardService,
-        });
-        console.log('[SchedulerService] ✅ KeyboardBindingService initialized');
-        
-        // Initialize TestDataGenerator
-        this.testDataGenerator = new TestDataGenerator({
-            projectController: this.projectController,
-            toastService: this.toastService,
-        });
-        console.log('[SchedulerService] ✅ TestDataGenerator initialized');
         
         // Subscribe to editing state changes
         const editingManager = this.editingStateManager;
@@ -795,6 +848,94 @@ export class SchedulerService {
     /** Rebuild grid columns when baseline state changes */
     private _rebuildGridColumns(): void {
         this.columnPreferencesService.rebuildGridColumns();
+    }
+
+    /**
+     * Build the context object for the subordinate factory
+     * Contains all runtime callbacks and accessors that SchedulerService provides
+     * 
+     * @param modalContainer - Container element for modals
+     * @returns Context object for factory.createAll()
+     * @private
+     */
+    private _buildSubordinateFactoryContext(modalContainer: HTMLElement): import('./scheduler/SchedulerSubordinateFactory').SubordinateFactoryContext {
+        return {
+            // Runtime UI Accessors
+            getGrid: () => this.grid,
+            getGantt: () => this.gantt,
+            
+            // SchedulerService Method Callbacks
+            render: () => this.render(),
+            saveCheckpoint: () => this.saveCheckpoint(),
+            saveData: () => this.saveData(),
+            recalculateAll: () => this.recalculateAll(),
+            enterEditMode: () => this.enterEditMode(),
+            exitEditMode: () => this.exitEditMode(),
+            isInitialized: () => this.isInitialized,
+            getColumnDefinitions: () => this._getColumnDefinitions(),
+            getColumnPreferences: () => this._getColumnPreferences(),
+            getCalendar: () => this.calendar,
+            
+            // Selection/Navigation Callbacks
+            handleSelectionChange: (selectedIds) => this._handleSelectionChange(selectedIds),
+            
+            // Panel/Drawer Callbacks
+            getOpenPanelCallbacks: () => this._openPanelCallbacks,
+            closeDrawer: () => {}, // Drawer removed - no-op
+            isDrawerOpen: () => false, // Drawer removed - always false
+            
+            // Event Handlers
+            handleDependenciesSave: (taskId, deps) => this._handleDependenciesSave(taskId, deps),
+            handleCalendarSave: (calendar) => this._handleCalendarSave(calendar),
+            updateColumnPreferences: (prefs) => this.updateColumnPreferences(prefs),
+            notifyDataChange: () => this._notifyDataChange(),
+            
+            // Task Operations (for ContextMenuService)
+            insertBlankRowAbove: (taskId) => this.insertBlankRowAbove(taskId),
+            insertBlankRowBelow: (taskId) => this.insertBlankRowBelow(taskId),
+            convertBlankToTask: (taskId) => this.convertBlankToTask(taskId),
+            deleteTask: (taskId) => this.deleteTask(taskId),
+            openProperties: (taskId) => this.openProperties(taskId),
+            toggleCollapse: (taskId) => this.toggleCollapse(taskId),
+            
+            // Keyboard Actions
+            keyboardActions: {
+                isAppReady: () => this.isInitialized,
+                onUndo: () => this.undo(),
+                onRedo: () => this.redo(),
+                onDelete: () => this._deleteSelected(),
+                onCopy: () => this.copySelected(),
+                onCut: () => this.cutSelected(),
+                onPaste: () => this.paste(),
+                onInsert: () => this.insertTaskBelow(),
+                onShiftInsert: () => this.insertTaskAbove(),
+                onCtrlEnter: () => this.addChildTask(),
+                onArrowUp: (shiftKey, _ctrlKey) => this._handleCellNavigation('up', shiftKey),
+                onArrowDown: (shiftKey, _ctrlKey) => this._handleCellNavigation('down', shiftKey),
+                onArrowLeft: (shiftKey, _ctrlKey) => this._handleCellNavigation('left', shiftKey),
+                onArrowRight: (shiftKey, _ctrlKey) => this._handleCellNavigation('right', shiftKey),
+                onCtrlArrowLeft: () => this._handleArrowCollapse('ArrowLeft'),
+                onCtrlArrowRight: () => this._handleArrowCollapse('ArrowRight'),
+                onTab: () => this._handleTabIndent(),
+                onShiftTab: () => this._handleTabOutdent(),
+                onCtrlArrowUp: () => this.moveSelectedTasks(-1),
+                onCtrlArrowDown: () => this.moveSelectedTasks(1),
+                onF2: () => this.enterEditMode(),
+                onEscape: () => {
+                    if (this.displaySettings.drivingPathMode) {
+                        this.toggleDrivingPathMode();
+                    } else {
+                        this._handleEscape();
+                    }
+                },
+                onLinkSelected: () => this.linkSelectedInOrder(),
+                onDrivingPath: () => this.toggleDrivingPathMode(),
+            },
+            
+            // Config
+            storageKey: SchedulerService.STORAGE_KEY,
+            modalContainer: modalContainer,
+        };
     }
 
     // =========================================================================
@@ -1062,13 +1203,7 @@ export class SchedulerService {
             return;
         }
         
-        // Sync drawer with updated values (dates may have changed from CPM)
-        if (this.drawer && this.drawer.isDrawerOpen() && this.drawer.getActiveTaskId() === taskId) {
-            const updatedTask = this.projectController.getTaskById(taskId);
-            if (updatedTask) {
-                this.drawer.sync(updatedTask);
-            }
-        }
+        // Note: Drawer sync was removed - side drawer functionality now managed by ModalCoordinator
     }
 
     /**
@@ -1961,8 +2096,7 @@ export class SchedulerService {
         }
         if (this.grid) this.grid.destroy();
         if (this.gantt) this.gantt.destroy();
-        if (this.drawer) this.drawer.destroy();
-        // Note: Modals are now managed by ModalCoordinator
+        // Note: Drawer was removed, modals are now managed by ModalCoordinator
         if (this.modalCoordinator) this.modalCoordinator.dispose();
     }
 }
