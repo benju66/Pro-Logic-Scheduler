@@ -36,6 +36,9 @@ import { TradePartnerStore, setTradePartnerStore } from './data/TradePartnerStor
 import { ToastService } from './ui/services/ToastService';
 import { FileService } from './ui/services/FileService';
 
+// Phase 6 Pure DI: Import subordinate factory
+import { createSubordinateFactory } from './services/scheduler/createSubordinateFactory';
+
 // Import Unified Scheduler V2 styles
 import './ui/components/scheduler/styles/scheduler.css';
 import './styles/trade-partners.css';
@@ -178,6 +181,25 @@ async function initApp(): Promise<void> {
             onToast: (msg, type) => toastService.show(msg, type as any)
         });
         
+        // =====================================================================
+        // Level 6: Subordinate Factory (Phase 6 Pure DI)
+        // Factory captures all static deps in closure. SchedulerService calls
+        // factory.createAll() with runtime context to create subordinate services.
+        // @see docs/PURE_DI_SUBORDINATE_FACTORY_PLAN.md - Phase 3
+        // =====================================================================
+        const subordinateFactory = createSubordinateFactory({
+            projectController,
+            selectionModel,
+            editingStateManager,
+            commandService,
+            columnRegistry,
+            viewCoordinator,
+            toastService,
+            fileService,
+            tradePartnerStore,
+            persistenceService,
+        });
+        
         console.log('[Composition Root] ✅ Services initialized');
         
         // =====================================================================
@@ -208,6 +230,8 @@ async function initApp(): Promise<void> {
             // Phase 6 Pure DI: Inject UI services (lifted from SchedulerService)
             toastService,
             fileService,
+            // Phase 6 Pure DI: Inject subordinate factory
+            subordinateFactory,
         });
         
         // Expose AppInitializer for E2E testing

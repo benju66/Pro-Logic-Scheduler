@@ -36,6 +36,7 @@ import { getClipboardManager } from './ClipboardManager';
 // Phase 6 Pure DI: Import UI services
 import type { ToastService } from '../ui/services/ToastService';
 import type { FileService } from '../ui/services/FileService';
+import type { SchedulerSubordinateFactory } from './scheduler/SchedulerSubordinateFactory';
 
 /**
  * App initializer options
@@ -75,6 +76,8 @@ export interface AppInitializerOptions {
   toastService?: ToastService;
   /** Injected FileService for file operations (Phase 6 Pure DI) */
   fileService?: FileService;
+  /** Injected SubordinateFactory for creating subordinate services (Phase 6 Pure DI) */
+  subordinateFactory?: SchedulerSubordinateFactory;
 }
 
 /**
@@ -108,6 +111,7 @@ export class AppInitializer {
   // Phase 6 Pure DI: UI services - passed to SchedulerService in _initializeScheduler
   private toastService: ToastService | null = null;
   private fileService: FileService | null = null;
+  private subordinateFactory: SchedulerSubordinateFactory | null = null;
   
   // Reactive saveData subscription - saves after calculations complete
   private saveDataSubscription: Subscription | null = null;
@@ -149,9 +153,10 @@ export class AppInitializer {
     this.commandService = options.commandService || null;
     this.viewCoordinator = options.viewCoordinator || null;
     
-    // Phase 6 Pure DI: Store UI services
+    // Phase 6 Pure DI: Store UI services and factory
     this.toastService = options.toastService || null;
     this.fileService = options.fileService || null;
+    this.subordinateFactory = options.subordinateFactory || null;
     
     this.isInitializing = false;
     this.isInitialized = false;
@@ -559,6 +564,8 @@ export class AppInitializer {
       // Phase 6 Pure DI: UI services lifted from SchedulerService
       toastService: this.toastService || undefined,
       fileService: this.fileService || undefined,
+      // Phase 6 Pure DI: Subordinate factory for creating services
+      subordinateFactory: this.subordinateFactory || undefined,
     };
     
     this.scheduler = new SchedulerService(options);
