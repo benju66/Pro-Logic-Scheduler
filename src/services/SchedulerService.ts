@@ -31,7 +31,7 @@ import { FileService } from '../ui/services/FileService';
 import { KeyboardService } from '../ui/services/KeyboardService';
 import { ProjectController } from './ProjectController';
 import { SelectionModel } from './SelectionModel';
-import { EditingStateManager, getEditingStateManager, type EditingStateChangeEvent } from './EditingStateManager';
+import { EditingStateManager, type EditingStateChangeEvent } from './EditingStateManager';
 import { ZoomController, type IZoomableGantt } from './ZoomController';
 import { SchedulingLogicService } from './migration/SchedulingLogicService';
 import { ViewCoordinator } from './migration/ViewCoordinator';
@@ -217,13 +217,16 @@ export class SchedulerService {
         this.options = options;
         this.isTauri = options.isTauri !== undefined ? options.isTauri : true;
         
-        // Initialize core dependencies (use injected or fallback to singletons)
-        this.projectController = options.projectController || ProjectController.getInstance();
-        this.selectionModel = options.selectionModel || SelectionModel.getInstance();
-        this.commandService = options.commandService || CommandService.getInstance();
-        this.schedulingLogicService = options.schedulingLogicService || SchedulingLogicService.getInstance();
-        this.columnRegistry = options.columnRegistry || ColumnRegistry.getInstance();
-        this.editingStateManager = options.editingStateManager || getEditingStateManager();
+        // Initialize core dependencies (Pure DI - all services must be injected)
+        if (!options.projectController || !options.selectionModel || !options.commandService) {
+            throw new Error('[SchedulerService] Required dependencies missing: projectController, selectionModel, commandService must be injected');
+        }
+        this.projectController = options.projectController;
+        this.selectionModel = options.selectionModel;
+        this.commandService = options.commandService;
+        this.schedulingLogicService = options.schedulingLogicService!;
+        this.columnRegistry = options.columnRegistry!;
+        this.editingStateManager = options.editingStateManager!;
         
         // Store optional injected services
         if (options.zoomController) this.zoomController = options.zoomController;
@@ -486,31 +489,17 @@ export class SchedulerService {
         this.grid = this.viewportFactoryService.createGridFacade(viewport);
         this.gantt = this.viewportFactoryService.createGanttFacade(viewport);
         
-        // Pure DI: Use injected ZoomController or fall back to singleton
-        if (!this.zoomController) {
-            this.zoomController = ZoomController.getInstance();
-            console.log('[SchedulerService] Using ZoomController from fallback');
-        } else {
-            console.log('[SchedulerService] Using injected ZoomController');
-        }
-        // Wire ZoomController to GanttRenderer
+        // Wire ZoomController to GanttRenderer (if available)
         const ganttRenderer = (viewport as any).ganttRenderer as IZoomableGantt | null;
-        if (ganttRenderer) {
+        if (ganttRenderer && this.zoomController) {
             this.zoomController.setGanttRenderer(ganttRenderer);
         }
         
-        // Initialize ViewCoordinator for reactive rendering
+        // Initialize ViewCoordinator for reactive rendering (required)
         if (!this.viewCoordinator) {
-            this.viewCoordinator = ViewCoordinator.getInstance();
-            console.log('[SchedulerService] Using ViewCoordinator from fallback');
-        } else {
-            console.log('[SchedulerService] Using injected ViewCoordinator');
+            throw new Error('[SchedulerService] ViewCoordinator must be injected via options');
         }
-        
-        // Set component references so ViewCoordinator can update them
         this.viewCoordinator.setComponents(this.grid, this.gantt);
-        
-        // Initialize reactive subscriptions (this activates the reactive data flow)
         this.viewCoordinator.initSubscriptions();
         console.log('[SchedulerService] ✅ ViewCoordinator initialized with reactive subscriptions');
         
@@ -543,7 +532,7 @@ export class SchedulerService {
                 selectionModel: this.selectionModel,
                 editingStateManager: this.editingStateManager,
                 commandService: this.commandService,
-                viewCoordinator: this.viewCoordinator,
+                viewCoordinator: this.viewCoordinator!, // Already verified non-null above
                 getGrid: () => this.grid,
                 getGantt: () => this.gantt,
                 getColumnDefinitions: () => this._getColumnDefinitions(),
