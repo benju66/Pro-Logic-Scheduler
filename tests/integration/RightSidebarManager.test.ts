@@ -42,9 +42,11 @@ function createMockScheduler(): Partial<SchedulerService> {
     const callbacks: {
         selection: Array<(taskId: string | null, task: Task | null) => void>;
         panelOpen: Array<(panelId: string) => void>;
+        dataChange: Array<() => void>;
     } = {
         selection: [],
         panelOpen: [],
+        dataChange: [],
     };
 
     return {
@@ -71,6 +73,13 @@ function createMockScheduler(): Partial<SchedulerService> {
                 if (index > -1) callbacks.panelOpen.splice(index, 1);
             };
         }),
+        onDataChange: vi.fn((callback) => {
+            callbacks.dataChange.push(callback);
+            return () => {
+                const index = callbacks.dataChange.indexOf(callback);
+                if (index > -1) callbacks.dataChange.splice(index, 1);
+            };
+        }),
         selectTask: vi.fn((taskId: string) => {
             callbacks.selection.forEach(cb => cb(taskId, mockTask));
         }),
@@ -80,6 +89,9 @@ function createMockScheduler(): Partial<SchedulerService> {
         },
         _triggerPanelOpen: (panelId: string) => {
             callbacks.panelOpen.forEach(cb => cb(panelId));
+        },
+        _triggerDataChange: () => {
+            callbacks.dataChange.forEach(cb => cb());
         },
     } as any;
 }

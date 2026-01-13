@@ -64,8 +64,8 @@ describe('PersistenceService Integration Tests', () => {
   });
 
   afterEach(async () => {
-    // Cleanup
-    if (persistenceService.getInitialized()) {
+    // Cleanup - guard against undefined if beforeEach failed
+    if (persistenceService?.getInitialized()) {
       await persistenceService.flushNow();
     }
     global.window = originalWindow;
