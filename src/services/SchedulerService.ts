@@ -291,9 +291,6 @@ export class SchedulerService {
             );
         }
 
-        // NOTE: HistoryManager is now initialized in AppInitializer (application level)
-        // Access via this.projectController.getHistoryManager()
-
         // UI services - use injected if available, otherwise create new (backward compat)
         if (!this.toastService) {
             this.toastService = new ToastService({
@@ -1117,8 +1114,6 @@ export class SchedulerService {
             return;
         }
         
-        // NOTE: With ENABLE_LEGACY_RECALC=false, ProjectController.updateTask() triggers
-        // Worker calculation, and reactive saveData subscription handles persistence
     }
 
     /** Handle Enter key pressed on the last task - creates sibling task */
@@ -1142,8 +1137,6 @@ export class SchedulerService {
         e?.stopPropagation(); // Prevent row click from firing
         
         // Handle phantom row activation
-        // NOTE: addTask() already includes focusCell: true, focusField: 'name'
-        // which provides the "spreadsheet feel" of immediate name column focus
         if (taskId === '__PHANTOM_ROW__' && action === 'activate-phantom') {
             this.addTask();  // Uses existing addTask logic with auto-focus
             return;
@@ -1226,8 +1219,6 @@ export class SchedulerService {
 
         this.saveCheckpoint();
         this.projectController.updateTask(taskId, { dependencies });
-        
-        // NOTE: ProjectController handles recalc/save via Worker
     }
 
     /**
@@ -1238,8 +1229,6 @@ export class SchedulerService {
     private _handleCalendarSave(calendar: Calendar): void {
         this.saveCheckpoint();
         this.projectController.updateCalendar(calendar);
-        
-        // NOTE: ProjectController handles recalc/save via Worker
         this.toastService.success('Calendar updated. Recalculating schedule...');
     }
 
@@ -1731,16 +1720,6 @@ export class SchedulerService {
         return Promise.resolve();
     }
 
-    // STRANGLER FIG: _applyCalculationResult() removed - dead code
-    // ProjectController + WASM Worker now handles CPM results via reactive streams (tasks$).
-    // The viewport subscribes to tasks$ and renders automatically.
-
-
-
-    // STRANGLER FIG: _onTasksChanged() and _onCalendarChanged() removed - dead code
-    // ProjectController + WASM Worker handles data changes via reactive streams.
-    // The viewport subscribes to tasks$ and calendar$ and renders automatically.
-
     /**
      * Notify all data change listeners
      * @private
@@ -1818,8 +1797,6 @@ export class SchedulerService {
                 this.projectController.syncTasks(tasksWithSortKeys);
                 
                 this.projectController.updateCalendar(calendar);
-                // NOTE: Removed engine sync - ProjectController handles via Worker
-                
                 this.recalculateAll();
                 console.log('[SchedulerService] ✅ Loaded from SQLite:', tasks.length, 'tasks');
             } else {
