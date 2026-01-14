@@ -547,34 +547,44 @@ export class AppInitializer {
     
     // Initialize scheduler service
     console.log('🔧 Creating SchedulerService...');
+    
+    // Validate all required dependencies before constructing SchedulerService
+    // These are compile-time required by SchedulerService's constructor
+    if (!this.projectController) throw new Error('[AppInitializer] projectController is required');
+    if (!this.selectionModel) throw new Error('[AppInitializer] selectionModel is required');
+    if (!this.commandService) throw new Error('[AppInitializer] commandService is required');
+    if (!this.editingStateManager) throw new Error('[AppInitializer] editingStateManager is required');
+    if (!this.schedulingLogicService) throw new Error('[AppInitializer] schedulingLogicService is required');
+    if (!this.columnRegistry) throw new Error('[AppInitializer] columnRegistry is required');
+    if (!this.tradePartnerStore) throw new Error('[AppInitializer] tradePartnerStore is required');
+    if (!this.toastService) throw new Error('[AppInitializer] toastService is required');
+    if (!this.fileService) throw new Error('[AppInitializer] fileService is required');
+    if (!this.subordinateFactory) throw new Error('[AppInitializer] subordinateFactory is required');
+    
     const options = {
       gridContainer: gridContainer,
       ganttContainer: ganttContainer,
       drawerContainer: drawerContainer || undefined,
       modalContainer: modalContainer || undefined,
       isTauri: this.isTauri,
-      // Pure DI: Pass rendererFactory from Composition Root
+      // Pure DI: Optional - pass rendererFactory from Composition Root
       rendererFactory: this.rendererFactory || undefined,
-      // Pure DI: Required core services (must be injected)
-      projectController: this.projectController || undefined,
-      selectionModel: this.selectionModel || undefined,
-      commandService: this.commandService || undefined,
-      editingStateManager: this.editingStateManager || undefined,
-      // Pure DI: Pass schedulingLogicService from Composition Root
-      schedulingLogicService: this.schedulingLogicService || undefined,
-      // Pure DI: Pass additional services from Composition Root
-      columnRegistry: this.columnRegistry || undefined,
+      // Pure DI: Required core services (validated above, use non-null assertion)
+      projectController: this.projectController,
+      selectionModel: this.selectionModel,
+      commandService: this.commandService,
+      editingStateManager: this.editingStateManager,
+      schedulingLogicService: this.schedulingLogicService,
+      columnRegistry: this.columnRegistry,
+      tradePartnerStore: this.tradePartnerStore,
+      toastService: this.toastService,
+      fileService: this.fileService,
+      subordinateFactory: this.subordinateFactory,
+      // Pure DI: Optional services
       zoomController: this.zoomController || undefined,
-      tradePartnerStore: this.tradePartnerStore || undefined,
       dataLoader: this.dataLoader || undefined,
       snapshotService: this.snapshotService || undefined,
-      // Phase 1 decomposition: ViewCoordinator for reactive rendering
       viewCoordinator: this.viewCoordinator || undefined,
-      // Phase 6 Pure DI: UI services lifted from SchedulerService
-      toastService: this.toastService || undefined,
-      fileService: this.fileService || undefined,
-      // Phase 6 Pure DI: Subordinate factory for creating services
-      subordinateFactory: this.subordinateFactory || undefined,
     };
     
     this.scheduler = new SchedulerService(options);

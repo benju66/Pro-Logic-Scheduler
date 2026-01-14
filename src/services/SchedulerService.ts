@@ -115,7 +115,7 @@ export class SchedulerService {
 
     // UI services
     public toastService!: ToastService;  // Public for access from main.ts
-    private fileService!: FileService;
+    // Note: fileService is captured by subordinateFactory, not stored here
     private keyboardService: KeyboardService | null = null;
     
     // SQLite persistence services
@@ -145,8 +145,8 @@ export class SchedulerService {
     private keyboardBindingService!: KeyboardBindingService;
     private testDataGenerator!: TestDataGenerator;
     
-    // Phase 6 Pure DI: Subordinate factory for creating services
-    private subordinateFactory: import('./scheduler/SchedulerSubordinateFactory').SchedulerSubordinateFactory | null = null;
+    // Phase 6 Pure DI: Subordinate factory for creating services (compile-time required)
+    private subordinateFactory!: import('./scheduler/SchedulerSubordinateFactory').SchedulerSubordinateFactory;
 
     // UI components (initialized in init())
     public grid: VirtualScrollGridFacade | null = null;  // Public for access from AppInitializer and UIEventManager
@@ -185,19 +185,19 @@ export class SchedulerService {
      * @see docs/TRUE_PURE_DI_IMPLEMENTATION_PLAN.md
      */
     constructor(options: SchedulerServiceOptions & {
-        // Required DI Dependencies
-        projectController?: ProjectController;
-        selectionModel?: SelectionModel;
-        commandService?: CommandService;
-        schedulingLogicService?: SchedulingLogicService;
-        columnRegistry?: ColumnRegistry;
-        editingStateManager?: EditingStateManager;
+        // Required DI Dependencies (Pure DI - compile-time enforced)
+        projectController: ProjectController;
+        selectionModel: SelectionModel;
+        commandService: CommandService;
+        schedulingLogicService: SchedulingLogicService;
+        columnRegistry: ColumnRegistry;
+        editingStateManager: EditingStateManager;
         // Required UI Services
-        toastService?: ToastService;
-        fileService?: FileService;
-        tradePartnerStore?: TradePartnerStore;
+        toastService: ToastService;
+        fileService: FileService;
+        tradePartnerStore: TradePartnerStore;
         // Required Factory
-        subordinateFactory?: import('./scheduler/SchedulerSubordinateFactory').SchedulerSubordinateFactory;
+        subordinateFactory: import('./scheduler/SchedulerSubordinateFactory').SchedulerSubordinateFactory;
         // Optional Services
         rendererFactory?: RendererFactory;
         keyboardService?: KeyboardService;
@@ -205,27 +205,24 @@ export class SchedulerService {
         dataLoader?: DataLoader;
         snapshotService?: SnapshotService;
         viewCoordinator?: ViewCoordinator;
-    } = {} as SchedulerServiceOptions) {
+    }) {
         this.options = options;
         
-        // Initialize core dependencies (Pure DI - all services must be injected)
-        if (!options.projectController || !options.selectionModel || !options.commandService) {
-            throw new Error('[SchedulerService] Required dependencies missing: projectController, selectionModel, commandService must be injected');
-        }
+        // Assign required dependencies (Pure DI - TypeScript enforces these at compile-time)
         this.projectController = options.projectController;
         this.selectionModel = options.selectionModel;
         this.commandService = options.commandService;
-        this.schedulingLogicService = options.schedulingLogicService!;
-        this.columnRegistry = options.columnRegistry!;
-        this.editingStateManager = options.editingStateManager!;
+        this.schedulingLogicService = options.schedulingLogicService;
+        this.columnRegistry = options.columnRegistry;
+        this.editingStateManager = options.editingStateManager;
         
-        // Store required services (validated in _initServices/init)
-        if (options.tradePartnerStore) this.tradePartnerStore = options.tradePartnerStore;
-        if (options.toastService) this.toastService = options.toastService;
-        if (options.fileService) this.fileService = options.fileService;
-        if (options.subordinateFactory) this.subordinateFactory = options.subordinateFactory;
+        // Assign required services
+        this.tradePartnerStore = options.tradePartnerStore;
+        this.toastService = options.toastService;
+        this.subordinateFactory = options.subordinateFactory;
+        // Note: fileService is captured by subordinateFactory, not stored here
         
-        // Store optional services
+        // Assign optional services
         if (options.zoomController) this.zoomController = options.zoomController;
         if (options.dataLoader) this.dataLoader = options.dataLoader;
         if (options.snapshotService) this.snapshotService = options.snapshotService;
@@ -259,19 +256,17 @@ export class SchedulerService {
             console.warn('[SchedulerService] PersistenceService not available - trade partner events will not be persisted');
         }
         
-        // Pure DI: DataLoader and SnapshotService must be injected - fail fast if not provided
+        // DataLoader and SnapshotService are optional - log if not provided
         if (!this.dataLoader || !this.snapshotService) {
             console.warn('[SchedulerService] DataLoader or SnapshotService not injected - some features may be limited');
-            console.warn('[SchedulerService] Ensure these services are passed via constructor options in AppInitializer._initializeScheduler()');
         } else {
             console.log('[SchedulerService] Using injected DataLoader and SnapshotService');
         }
 
-        // Pure DI: TradePartnerStore must be injected
-        if (!this.tradePartnerStore) {
-            throw new Error('[SchedulerService] TradePartnerStore must be injected via constructor');
-        }
+        // Log Pure DI status (required services are compile-time enforced)
         console.log('[SchedulerService] Using injected TradePartnerStore');
+        console.log('[SchedulerService] Using injected ToastService');
+        console.log('[SchedulerService] Using injected FileService');
         
         // Set trade partners accessor on shared persistence service
         if (this.persistenceService) {
@@ -279,17 +274,6 @@ export class SchedulerService {
                 () => this.tradePartnerStore.getAll()
             );
         }
-
-        // Pure DI: UI services must be injected (no fallback creation)
-        if (!this.toastService) {
-            throw new Error('[SchedulerService] ToastService must be injected via constructor');
-        }
-        console.log('[SchedulerService] Using injected ToastService');
-
-        if (!this.fileService) {
-            throw new Error('[SchedulerService] FileService must be injected via constructor');
-        }
-        console.log('[SchedulerService] Using injected FileService');
     }
 
     /**
@@ -308,14 +292,11 @@ export class SchedulerService {
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // PURE DI: Create subordinate services via factory (REQUIRED)
+        // PURE DI: Create subordinate services via factory
         // This MUST happen FIRST to ensure columnPreferencesService is available
         // before _initializeColumnCSSVariables() and _buildGridHeader() are called.
+        // Note: subordinateFactory is compile-time required (no runtime check needed)
         // ═══════════════════════════════════════════════════════════════════════
-        if (!this.subordinateFactory) {
-            throw new Error('[SchedulerService] subordinateFactory must be injected via constructor');
-        }
-        
         console.log('[SchedulerService] 🏭 Using subordinate factory to create services...');
         
         // Build context with all runtime callbacks

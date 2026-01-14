@@ -1,7 +1,7 @@
 
 # Pro Logic Scheduler: Master System Specification
 
-**Version:** 6.0.0 (WASM Worker Architecture)
+**Version:** 7.0.0 (Subordinate Factory Architecture)
 **Status:** Production-Ready with WASM CPM Engine
 **Scope:** Core Logic, Data Architecture, and Rendering Engine
 **Supersedes:** All previous specification versions
@@ -18,6 +18,7 @@ Pro Logic Scheduler is a high-performance, desktop-class construction scheduling
 3.  **Scheduling Triangle:** Intelligent handling of Start/Duration/End edits that mimics MS Project behavior (applying constraints automatically).
 4.  **WASM CPM Engine:** High-performance O(N) scheduling calculations running in a Web Worker (Rust compiled to WebAssembly).
 5.  **Pure Dependency Injection:** Constructor injection with a single Composition Root for testability and maintainability.
+6.  **Subordinate Factory Pattern:** SchedulerService delegates to specialized subordinate services created via factory pattern.
 
 ---
 
@@ -34,59 +35,96 @@ interface Task {
     sortKey: string;              // FRACTIONAL INDEXING key (e.g., "a0", "a0V")
     level: number;                // Depth level (0-based)
     
+    // Row Type
+    rowType?: RowType;            // 'task' | 'blank' | 'phantom' (default: 'task')
+    
     // Core Data
     name: string;
     notes: string;
+    wbs?: string;                 // Work Breakdown Structure code (future)
     
     // Scheduling (Persisted Input)
     duration: number;             // Work days
-    constraintType: 'asap' | 'snet' | 'snlt' | 'fnet' | 'fnlt' | 'mfo';
+    constraintType: ConstraintType; // 'asap' | 'snet' | 'snlt' | 'fnet' | 'fnlt' | 'mfo'
     constraintDate: string | null; // YYYY-MM-DD
     dependencies: Dependency[];    // Predecessors
-    schedulingMode?: 'Auto' | 'Manual'; // Scheduling mode (default: 'Auto')
+    schedulingMode?: SchedulingMode; // 'Auto' | 'Manual' (default: 'Auto')
     
     // Scheduling (Calculated Runtime)
     start: string;                // Early Start
     end: string;                  // Early Finish
-    lateStart: string | null;
-    lateFinish: string | null;
-    totalFloat: number;
-    freeFloat: number;
+    lateStart?: string | null;
+    lateFinish?: string | null;
+    totalFloat?: number;
+    freeFloat?: number;
     
     // Status & Metadata
     progress: number;             // 0-100
-    _isCritical: boolean;         // Calculated by CPM
+    _isCritical?: boolean;        // Calculated by CPM
     _health?: HealthIndicator;    // Calculated status (Critical/Blocked/Healthy)
-    _collapsed: boolean;          // UI State
+    _collapsed?: boolean;         // UI State
+    _visualRowNumber?: number | null; // Visual row number (excludes blank rows)
+    
+    // Actuals Tracking
+    actualStart?: string | null;
+    actualFinish?: string | null;
+    remainingDuration?: number;
+    
+    // Baseline Tracking
+    baselineStart?: string | null;
+    baselineFinish?: string | null;
+    baselineDuration?: number;
+    
+    // Trade Partners
+    tradePartnerIds?: string[];   // Assigned trade partner IDs
 }
 
+// Row type discriminator
+type RowType = 'task' | 'blank' | 'phantom';
 ```
 
-### 2.2. Ordering Strategy (Fractional Indexing)
+### 2.2. Trade Partner Entity
+Trade partners represent subcontractors/companies assigned to tasks.
+
+```typescript
+interface TradePartner {
+    id: string;
+    name: string;
+    contact?: string;
+    phone?: string;
+    email?: string;
+    color: string;      // Hex color for display
+    notes?: string;
+}
+```
+
+### 2.3. Ordering Strategy (Fractional Indexing)
 
 * **Concept:** Instead of integer indexes (`1, 2, 3`), tasks use lexicographical string keys (`"a0"`, `"a1"`).
 * **Insertion:** Inserting between `"a0"` and `"a1"` generates `"a0V"`.
 * **Implementation:** Handled by `OrderingService.ts` using the `fractional-indexing` library.
 * **Benefit:** Allows reordering operations (drag-and-drop) to update **only one record**, making it compatible with offline-first and SQL databases.
 
-### 2.3. State Management
+### 2.4. State Management
 
 The application uses **Pure Dependency Injection** with constructor injection for all services:
 
 * **ProjectController:** Central data controller. Manages tasks and calendar via RxJS BehaviorSubjects (`tasks$`, `calendar$`). Coordinates with WASM worker for CPM calculations.
-* **SelectionModel:** Manages task selection state. Supports single, multi-select (Ctrl), and range select (Shift).
+* **SelectionModel:** Manages task selection state via `state$` observable. Supports single, multi-select (Ctrl), and range select (Shift).
 * **EditingStateManager:** Single source of truth for cell editing state. Coordinates between GridRenderer, KeyboardService, and SchedulerService using observer pattern.
 * **ClipboardManager:** Manages cut/copy/paste operations for tasks.
-* **HistoryManager:** Undo/Redo via command pattern (no JSON snapshots for performance).
+* **HistoryManager:** Undo/Redo via event sourcing command pattern (stores forward/backward event pairs, not JSON snapshots).
+* **TradePartnerStore:** Manages CRUD operations for trade partners.
+* **ViewCoordinator:** Reactive subscription manager for Grid/Gantt updates. Subscribes to `tasks$` and `SelectionModel.state$`.
 
 > **Dependency Injection:** All services are created in `src/main.ts` (Composition Root) and injected via constructors. Legacy `getInstance()` methods are deprecated. See [ADR-001](docs/adr/001-dependency-injection.md).
 
-### 2.4. Command System
+### 2.5. Command System
 
 User actions are encapsulated as commands via `CommandService`:
 
 * **CommandService:** Central registry for all user actions with keyboard shortcut bindings.
-* **Command Categories:** clipboard, edit, hierarchy, selection, task, view
+* **Command Categories:** clipboard, dependency, edit, hierarchy, selection, task, view
 * **Context-Aware:** Commands receive context (controller, selection) at execution time.
 
 ---
@@ -142,6 +180,7 @@ Tasks are assigned a health status based on the following priority:
 2. **Critical Failure (🔴):** `FNLT` constraint violated by >3 days, or negative float (schedule impossible).
 3. **At Risk (🟡):** `FNLT` violated by <3 days, or Critical Path with low float (<2 days).
 4. **Healthy (🟢):** On track with adequate float.
+5. **Forced (⚪):** Task dates have been manually overridden.
 
 ### 3.3. The "Scheduling Triangle" (Service Logic)
 
@@ -156,10 +195,22 @@ The `SchedulingLogicService` interprets user edits to maintain logical consisten
 * **Auto Mode (default):** CPM engine calculates dates based on dependencies and constraints. User edits to `start`/`end` apply constraints (SNET/FNLT) that influence the calculation.
 * **Manual Mode:** User-fixed dates that CPM will **not** change during recalculation. Manual tasks still participate in backward pass (have Late Start/Finish), have float calculated, and act as anchors for their successors. When CPM results are applied, only calculated fields (`_isCritical`, `totalFloat`, `freeFloat`, etc.) are updated; `start`, `end`, and `duration` are preserved.
 
+**Driver/Completion Modes:**
+* **Driver Mode (actualStart):** Setting `actualStart` anchors the task's historical start and automatically applies SNET constraint.
+* **Completion Mode (actualFinish):** Setting `actualFinish` marks task 100% complete, auto-populates `actualStart` if not set, and sets `remainingDuration` to 0.
+
 **Async Engine Synchronization:**
 Date changes are processed asynchronously via the Web Worker to ensure constraint updates complete before recalculation runs. This prevents race conditions where recalculation might execute before constraints are synced, causing date values to revert.
 
-### 3.4. Performance Architecture
+### 3.4. Baseline Tracking
+
+The `BaselineService` manages baseline snapshots:
+
+* **Set Baseline:** Copies current `start`, `end`, `duration` to `baselineStart`, `baselineFinish`, `baselineDuration`.
+* **Clear Baseline:** Removes baseline data from all tasks.
+* **Variance Calculation:** Compares current dates against baseline using `VarianceCalculator`.
+
+### 3.5. Performance Architecture
 
 The system achieves 60 FPS with >10,000 tasks through:
 
@@ -223,9 +274,10 @@ This pattern ensures both renderers have fresh data immediately, eliminating the
 
 The `ViewCoordinator` service ensures Grid and Gantt renderers stay synchronized:
 
-* **Subscription-Based:** Subscribes to `ProjectController.tasks$` and `SelectionModel` changes.
-* **Batched Updates:** Coalesces rapid changes into single render cycles.
+* **Subscription-Based:** Subscribes to `ProjectController.tasks$` and `SelectionModel.state$` changes.
+* **Batched Updates:** Uses `requestAnimationFrame` to coalesce rapid changes into single render cycles.
 * **Component References:** Holds references to Grid and Gantt for coordinated updates.
+* **Visual Row Numbers:** Assigns sequential row numbers to schedulable tasks (skipping blank/phantom rows).
 
 ---
 
@@ -233,10 +285,11 @@ The `ViewCoordinator` service ensures Grid and Gantt renderers stay synchronized
 
 ### 5.1. Selection & Focus
 
-* **Ownership:** `SelectionModel` manages all selection state via RxJS observables.
+* **Ownership:** `SelectionModel` manages all selection state via single `state$` observable.
 * **Granularity:** Supports single row, multi-row (Ctrl/Shift), and cell-level focus.
 * **Focus Management:** When adding a task, the service explicitly instructs the grid to `focusCell('name')` to allow immediate typing.
-* **Reactive Updates:** Components subscribe to `SelectionModel.selectedIds$` for reactive UI updates.
+* **Reactive Updates:** Components subscribe to `SelectionModel.state$` for reactive UI updates.
+* **Selection Order:** Tracks order of selection for operations like "link in order".
 
 ### 5.2. Keyboard Shortcuts
 
@@ -254,6 +307,8 @@ The `KeyboardService` maps keys to `CommandService` actions:
 * `Ctrl+C/X/V`: Copy, Cut, Paste tasks.
 * `Ctrl+Z/Y`: Undo/Redo.
 * `Ctrl++/-/0`: Zoom In/Out/Reset.
+* `Ctrl+L`: Link selected tasks in order.
+* `Ctrl+Shift+D`: Toggle driving path mode.
 
 **Editing State Management:**
 The `EditingStateManager` serves as the single source of truth for cell editing state. It coordinates between `GridRenderer`, `KeyboardService`, and `SchedulerService` to prevent state synchronization bugs. Uses observer pattern for reactive state updates. Injected via constructor (not accessed as singleton).
@@ -301,19 +356,47 @@ class ProjectController {
     // Observables
     tasks$: BehaviorSubject<Task[]>;
     calendar$: BehaviorSubject<Calendar>;
+    stats$: BehaviorSubject<CPMStats | null>;
+    isInitialized$: BehaviorSubject<boolean>;
+    isCalculating$: BehaviorSubject<boolean>;
+    errors$: Subject<string>;
     
-    // Task Operations
-    addTask(parentId?: string): Promise<Task>;
+    // Task Operations (Optimistic Updates)
+    addTask(task: Task): void;
     updateTask(id: string, updates: Partial<Task>): void;
     deleteTask(id: string): void;
-    getTask(id: string): Task | undefined;
+    syncTasks(tasks: Task[]): void;
     
-    // Hierarchy
-    indent(taskId: string): void;
-    outdent(taskId: string): void;
+    // Specialized Operations
+    createBlankRow(sortKey: string, parentId?: string | null): Task;
+    wakeUpBlankRow(taskId: string, name?: string): Task | undefined;
+    moveTask(taskId: string, newParentId: string | null, newSortKey: string): boolean;
+    
+    // Calendar
+    updateCalendar(calendar: Calendar): void;
+    
+    // Calculation
+    forceRecalculate(): void;
     
     // Initialization
     initialize(tasks: Task[], calendar: Calendar): Promise<void>;
+    
+    // Queries
+    getTaskById(id: string): Task | undefined;
+    getTasks(): Task[];
+    getCalendar(): Calendar;
+    isParent(id: string): boolean;
+    getDepth(id: string): number;
+    getChildren(parentId: string | null): Task[];
+    getVisibleTasks(isCollapsed: (id: string) => boolean): Task[];
+    getDescendants(id: string): Task[];
+    
+    // Persistence Integration
+    setPersistenceService(service: PersistenceService): void;
+    setHistoryManager(manager: HistoryManager): void;
+    
+    // Event Application (for Undo/Redo)
+    applyEvents(events: QueuedEvent[]): void;
 }
 ```
 
@@ -322,7 +405,7 @@ class ProjectController {
 ```typescript
 class CommandService {
     // Registration
-    register(command: CommandDefinition): void;
+    register(command: Command): void;
     
     // Execution
     execute(commandId: string, args?: unknown): CommandResult;
@@ -331,8 +414,12 @@ class CommandService {
     setContext(context: CommandContext): void;
     
     // Query
-    getCommand(id: string): CommandDefinition | undefined;
+    getCommand(id: string): Command | undefined;
     getShortcut(id: string): string | undefined;
+    isEnabled(id: string): boolean;
+    
+    // State Change Notification
+    notifyStateChange(): void;
 }
 ```
 
@@ -340,18 +427,32 @@ class CommandService {
 
 ```typescript
 class SelectionModel {
-    // Observables
-    selectedIds$: BehaviorSubject<Set<string>>;
-    focusedCell$: BehaviorSubject<CellPosition | null>;
+    // Observable (combined state)
+    state$: BehaviorSubject<SelectionState>;
+    
+    // State Interface
+    interface SelectionState {
+        selectedIds: Set<string>;
+        selectionOrder: string[];  // Order tasks were selected
+        focusedId: string | null;
+        anchorId: string | null;   // For range selection
+        focusedField: string | null;
+    }
     
     // Operations
-    select(taskId: string, options?: SelectOptions): void;
-    selectRange(startId: string, endId: string): void;
+    setSelection(ids: Set<string>, focusedId: string | null, order: string[]): void;
+    addToSelection(taskIds: string[]): void;
+    removeFromSelection(taskIds: string[]): void;
     clearSelection(): void;
+    setFocus(taskId: string | null, field?: string | null): void;
     
     // Queries
     isSelected(taskId: string): boolean;
     getSelectedIds(): string[];
+    getSelectionInOrder(): string[];
+    getFocusedId(): string | null;
+    getFocusedField(): string | null;
+    getAnchorId(): string | null;
 }
 ```
 
@@ -359,17 +460,57 @@ class SelectionModel {
 
 ```typescript
 class SchedulerService {
+    // UI Components
+    grid: VirtualScrollGridFacade | null;
+    gantt: CanvasGanttFacade | null;
+    toastService: ToastService;
+    
     // Initialization
-    init(container: HTMLElement): Promise<void>;
+    init(): Promise<void>;
     initKeyboard(): void;
     
     // View Management
-    scrollToTask(taskId: string): void;
-    refresh(): void;
+    render(): void;
+    getStats(): PerformanceStats;
     
-    // Accessors
-    getProjectController(): ProjectController;
-    getSelectionModel(): SelectionModel;
+    // Task Operations (delegate to TaskOperationsService)
+    addTask(taskData?: Partial<Task>): Promise<Task | undefined>;
+    deleteTask(taskId: string): void;
+    indent(taskId: string): void;
+    outdent(taskId: string): void;
+    toggleCollapse(taskId: string): void;
+    
+    // Selection
+    getSelectedTask(): Task | null;
+    getSelectionInOrder(): string[];
+    
+    // Modals (delegate to ModalCoordinator)
+    openDependencies(taskId: string): void;
+    openCalendar(): void;
+    openColumnSettings(): void;
+    
+    // File Operations (delegate to FileOperationsService)
+    saveToFile(): Promise<void>;
+    openFromFile(): Promise<void>;
+    exportAsDownload(): void;
+    
+    // Baseline (delegate to BaselineService)
+    hasBaseline(): boolean;
+    setBaseline(): void;
+    clearBaseline(): void;
+    
+    // Trade Partners (delegate to TradePartnerService)
+    getTradePartners(): TradePartner[];
+    createTradePartner(data: Omit<TradePartner, 'id'>): TradePartner;
+    assignTradePartner(taskId: string, tradePartnerId: string): void;
+    
+    // Subscriptions
+    onTaskSelect(callback: (taskId, task, field) => void): () => void;
+    onDataChange(callback: () => void): () => void;
+    
+    // Lifecycle
+    destroy(): void;
+    onShutdown(): Promise<void>;
 }
 ```
 
@@ -419,8 +560,8 @@ If a verification step fails:
 * [Architecture Guide](docs/architecture/ARCHITECTURE.md) - Detailed architecture overview
 * [ADR-001: Dependency Injection](docs/adr/001-dependency-injection.md) - DI architecture decision
 * [Coding Guidelines](docs/CODING_GUIDELINES.md) - Developer guidelines
-* [TRUE_PURE_DI_IMPLEMENTATION_PLAN.md](docs/TRUE_PURE_DI_IMPLEMENTATION_PLAN.md) - DI migration details
+
 
 ---
 
-**Last Updated:** January 7, 2026
+**Last Updated:** January 14, 2026

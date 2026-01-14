@@ -4,7 +4,7 @@
 
 Pro Logic Scheduler is a high-performance, desktop-class construction scheduling application. It is architected for speed ("Ferrari Engine"), using direct DOM manipulation for the critical rendering path while keeping business logic pure and portable.
 
-**Version:** 6.0.0 (WASM Worker Architecture)
+**Version:** 7.0.0 (Subordinate Factory Architecture)
 
 ## Core Principles
 
@@ -47,7 +47,7 @@ class SchedulerService {
         projectController: ProjectController;
         selectionModel: SelectionModel;
         commandService: CommandService;
-        rendererFactory: RendererFactory;
+        subordinateFactory: SchedulerSubordinateFactory;
     }) {
         this.projectController = options.projectController;
         // ...
@@ -57,7 +57,24 @@ class SchedulerService {
 
 > **Note:** Legacy `getInstance()` methods exist but are deprecated. See [ADR-001](../adr/001-dependency-injection.md) for details.
 
-### 7. **Command Pattern**
+### 7. **Subordinate Factory Pattern**
+SchedulerService uses a factory pattern to create its subordinate services:
+
+- **Static Dependencies**: Captured in factory closure at creation time (main.ts)
+- **Runtime Context**: Callbacks and accessors provided by SchedulerService
+- **Cross-Dependencies**: Handled via forward references within factory
+- **Single Point of Creation**: All 12+ subordinate services created atomically
+
+```typescript
+// Factory captures static deps, returns services with runtime context
+const bundle = subordinateFactory.createAll({
+    getGrid: () => this.grid,
+    render: () => this.render(),
+    // ... runtime callbacks
+});
+```
+
+### 8. **Command Pattern**
 User actions are encapsulated as commands via `CommandService`:
 
 - **Centralized Registration**: All commands registered in one place
@@ -65,15 +82,24 @@ User actions are encapsulated as commands via `CommandService`:
 - **Undo/Redo Ready**: Command pattern enables future undo/redo per-command
 - **Context-Aware**: Commands receive context (selection, controller) at execution
 
+### 9. **Reactive State Management (ViewCoordinator)**
+The `ViewCoordinator` subscribes to RxJS observables and coordinates UI updates:
+
+- **ProjectController.tasks$**: Task state changes
+- **SelectionModel.state$**: Selection changes  
+- **Batched Updates**: Uses `requestAnimationFrame` to batch DOM updates
+- **Non-Blocking**: Eliminates synchronous blocking operations
+
 ## Directory Structure
 
 ```text
 src/
-├── main.ts                  # COMPOSITION ROOT - All service wiring happens here
+├── main.ts                  # COMPOSITION ROOT - All service wiring (7 levels)
 │
 ├── commands/                # Command Pattern Implementation
 │   ├── CommandService.ts   # Command registry and execution
 │   ├── CommandUIBinding.ts # UI ↔ Command binding
+│   ├── types.ts            # Command type definitions
 │   ├── clipboard/          # Copy, Cut, Paste commands
 │   ├── dependency/         # Link, Unlink commands
 │   ├── edit/               # Undo, Redo commands
@@ -87,7 +113,25 @@ src/
 │   │   ├── ColumnRegistry.ts    # Column definitions registry
 │   │   ├── ServiceContainer.ts  # Service lookup for renderers
 │   │   ├── registerColumns.ts   # Column registration
-│   │   └── renderers/           # Cell renderers (Text, Date, Number, etc.)
+│   │   ├── types.ts             # Column type definitions
+│   │   ├── definitions/         # Column definitions
+│   │   │   └── defaultColumns.ts
+│   │   └── renderers/           # Cell renderers (16 types)
+│   │       ├── BaseRenderer.ts
+│   │       ├── TextRenderer.ts
+│   │       ├── NameRenderer.ts
+│   │       ├── NumberRenderer.ts
+│   │       ├── DateRenderer.ts
+│   │       ├── SelectRenderer.ts
+│   │       ├── CheckboxRenderer.ts
+│   │       ├── ActionsRenderer.ts
+│   │       ├── DragRenderer.ts
+│   │       ├── HealthRenderer.ts
+│   │       ├── ReadonlyRenderer.ts
+│   │       ├── RowNumberRenderer.ts
+│   │       ├── SchedulingModeRenderer.ts
+│   │       ├── TradePartnersRenderer.ts
+│   │       └── VarianceRenderer.ts
 │   ├── engines/            # Engine interface (implementations removed)
 │   │   └── index.ts        # ISchedulingEngine type export only
 │   ├── calculations/       # Pure calculation functions
@@ -104,11 +148,11 @@ src/
 │   ├── HistoryManager.ts   # Undo/Redo event recording
 │   ├── PersistenceService.ts # SQLite event queue (event sourcing)
 │   ├── SnapshotService.ts  # Checkpoint snapshots
-│   └── TradePartnerStore.ts # Trade partner management
+│   └── TradePartnerStore.ts # Trade partner data store
 │
 ├── services/                # Application Orchestration
 │   ├── AppInitializer.ts   # Application bootstrap orchestrator
-│   ├── SchedulerService.ts # Main Controller (The "Brain")
+│   ├── SchedulerService.ts # Main Orchestrator (delegates to subordinates)
 │   ├── ProjectController.ts # Worker interface + RxJS state (tasks$, calendar$)
 │   ├── SelectionModel.ts   # Selection state management
 │   ├── EditingStateManager.ts # Cell editing state
@@ -118,9 +162,35 @@ src/
 │   ├── StatsService.ts     # Statistics calculations
 │   ├── UIEventManager.ts   # Global event coordination
 │   ├── IOManager.ts        # Import/Export operations
-│   └── migration/          # Architecture migration services
-│       ├── ViewCoordinator.ts      # Grid/Gantt synchronization
-│       └── SchedulingLogicService.ts # Business logic service
+│   │
+│   ├── interfaces/         # Interface definitions for DI
+│   │   ├── IProjectController.ts
+│   │   ├── IPersistenceService.ts
+│   │   ├── ISnapshotService.ts
+│   │   ├── IDataLoader.ts
+│   │   ├── IHistoryManager.ts
+│   │   └── IClipboardManager.ts
+│   │
+│   ├── migration/          # Architecture migration services
+│   │   ├── ViewCoordinator.ts      # Reactive Grid/Gantt coordination
+│   │   └── SchedulingLogicService.ts # Business logic service
+│   │
+│   └── scheduler/          # SchedulerService Subordinates (Factory Pattern)
+│       ├── SchedulerSubordinateFactory.ts # Factory interface & types
+│       ├── createSubordinateFactory.ts    # Factory implementation
+│       ├── TaskOperationsService.ts       # Task CRUD, hierarchy, movement
+│       ├── ViewStateService.ts            # View state, navigation, edit mode
+│       ├── ColumnPreferencesService.ts    # Column prefs and header management
+│       ├── GridNavigationController.ts    # Excel-style cell navigation
+│       ├── ContextMenuService.ts          # Right-click context menus
+│       ├── ModalCoordinator.ts            # Modal dialogs and panels
+│       ├── FileOperationsService.ts       # File open, save, import, export
+│       ├── BaselineService.ts             # Baseline set, clear, variance
+│       ├── TradePartnerService.ts         # Trade partner CRUD & assignment
+│       ├── DependencyValidationService.ts # Dependency validation
+│       ├── ViewportFactoryService.ts      # Viewport facade creation
+│       ├── KeyboardBindingService.ts      # Keyboard binding configuration
+│       └── types.ts                       # Shared subordinate types
 │
 ├── workers/                 # Background Workers
 │   ├── scheduler.worker.ts # WASM Worker - hosts SchedulerEngine
@@ -134,11 +204,34 @@ src/
 │   │   │   ├── SchedulerViewport.ts  # MASTER CONTROLLER
 │   │   │   ├── GridRenderer.ts       # DOM Renderer (Pooled)
 │   │   │   ├── GanttRenderer.ts      # Canvas Renderer
+│   │   │   ├── viewportRegistry.ts   # Viewport instance registry
+│   │   │   ├── constants.ts          # Scheduler constants
+│   │   │   ├── icons.ts              # SVG icon definitions
+│   │   │   ├── types.ts              # Viewport Interfaces
 │   │   │   ├── pool/                 # DOM Pooling System
-│   │   │   └── types.ts              # Viewport Interfaces
-│   │   ├── ActivityBar.ts            # Left sidebar
-│   │   ├── RightSidebarManager.ts    # Right sidebar
-│   │   └── SettingsModal.ts          # Settings UI
+│   │   │   │   ├── PoolSystem.ts
+│   │   │   │   └── BindingSystem.ts
+│   │   │   ├── datepicker/           # Date picker configuration
+│   │   │   │   └── DatePickerConfig.ts
+│   │   │   └── styles/
+│   │   │       └── scheduler.css
+│   │   ├── ActivityBar.ts            # Left sidebar navigation
+│   │   ├── RightSidebarManager.ts    # Right sidebar panel manager
+│   │   ├── SettingsModal.ts          # Settings UI
+│   │   ├── CalendarModal.ts          # Calendar configuration modal
+│   │   ├── ColumnSettingsModal.ts    # Column customization modal
+│   │   ├── DependenciesModal.ts      # Dependency management modal
+│   │   ├── ContextMenu.ts            # Right-click context menus
+│   │   ├── SideDrawer.ts             # Slide-out drawer component
+│   │   ├── CanvasGantt.ts            # Canvas-based Gantt renderer
+│   │   └── TradePartnerFormModal.ts  # Trade partner editing
+│   │
+│   ├── panels/             # Right sidebar panels
+│   │   ├── TaskTradePartnersPanel.ts    # Task trade partner assignment
+│   │   └── TradePartnerDetailsPanel.ts  # Trade partner details
+│   │
+│   ├── views/              # Full-page views
+│   │   └── TradePartnerDirectoryView.ts # Trade partner directory
 │   │
 │   └── services/           # UI-specific services
 │       ├── ToastService.ts
@@ -149,9 +242,19 @@ src/
 │   ├── index.ts            # Main type exports
 │   └── globals.d.ts        # Global type declarations
 │
-└── utils/                   # Utility functions
-    ├── debounce.ts
-    └── testMode.ts
+├── utils/                   # Utility functions
+│   ├── debounce.ts
+│   ├── testMode.ts
+│   └── TestDataGenerator.ts
+│
+├── sql/                     # SQL schemas
+│   └── schema.sql          # SQLite database schema
+│
+├── styles/                  # Global styles
+│   └── trade-partners.css  # Trade partner specific styles
+│
+└── debug/                   # Debug utilities
+    └── UIBlockingDiagnostic.ts
 
 src-wasm/                    # WASM CPM Engine (Rust → WebAssembly)
 ├── Cargo.toml              # Rust dependencies
@@ -257,57 +360,131 @@ public addTask(task: Task): void {
 
 ### Composition Root (`src/main.ts`)
 
-All services are created and wired in `main.ts`:
+All services are created and wired in `main.ts` across 7 levels:
 
 ```typescript
 // Level 0: Leaf services (no dependencies)
 const featureFlags = new FeatureFlags();
+const clipboardManager = new ClipboardManager();
 const selectionModel = new SelectionModel();
 const editingStateManager = new EditingStateManager();
 
-// Level 1: Core services (worker initialization in constructor)
+// Level 1: Column system + Core data
+const columnRegistry = new ColumnRegistry();
+const serviceContainer = new ServiceContainer();
 const projectController = new ProjectController();
-const commandService = new CommandService();
 
-// Level 2: Factories (capture dependencies in closure)
+// Level 2: Command system + Support services
+const commandService = new CommandService();
+const zoomController = new ZoomController();
+const schedulingLogicService = new SchedulingLogicService();
+const tradePartnerStore = new TradePartnerStore();
+const viewCoordinator = new ViewCoordinator({ projectController, selectionModel });
+
+// Level 3: Renderer Factory (captures deps in closure)
 const rendererFactory = createRendererFactory({
     projectController,
     selectionModel,
     editingStateManager
 });
 
-// Level 3: Persistence services
+// Level 4: Persistence services
 const persistenceService = new PersistenceService();
 const snapshotService = new SnapshotService();
 const dataLoader = new DataLoader();
 const historyManager = new HistoryManager({ maxHistory: 50 });
 
-// Level 4: Orchestrator
+// Level 5: UI Services (lifted from SchedulerService)
+const toastService = new ToastService({ container: document.body });
+const fileService = new FileService({ isTauri, onToast: ... });
+
+// Level 6: Subordinate Factory (captures all static deps)
+const subordinateFactory = createSubordinateFactory({
+    projectController,
+    selectionModel,
+    editingStateManager,
+    commandService,
+    columnRegistry,
+    viewCoordinator,
+    toastService,
+    fileService,
+    tradePartnerStore,
+    persistenceService,
+});
+
+// Level 7: Orchestrator
 const appInitializer = new AppInitializer({
     isTauri,
     rendererFactory,
     persistenceService,
     snapshotService,
     dataLoader,
-    historyManager
+    historyManager,
+    subordinateFactory,
+    // ... all other services
 });
 ```
 
-### Factory Pattern for UI Components
+### Subordinate Factory Pattern
 
-To avoid prop-drilling, UI components receive dependencies via factories:
+SchedulerService delegates specialized concerns to subordinate services created by a factory:
 
 ```typescript
-// Factory captures dependencies in closure
-const rendererFactory = createRendererFactory({
-    projectController,
-    selectionModel,
-    editingStateManager
+// SchedulerSubordinateFactory.ts - Factory Interface
+interface SchedulerSubordinateFactory {
+    createAll(context: SubordinateFactoryContext): SubordinateServicesBundle;
+}
+
+// SubordinateServicesBundle - All 12 subordinate services
+interface SubordinateServicesBundle {
+    columnPreferencesService: ColumnPreferencesService;
+    gridNavigationController: GridNavigationController;
+    viewportFactoryService: ViewportFactoryService;
+    taskOperationsService: TaskOperationsService;
+    viewStateService: ViewStateService;
+    contextMenuService: ContextMenuService;
+    modalCoordinator: ModalCoordinator;
+    fileOperationsService: FileOperationsService;
+    baselineService: BaselineService;
+    tradePartnerService: TradePartnerService;
+    dependencyValidationService: DependencyValidationService;
+    keyboardBindingService: KeyboardBindingService;
+}
+```
+
+**Service Responsibilities:**
+
+| Service | Responsibility |
+|---------|----------------|
+| `TaskOperationsService` | Task CRUD, hierarchy, movement |
+| `ViewStateService` | View state, navigation, edit mode |
+| `ColumnPreferencesService` | Column preferences and header management |
+| `GridNavigationController` | Excel-style grid cell navigation |
+| `ContextMenuService` | Right-click context menus |
+| `ModalCoordinator` | Modal dialogs and panels |
+| `FileOperationsService` | File open, save, import, export |
+| `BaselineService` | Baseline set, clear, variance calculation |
+| `TradePartnerService` | Trade partner CRUD and task assignment |
+| `DependencyValidationService` | Dependency validation and cycle detection |
+| `ViewportFactoryService` | Viewport facade creation |
+| `KeyboardBindingService` | Keyboard binding configuration |
+
+### ViewCoordinator (Reactive UI Updates)
+
+ViewCoordinator eliminates UI blocking by subscribing to RxJS streams:
+
+```typescript
+// ViewCoordinator subscribes to state streams
+controller.tasks$.subscribe(tasks => {
+    this._scheduleGridDataUpdate(tasks);
+    this._scheduleGanttDataUpdate(tasks);
+    this._scheduleRender();
 });
 
-// SchedulerService uses factory without knowing internal deps
-const gridRenderer = rendererFactory.createGrid(options);
-const ganttRenderer = rendererFactory.createGantt(options);
+selection.state$.subscribe(state => {
+    if (this.grid) this.grid.setSelection(state.selectedIds, state.focusedId);
+    if (this.gantt) this.gantt.setSelection(state.selectedIds);
+});
 ```
 
 ### Testing with DI
@@ -371,9 +548,10 @@ public readonly calendar$ = new BehaviorSubject<Calendar>({...});
 public readonly stats$ = new BehaviorSubject<CPMStats | null>(null);
 public readonly isCalculating$ = new BehaviorSubject<boolean>(false);
 
-// UI components subscribe to state changes
-this.controller.tasks$.subscribe(tasks => {
-    this.render(tasks);
+// ViewCoordinator subscribes and batches updates
+controller.tasks$.pipe(distinctUntilChanged()).subscribe(tasks => {
+    this._scheduleGridDataUpdate(tasks);
+    this._scheduleRender();
 });
 ```
 
@@ -382,12 +560,24 @@ this.controller.tasks$.subscribe(tasks => {
 - **Keyboard Shortcuts**: Mapped via `KeyboardService`
 - **Categories**: clipboard, dependency, edit, hierarchy, selection, task, view
 
+### Trade Partner Feature
+
+Complete vertical slice for trade partner management:
+
+```
+TradePartnerStore (data)
+  → TradePartnersRenderer (grid column)
+  → TradePartnerFormModal (editing)
+  → TradePartnerDetailsPanel (sidebar)
+  → TradePartnerDirectoryView (full view)
+  → TradePartnerService (operations)
+```
+
 ## Related Documentation
 
 - [ADR-001: Dependency Injection](../adr/001-dependency-injection.md) - DI architecture decision
-- [Coding Guidelines](../CODING_GUIDELINES.md) - Developer guidelines
-- [TRUE_PURE_DI_IMPLEMENTATION_PLAN.md](../TRUE_PURE_DI_IMPLEMENTATION_PLAN.md) - Migration details
+- [Column Registry Design](./COLUMN_REGISTRY_DESIGN.md) - Column system design
 
 ---
 
-**Last Updated:** January 7, 2026
+**Last Updated:** January 14, 2026
