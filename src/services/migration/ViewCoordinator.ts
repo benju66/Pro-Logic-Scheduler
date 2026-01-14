@@ -484,6 +484,18 @@ export class ViewCoordinator {
         }
     }
     
+    /**
+     * Manually trigger data change notifications
+     * 
+     * Used for non-task data changes (e.g., trade partners) that need
+     * to refresh panels but don't come from tasks$ stream.
+     */
+    public triggerDataChangeNotification(): void {
+        if (this.projectController) {
+            this._notifyDataChange(this.projectController.getTasks());
+        }
+    }
+    
     // =========================================================================
     // SCROLL MANAGEMENT
     // =========================================================================

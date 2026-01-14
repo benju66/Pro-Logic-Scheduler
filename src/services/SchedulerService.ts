@@ -163,15 +163,11 @@ export class SchedulerService {
     
     private _unsubscribeEditing: (() => void) | null = null;
 
-    // Selection change callbacks for external listeners (e.g., RightSidebarManager)
-    private _selectionChangeCallbacks: Array<(taskId: string | null, task: Task | null, field?: string) => void> = [];
-    private _lastClickedField: string | undefined = undefined; // Track which field was clicked
+    // Track which field was clicked (for panel focus)
+    private _lastClickedField: string | undefined = undefined;
 
     // Panel open request callbacks (for double-click to open behavior)
     private _openPanelCallbacks: Array<(panelId: string) => void> = [];
-
-    // Data change callbacks for unified panel sync (e.g., RightSidebarManager)
-    private _dataChangeCallbacks: Array<() => void> = [];
 
     // =========================================================================
     // View state
@@ -704,35 +700,17 @@ export class SchedulerService {
     /**
      * Handle selection change
      * Updates SelectionModel (single source of truth for selection)
+     * 
+     * ViewCoordinator subscribes to SelectionModel.state$ and notifies
+     * external listeners via onSelectionChange callbacks.
      */
     private _handleSelectionChange(selectedIds: string[]): void {
         const selectedSet = new Set(selectedIds);
         const primaryId = selectedIds.length > 0 ? selectedIds[selectedIds.length - 1] : null;
         
         // Update SelectionModel (the single source of truth)
-        // SelectionModel now tracks selection order internally
+        // ViewCoordinator's subscription to state$ handles external callback notifications
         this.selectionModel.setSelection(selectedSet, primaryId, selectedIds);
-        
-        // === Notify registered callbacks ===
-        // IMPORTANT: This is the ONLY place callbacks are triggered.
-        // Do NOT add callbacks to _handleRowClick - it would cause double-firing
-        // since row clicks internally trigger _handleSelectionChange via viewStateService.updateSelection().
-        const primaryTask = primaryId ? this.projectController.getTaskById(primaryId) || null : null;
-        
-        // Pass the clicked field (if any) to callbacks
-        // Only pass field if this selection change was triggered by a click (not programmatic)
-        const clickedField = this._lastClickedField;
-        // Clear immediately after reading to avoid stale values
-        const fieldToPass = clickedField;
-        this._lastClickedField = undefined;
-        
-        this._selectionChangeCallbacks.forEach(cb => {
-            try {
-                cb(primaryId, primaryTask, fieldToPass);
-            } catch (e) {
-                console.error('[SchedulerService] Selection callback error:', e);
-            }
-        });
     }
 
     /**
@@ -1346,19 +1324,25 @@ export class SchedulerService {
      * Register a callback for task selection changes
      * Used by RightSidebarManager to sync panels with selection
      * 
+     * Delegates to ViewCoordinator for reactive selection updates.
+     * 
      * @param callback - Function called when selection changes
      * @returns Unsubscribe function
      */
     public onTaskSelect(callback: (taskId: string | null, task: Task | null, field?: string) => void): () => void {
-        this._selectionChangeCallbacks.push(callback);
+        // Delegate to ViewCoordinator's reactive selection stream
+        if (!this.viewCoordinator) {
+            console.warn('[SchedulerService] ViewCoordinator not available for onTaskSelect');
+            return () => {};
+        }
         
-        // Return unsubscribe function
-        return () => {
-            const index = this._selectionChangeCallbacks.indexOf(callback);
-            if (index > -1) {
-                this._selectionChangeCallbacks.splice(index, 1);
-            }
-        };
+        return this.viewCoordinator.onSelectionChange((state) => {
+            // Adapt ViewState to legacy callback signature
+            const taskId = state.focusedId;
+            const task = taskId ? this.projectController.getTaskById(taskId) || null : null;
+            const field = state.focusedField || undefined;
+            callback(taskId, task, field);
+        });
     }
 
     /**
@@ -1711,30 +1695,35 @@ export class SchedulerService {
 
     /**
      * Notify all data change listeners
+     * 
+     * Delegates to ViewCoordinator for non-task data changes
+     * (e.g., trade partner updates).
      * @private
      */
     private _notifyDataChange(): void {
-        for (const callback of this._dataChangeCallbacks) {
-            try {
-                callback();
-            } catch (error) {
-                console.error('[SchedulerService] Error in data change callback:', error);
-            }
+        if (this.viewCoordinator) {
+            this.viewCoordinator.triggerDataChangeNotification();
         }
     }
 
     /**
      * Subscribe to data changes (tasks, calendar, trade partners, etc.)
-     * Returns unsubscribe function
+     * 
+     * Delegates to ViewCoordinator for reactive data updates.
+     * 
+     * @returns Unsubscribe function
      */
     public onDataChange(callback: () => void): () => void {
-        this._dataChangeCallbacks.push(callback);
-        return () => {
-            const index = this._dataChangeCallbacks.indexOf(callback);
-            if (index > -1) {
-                this._dataChangeCallbacks.splice(index, 1);
-            }
-        };
+        // Delegate to ViewCoordinator's reactive data stream
+        if (!this.viewCoordinator) {
+            console.warn('[SchedulerService] ViewCoordinator not available for onDataChange');
+            return () => {};
+        }
+        
+        return this.viewCoordinator.onDataChange(() => {
+            // Adapt to legacy void callback signature
+            callback();
+        });
     }
 
     // =========================================================================
