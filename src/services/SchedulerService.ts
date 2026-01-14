@@ -22,7 +22,7 @@
 import { DateUtils } from '../core/DateUtils';
 import { ColumnRegistry } from '../core/columns';
 import { TestDataGenerator } from '../utils/TestDataGenerator';
-import { TradePartnerStore, getTradePartnerStore } from '../data/TradePartnerStore';
+import { TradePartnerStore } from '../data/TradePartnerStore';
 import { PersistenceService } from '../data/PersistenceService';
 import { DataLoader } from '../data/DataLoader';
 import { SnapshotService } from '../data/SnapshotService';
@@ -85,7 +85,6 @@ export class SchedulerService {
     // =========================================================================
 
     private options: SchedulerServiceOptions;
-    private isTauri: boolean;
 
     // =========================================================================
     // INJECTED SERVICES (Pure DI Migration)
@@ -186,29 +185,28 @@ export class SchedulerService {
      * @see docs/TRUE_PURE_DI_IMPLEMENTATION_PLAN.md
      */
     constructor(options: SchedulerServiceOptions & {
-        // DI Dependencies (optional for backward compatibility)
+        // Required DI Dependencies
         projectController?: ProjectController;
         selectionModel?: SelectionModel;
         commandService?: CommandService;
-        rendererFactory?: RendererFactory;
-        keyboardService?: KeyboardService;
         schedulingLogicService?: SchedulingLogicService;
-        // Pure DI: Additional injectable services
         columnRegistry?: ColumnRegistry;
-        zoomController?: ZoomController;
-        tradePartnerStore?: TradePartnerStore;
-        dataLoader?: DataLoader;
-        snapshotService?: SnapshotService;
         editingStateManager?: EditingStateManager;
-        viewCoordinator?: ViewCoordinator;
-        // Phase 6 Pure DI: UI services (optional - fallback to internal creation)
+        // Required UI Services
         toastService?: ToastService;
         fileService?: FileService;
-        // Phase 6 Pure DI: Subordinate factory (optional - fallback to direct instantiation)
+        tradePartnerStore?: TradePartnerStore;
+        // Required Factory
         subordinateFactory?: import('./scheduler/SchedulerSubordinateFactory').SchedulerSubordinateFactory;
+        // Optional Services
+        rendererFactory?: RendererFactory;
+        keyboardService?: KeyboardService;
+        zoomController?: ZoomController;
+        dataLoader?: DataLoader;
+        snapshotService?: SnapshotService;
+        viewCoordinator?: ViewCoordinator;
     } = {} as SchedulerServiceOptions) {
         this.options = options;
-        this.isTauri = options.isTauri !== undefined ? options.isTauri : true;
         
         // Initialize core dependencies (Pure DI - all services must be injected)
         if (!options.projectController || !options.selectionModel || !options.commandService) {
@@ -221,18 +219,18 @@ export class SchedulerService {
         this.columnRegistry = options.columnRegistry!;
         this.editingStateManager = options.editingStateManager!;
         
-        // Store optional injected services
+        // Store required services (validated in _initServices/init)
+        if (options.tradePartnerStore) this.tradePartnerStore = options.tradePartnerStore;
+        if (options.toastService) this.toastService = options.toastService;
+        if (options.fileService) this.fileService = options.fileService;
+        if (options.subordinateFactory) this.subordinateFactory = options.subordinateFactory;
+        
+        // Store optional services
         if (options.zoomController) this.zoomController = options.zoomController;
         if (options.dataLoader) this.dataLoader = options.dataLoader;
         if (options.snapshotService) this.snapshotService = options.snapshotService;
-        if (options.tradePartnerStore) this.tradePartnerStore = options.tradePartnerStore;
         if (options.keyboardService) this.keyboardService = options.keyboardService;
         if (options.viewCoordinator) this.viewCoordinator = options.viewCoordinator;
-        // Phase 6 Pure DI: Store injected UI services (used in _initServices if provided)
-        if (options.toastService) this.toastService = options.toastService;
-        if (options.fileService) this.fileService = options.fileService;
-        // Phase 6 Pure DI: Store subordinate factory (used in init() if provided)
-        if (options.subordinateFactory) this.subordinateFactory = options.subordinateFactory;
 
         // Initialize services (async - will be awaited in init())
         // Store the promise to avoid race conditions
@@ -247,13 +245,10 @@ export class SchedulerService {
 
     /**
      * Initialize all services
+     * Validates required dependencies and sets up persistence accessor.
      * @private
-     * 
-     * STRANGLER FIG: Service initialization moved to AppInitializer.
-     * SchedulerService now uses shared services via AppInitializer singleton.
      */
     private async _initServices(): Promise<void> {
-        // Pure DI: Use injected services if available, fall back to singletons
         const controller = this.projectController;
         
         // Get reference to shared PersistenceService
@@ -272,13 +267,11 @@ export class SchedulerService {
             console.log('[SchedulerService] Using injected DataLoader and SnapshotService');
         }
 
-        // Pure DI: Use injected TradePartnerStore or fall back to global getter
+        // Pure DI: TradePartnerStore must be injected
         if (!this.tradePartnerStore) {
-            this.tradePartnerStore = getTradePartnerStore();
-            console.log('[SchedulerService] Using TradePartnerStore from fallback');
-        } else {
-            console.log('[SchedulerService] Using injected TradePartnerStore');
+            throw new Error('[SchedulerService] TradePartnerStore must be injected via constructor');
         }
+        console.log('[SchedulerService] Using injected TradePartnerStore');
         
         // Set trade partners accessor on shared persistence service
         if (this.persistenceService) {
@@ -287,25 +280,16 @@ export class SchedulerService {
             );
         }
 
-        // UI services - use injected if available, otherwise create new (backward compat)
+        // Pure DI: UI services must be injected (no fallback creation)
         if (!this.toastService) {
-            this.toastService = new ToastService({
-                container: document.body
-            });
-            console.log('[SchedulerService] Created ToastService (fallback)');
-        } else {
-            console.log('[SchedulerService] Using injected ToastService');
+            throw new Error('[SchedulerService] ToastService must be injected via constructor');
         }
+        console.log('[SchedulerService] Using injected ToastService');
 
         if (!this.fileService) {
-            this.fileService = new FileService({
-                isTauri: this.isTauri,
-                onToast: (msg, type) => this.toastService.show(msg, type)
-            });
-            console.log('[SchedulerService] Created FileService (fallback)');
-        } else {
-            console.log('[SchedulerService] Using injected FileService');
+            throw new Error('[SchedulerService] FileService must be injected via constructor');
         }
+        console.log('[SchedulerService] Using injected FileService');
     }
 
     /**
@@ -324,73 +308,42 @@ export class SchedulerService {
         }
 
         // ═══════════════════════════════════════════════════════════════════════
-        // PHASE 6 PURE DI: Create subordinate services via factory (CRITICAL)
+        // PURE DI: Create subordinate services via factory (REQUIRED)
         // This MUST happen FIRST to ensure columnPreferencesService is available
         // before _initializeColumnCSSVariables() and _buildGridHeader() are called.
-        // @see docs/PURE_DI_SUBORDINATE_FACTORY_PLAN.md - Phase 6
         // ═══════════════════════════════════════════════════════════════════════
-        if (this.subordinateFactory) {
-            console.log('[SchedulerService] 🏭 Using subordinate factory to create services...');
-            
-            // Build context with all runtime callbacks
-            const ctx = this._buildSubordinateFactoryContext(modalContainer || document.body);
-            
-            // Create ALL subordinate services in one atomic operation
-            const bundle = this.subordinateFactory.createAll(ctx);
-            
-            // Assign all services from bundle to instance properties
-            this.columnPreferencesService = bundle.columnPreferencesService;
-            this.gridNavigationController = bundle.gridNavigationController;
-            this.viewportFactoryService = bundle.viewportFactoryService;
-            this.taskOperations = bundle.taskOperationsService;
-            this.viewStateService = bundle.viewStateService;
-            this.contextMenuService = bundle.contextMenuService;
-            this.modalCoordinator = bundle.modalCoordinator;
-            this.fileOperationsService = bundle.fileOperationsService;
-            this.baselineService = bundle.baselineService;
-            this.tradePartnerService = bundle.tradePartnerService;
-            this.dependencyValidationService = bundle.dependencyValidationService;
-            this.keyboardBindingService = bundle.keyboardBindingService;
-            this.testDataGenerator = bundle.testDataGenerator;
-            
-            // Initialize ModalCoordinator with container (must be after bundle assignment
-            // because initialize() calls getColumnPreferences() which needs this.columnPreferencesService)
-            this.modalCoordinator.initialize(modalContainer || document.body);
-            
-            console.log('[SchedulerService] ✅ All subordinate services created via factory');
-        } else {
-            // Backward compatibility: Direct instantiation (legacy path)
-            console.log('[SchedulerService] ⚠️ No factory provided, using direct instantiation (legacy)');
-            
-            // Initialize ColumnPreferencesService early (before grid exists for header build)
-            this.columnPreferencesService = new ColumnPreferencesService({
-                projectController: this.projectController,
-                selectionModel: this.selectionModel,
-                columnRegistry: this.columnRegistry,
-                toastService: this.toastService,
-                getGrid: () => this.grid,
-                render: () => this.render(),
-                updateSelection: () => this.viewStateService.updateSelection(),
-            });
-            console.log('[SchedulerService] ✅ ColumnPreferencesService initialized (early - for header build)');
-
-            // GridNavigationController for Excel-style cell navigation
-            this.gridNavigationController = new GridNavigationController({
-                getVisibleTaskIds: () => {
-                    return this.projectController.getVisibleTasks((id) => {
-                        const task = this.projectController.getTaskById(id);
-                        return task?._collapsed || false;
-                    }).map(t => t.id);
-                },
-                getNavigableColumns: () => {
-                    return this._getColumnDefinitions()
-                        .filter(col => col.type === 'text' || col.type === 'number' || col.type === 'date' || col.type === 'select' || col.type === 'name' || col.type === 'schedulingMode')
-                        .map(col => col.field);
-                },
-                isEditing: () => this.editingStateManager.isEditing()
-            });
-            console.log('[SchedulerService] ✅ GridNavigationController initialized');
+        if (!this.subordinateFactory) {
+            throw new Error('[SchedulerService] subordinateFactory must be injected via constructor');
         }
+        
+        console.log('[SchedulerService] 🏭 Using subordinate factory to create services...');
+        
+        // Build context with all runtime callbacks
+        const ctx = this._buildSubordinateFactoryContext(modalContainer || document.body);
+        
+        // Create ALL subordinate services in one atomic operation
+        const bundle = this.subordinateFactory.createAll(ctx);
+        
+        // Assign all services from bundle to instance properties
+        this.columnPreferencesService = bundle.columnPreferencesService;
+        this.gridNavigationController = bundle.gridNavigationController;
+        this.viewportFactoryService = bundle.viewportFactoryService;
+        this.taskOperations = bundle.taskOperationsService;
+        this.viewStateService = bundle.viewStateService;
+        this.contextMenuService = bundle.contextMenuService;
+        this.modalCoordinator = bundle.modalCoordinator;
+        this.fileOperationsService = bundle.fileOperationsService;
+        this.baselineService = bundle.baselineService;
+        this.tradePartnerService = bundle.tradePartnerService;
+        this.dependencyValidationService = bundle.dependencyValidationService;
+        this.keyboardBindingService = bundle.keyboardBindingService;
+        this.testDataGenerator = bundle.testDataGenerator;
+        
+        // Initialize ModalCoordinator with container (must be after bundle assignment
+        // because initialize() calls getColumnPreferences() which needs this.columnPreferencesService)
+        this.modalCoordinator.initialize(modalContainer || document.body);
+        
+        console.log('[SchedulerService] ✅ All subordinate services created via factory');
 
         // Initialize CSS variables for column widths (must be before header build)
         this._initializeColumnCSSVariables();
@@ -495,163 +448,6 @@ export class SchedulerService {
         this.viewCoordinator.setComponents(this.grid, this.gantt);
         this.viewCoordinator.initSubscriptions();
         console.log('[SchedulerService] ✅ ViewCoordinator initialized with reactive subscriptions');
-        
-        // ═══════════════════════════════════════════════════════════════════════
-        // SUBORDINATE SERVICES: Skip if already created by factory
-        // ═══════════════════════════════════════════════════════════════════════
-        if (!this.subordinateFactory) {
-            // Legacy path: Create remaining services directly
-            console.log('[SchedulerService] ⚠️ Creating remaining services (legacy path)...');
-            
-            // Initialize TaskOperationsService
-            this.taskOperations = new TaskOperationsService({
-                projectController: this.projectController,
-                selectionModel: this.selectionModel,
-                editingStateManager: this.editingStateManager,
-                commandService: this.commandService,
-                toastService: this.toastService,
-                getGrid: () => this.grid,
-                getGantt: () => this.gantt,
-                saveCheckpoint: () => this.saveCheckpoint(),
-                enterEditMode: () => this.enterEditMode(),
-                isInitialized: () => this.isInitialized,
-                updateHeaderCheckboxState: () => this.viewStateService.updateHeaderCheckboxState(),
-            });
-            console.log('[SchedulerService] ✅ TaskOperationsService initialized');
-            
-            // Initialize ViewStateService
-            this.viewStateService = new ViewStateService({
-                projectController: this.projectController,
-                selectionModel: this.selectionModel,
-                editingStateManager: this.editingStateManager,
-                commandService: this.commandService,
-                viewCoordinator: this.viewCoordinator!, // Already verified non-null above
-                getGrid: () => this.grid,
-                getGantt: () => this.gantt,
-                getColumnDefinitions: () => this._getColumnDefinitions(),
-                closeDrawer: () => {},
-                isDrawerOpen: () => false,
-                onSelectionChange: (selectedIds) => this._handleSelectionChange(selectedIds),
-                updateHeaderCheckboxState: (checkbox) => this.columnPreferencesService.updateHeaderCheckboxState(checkbox),
-            });
-            console.log('[SchedulerService] ✅ ViewStateService initialized');
-            
-            // Initialize ContextMenuService
-            this.contextMenuService = new ContextMenuService({
-                insertBlankRowAbove: (taskId) => this.insertBlankRowAbove(taskId),
-                insertBlankRowBelow: (taskId) => this.insertBlankRowBelow(taskId),
-                convertBlankToTask: (taskId) => this.convertBlankToTask(taskId),
-                deleteTask: (taskId) => this.deleteTask(taskId),
-                openProperties: (taskId) => this.openProperties(taskId),
-            });
-            console.log('[SchedulerService] ✅ ContextMenuService initialized');
-            
-            // Initialize ModalCoordinator
-            this.modalCoordinator = new ModalCoordinator({
-                projectController: this.projectController,
-                selectionModel: this.selectionModel,
-                columnRegistry: this.columnRegistry,
-                onDependenciesSave: (taskId, deps) => this._handleDependenciesSave(taskId, deps),
-                onCalendarSave: (calendar) => this._handleCalendarSave(calendar),
-                onColumnPreferencesSave: (prefs) => this.updateColumnPreferences(prefs),
-                getColumnPreferences: () => this._getColumnPreferences(),
-                updateSelection: () => this.viewStateService.updateSelection(),
-            });
-            // Initialize modals with container
-            const modalsContainer = modalContainer || document.body;
-            this.modalCoordinator.initialize(modalsContainer);
-            console.log('[SchedulerService] ✅ ModalCoordinator initialized');
-            
-            // Initialize FileOperationsService
-            this.fileOperationsService = new FileOperationsService({
-                projectController: this.projectController,
-                fileService: this.fileService,
-                toastService: this.toastService,
-                persistenceService: this.persistenceService,
-                saveCheckpoint: () => this.saveCheckpoint(),
-                saveData: () => this.saveData(),
-                recalculateAll: () => this.recalculateAll(),
-                storageKey: SchedulerService.STORAGE_KEY,
-            });
-            console.log('[SchedulerService] ✅ FileOperationsService initialized');
-            
-            // Initialize BaselineService
-            this.baselineService = new BaselineService({
-                projectController: this.projectController,
-                columnRegistry: this.columnRegistry,
-                toastService: this.toastService,
-                saveCheckpoint: () => this.saveCheckpoint(),
-                saveData: () => this.saveData(),
-                rebuildGridColumns: () => this._rebuildGridColumns(),
-                getCalendar: () => this.calendar,
-            });
-            console.log('[SchedulerService] ✅ BaselineService initialized');
-            
-            // Initialize TradePartnerService
-            this.tradePartnerService = new TradePartnerService({
-                projectController: this.projectController,
-                tradePartnerStore: this.tradePartnerStore,
-                persistenceService: this.persistenceService,
-                toastService: this.toastService,
-                viewCoordinator: this.viewCoordinator,
-                notifyDataChange: () => this._notifyDataChange(),
-            });
-            console.log('[SchedulerService] ✅ TradePartnerService initialized');
-            
-            // Initialize DependencyValidationService
-            this.dependencyValidationService = new DependencyValidationService({
-                projectController: this.projectController,
-            });
-            console.log('[SchedulerService] ✅ DependencyValidationService initialized');
-            
-            // Note: ViewportFactoryService initialized earlier (before facade creation)
-            
-            // Initialize KeyboardBindingService
-            this.keyboardBindingService = new KeyboardBindingService({
-                actions: {
-                    isAppReady: () => this.isInitialized,
-                    onUndo: () => this.undo(),
-                    onRedo: () => this.redo(),
-                    onDelete: () => this._deleteSelected(),
-                    onCopy: () => this.copySelected(),
-                    onCut: () => this.cutSelected(),
-                    onPaste: () => this.paste(),
-                    onInsert: () => this.insertTaskBelow(),
-                    onShiftInsert: () => this.insertTaskAbove(),
-                    onCtrlEnter: () => this.addChildTask(),
-                    onArrowUp: (shiftKey, _ctrlKey) => this._handleCellNavigation('up', shiftKey),
-                    onArrowDown: (shiftKey, _ctrlKey) => this._handleCellNavigation('down', shiftKey),
-                    onArrowLeft: (shiftKey, _ctrlKey) => this._handleCellNavigation('left', shiftKey),
-                    onArrowRight: (shiftKey, _ctrlKey) => this._handleCellNavigation('right', shiftKey),
-                    onCtrlArrowLeft: () => this._handleArrowCollapse('ArrowLeft'),
-                    onCtrlArrowRight: () => this._handleArrowCollapse('ArrowRight'),
-                    onTab: () => this._handleTabIndent(),
-                    onShiftTab: () => this._handleTabOutdent(),
-                    onCtrlArrowUp: () => this.moveSelectedTasks(-1),
-                    onCtrlArrowDown: () => this.moveSelectedTasks(1),
-                    onF2: () => this.enterEditMode(),
-                    onEscape: () => {
-                        // Exit driving path mode on Escape
-                        if (this.displaySettings.drivingPathMode) {
-                            this.toggleDrivingPathMode();
-                        } else {
-                            this._handleEscape();
-                        }
-                    },
-                    onLinkSelected: () => this.linkSelectedInOrder(),
-                    onDrivingPath: () => this.toggleDrivingPathMode(),
-                },
-                KeyboardServiceClass: KeyboardService,
-            });
-            console.log('[SchedulerService] ✅ KeyboardBindingService initialized');
-            
-            // Initialize TestDataGenerator
-            this.testDataGenerator = new TestDataGenerator({
-                projectController: this.projectController,
-                toastService: this.toastService,
-            });
-            console.log('[SchedulerService] ✅ TestDataGenerator initialized');
-        }
         
         // Sync initial state from SchedulerService to ViewStateService
         this.viewStateService.viewMode = this.viewMode;
@@ -807,11 +603,6 @@ export class SchedulerService {
     /** Calculate variance for a task */
     calculateVariance(task: Task): { start: number | null; finish: number | null } {
         return this.baselineService.calculateVariance(task);
-    }
-
-    /** Rebuild grid columns when baseline state changes */
-    private _rebuildGridColumns(): void {
-        this.columnPreferencesService.rebuildGridColumns();
     }
 
     /**
