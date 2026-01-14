@@ -225,6 +225,7 @@ async function initApp(): Promise<void> {
             projectController,
             selectionModel,
             commandService,
+            editingStateManager,
             // Phase 1 decomposition: ViewCoordinator for reactive rendering
             viewCoordinator,
             // Phase 6 Pure DI: Inject UI services (lifted from SchedulerService)

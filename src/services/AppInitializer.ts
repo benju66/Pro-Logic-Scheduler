@@ -70,6 +70,8 @@ export interface AppInitializerOptions {
   selectionModel?: SelectionModel;
   /** Injected CommandService for command registry (Pure DI) */
   commandService?: import('../commands').CommandService;
+  /** Injected EditingStateManager for editing state (Pure DI) */
+  editingStateManager?: import('./EditingStateManager').EditingStateManager;
   /** Injected ViewCoordinator for reactive rendering (Phase 1 decomposition) */
   viewCoordinator?: import('./migration/ViewCoordinator').ViewCoordinator;
   /** Injected ToastService for user notifications (Phase 6 Pure DI) */
@@ -107,6 +109,7 @@ export class AppInitializer {
   private tradePartnerStore: import('../data/TradePartnerStore').TradePartnerStore | null = null;
   private selectionModel: SelectionModel | null = null;
   private commandService: import('../commands').CommandService | null = null;
+  private editingStateManager: import('./EditingStateManager').EditingStateManager | null = null;
   private viewCoordinator: import('./migration/ViewCoordinator').ViewCoordinator | null = null;
   // Phase 6 Pure DI: UI services - passed to SchedulerService in _initializeScheduler
   private toastService: ToastService | null = null;
@@ -151,6 +154,7 @@ export class AppInitializer {
     this.projectController = options.projectController || null;
     this.selectionModel = options.selectionModel || null;
     this.commandService = options.commandService || null;
+    this.editingStateManager = options.editingStateManager || null;
     this.viewCoordinator = options.viewCoordinator || null;
     
     // Phase 6 Pure DI: Store UI services and factory
@@ -551,6 +555,11 @@ export class AppInitializer {
       isTauri: this.isTauri,
       // Pure DI: Pass rendererFactory from Composition Root
       rendererFactory: this.rendererFactory || undefined,
+      // Pure DI: Required core services (must be injected)
+      projectController: this.projectController || undefined,
+      selectionModel: this.selectionModel || undefined,
+      commandService: this.commandService || undefined,
+      editingStateManager: this.editingStateManager || undefined,
       // Pure DI: Pass schedulingLogicService from Composition Root
       schedulingLogicService: this.schedulingLogicService || undefined,
       // Pure DI: Pass additional services from Composition Root
