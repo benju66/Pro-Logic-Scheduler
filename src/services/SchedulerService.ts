@@ -166,9 +166,6 @@ export class SchedulerService {
     // Track which field was clicked (for panel focus)
     private _lastClickedField: string | undefined = undefined;
 
-    // Panel open request callbacks (for double-click to open behavior)
-    private _openPanelCallbacks: Array<(panelId: string) => void> = [];
-
     // =========================================================================
     // View state
     public viewMode: ViewMode = 'Week';  // Public for access from StatsService
@@ -554,7 +551,6 @@ export class SchedulerService {
                 projectController: this.projectController,
                 selectionModel: this.selectionModel,
                 columnRegistry: this.columnRegistry,
-                getOpenPanelCallbacks: () => this._openPanelCallbacks,
                 onDependenciesSave: (taskId, deps) => this._handleDependenciesSave(taskId, deps),
                 onCalendarSave: (calendar) => this._handleCalendarSave(calendar),
                 onColumnPreferencesSave: (prefs) => this.updateColumnPreferences(prefs),
@@ -846,9 +842,8 @@ export class SchedulerService {
             
             // Selection/Navigation Callbacks
             handleSelectionChange: (selectedIds) => this._handleSelectionChange(selectedIds),
-            
+
             // Panel/Drawer Callbacks
-            getOpenPanelCallbacks: () => this._openPanelCallbacks,
             closeDrawer: () => {}, // Drawer removed - no-op
             isDrawerOpen: () => false, // Drawer removed - always false
             
@@ -1359,19 +1354,18 @@ export class SchedulerService {
      * Register a callback for panel open requests
      * Used by RightSidebarManager to open panels on double-click
      * 
+     * Delegates to ModalCoordinator which owns the panel callback array.
+     * 
      * @param callback - Function called when a panel should be opened
      * @returns Unsubscribe function
      */
     public onPanelOpenRequest(callback: (panelId: string) => void): () => void {
-        this._openPanelCallbacks.push(callback);
-        
-        // Return unsubscribe function
-        return () => {
-            const index = this._openPanelCallbacks.indexOf(callback);
-            if (index > -1) {
-                this._openPanelCallbacks.splice(index, 1);
-            }
-        };
+        // Delegate to ModalCoordinator
+        if (!this.modalCoordinator) {
+            console.warn('[SchedulerService] ModalCoordinator not available for onPanelOpenRequest');
+            return () => {};
+        }
+        return this.modalCoordinator.onPanelOpenRequest(callback);
     }
 
     /**

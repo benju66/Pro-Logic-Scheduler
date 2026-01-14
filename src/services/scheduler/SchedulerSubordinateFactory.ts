@@ -75,8 +75,6 @@ export interface SubordinateFactoryContext {
     // Panel/Drawer Callbacks
     // =========================================================================
     
-    /** Get callbacks for opening panels in RightSidebarManager */
-    getOpenPanelCallbacks: () => Array<(panelId: string) => void>;
     /** Close drawer panel */
     closeDrawer: () => void;
     /** Check if drawer is open */

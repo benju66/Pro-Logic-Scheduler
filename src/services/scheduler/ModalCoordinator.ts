@@ -32,8 +32,6 @@ export interface ModalCoordinatorDeps {
     selectionModel: SelectionModel;
     /** ColumnRegistry for column definitions */
     columnRegistry: ColumnRegistry;
-    /** Callbacks for opening panels in RightSidebarManager */
-    getOpenPanelCallbacks: () => Array<(panelId: string) => void>;
     /** Handler for dependencies save */
     onDependenciesSave: (taskId: string, deps: Dependency[]) => void;
     /** Handler for calendar save */
@@ -92,6 +90,9 @@ export class ModalCoordinator {
     
     /** Column settings modal instance */
     private columnSettingsModal: ColumnSettingsModal | null = null;
+    
+    /** Panel open request callbacks (owned by ModalCoordinator) */
+    private _openPanelCallbacks: Array<(panelId: string) => void> = [];
 
     // =========================================================================
     // CONSTRUCTOR
@@ -144,7 +145,7 @@ export class ModalCoordinator {
      * @param taskId - Task ID to show details for
      */
     openDrawer(taskId: string): void {
-        const callbacks = this.deps.getOpenPanelCallbacks();
+        const callbacks = this._openPanelCallbacks;
         
         // 1. Ensure selection is synced first
         if (this.deps.selectionModel.getFocusedId() !== taskId) {
@@ -188,7 +189,7 @@ export class ModalCoordinator {
      * @param taskId - Task ID to show properties for
      */
     openProperties(taskId: string): void {
-        const callbacks = this.deps.getOpenPanelCallbacks();
+        const callbacks = this._openPanelCallbacks;
         
         // Trigger right sidebar with details panel
         callbacks.forEach(cb => {
@@ -216,7 +217,7 @@ export class ModalCoordinator {
         const task = this.deps.projectController.getTaskById(taskId);
         if (!task) return;
         
-        const callbacks = this.deps.getOpenPanelCallbacks();
+        const callbacks = this._openPanelCallbacks;
         
         // Try to open via panel system first (if RightSidebarManager is available)
         if (callbacks.length > 0) {
@@ -295,6 +296,35 @@ export class ModalCoordinator {
     }
 
     // =========================================================================
+    // PANEL OPEN CALLBACKS
+    // =========================================================================
+
+    /**
+     * Register a callback for panel open requests
+     * Used by RightSidebarManager to open panels on double-click
+     * 
+     * @param callback - Function called when a panel should be opened
+     * @returns Unsubscribe function
+     */
+    onPanelOpenRequest(callback: (panelId: string) => void): () => void {
+        this._openPanelCallbacks.push(callback);
+        return () => {
+            const index = this._openPanelCallbacks.indexOf(callback);
+            if (index > -1) {
+                this._openPanelCallbacks.splice(index, 1);
+            }
+        };
+    }
+
+    /**
+     * Get the panel open callbacks array (for internal use)
+     * @internal
+     */
+    getOpenPanelCallbacks(): Array<(panelId: string) => void> {
+        return this._openPanelCallbacks;
+    }
+
+    // =========================================================================
     // DISPOSAL
     // =========================================================================
 
@@ -308,5 +338,6 @@ export class ModalCoordinator {
         this.calendarModal = null;
         this.columnSettingsModal = null;
         this.drawer = null;
+        this._openPanelCallbacks = [];
     }
 }

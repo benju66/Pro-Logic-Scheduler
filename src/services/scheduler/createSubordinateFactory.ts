@@ -236,7 +236,6 @@ export function createSubordinateFactory(deps: FactoryDependencies): SchedulerSu
                 projectController,
                 selectionModel,
                 columnRegistry,
-                getOpenPanelCallbacks: ctx.getOpenPanelCallbacks,
                 onDependenciesSave: ctx.handleDependenciesSave,
                 onCalendarSave: ctx.handleCalendarSave,
                 onColumnPreferencesSave: ctx.updateColumnPreferences,
